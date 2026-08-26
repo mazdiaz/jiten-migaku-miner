@@ -437,6 +437,18 @@
       border-radius: 0.2em;
     }
 
+    body.hl-pill .th-live {
+      background-color: rgba(139, 167, 255, 0.10);
+      border-radius: 0.3em;
+      box-shadow: inset 0 0 0 1px rgba(139, 167, 255, 0.55);
+    }
+
+    body.hl-pill .target-highlight:not(:has(*)) {
+      background: rgba(139, 167, 255, 0.10);
+      border: 1px solid rgba(139, 167, 255, 0.55);
+      border-radius: 0.3em;
+    }
+
     .target-highlight :is(rt, rp) {
       background: none !important;
     }
@@ -538,7 +550,8 @@
         <div class="filter-row-2">
           <label class="check-control"><input id="hideKnown" type="checkbox" disabled> Hide Migaku-known words</label>
           <label class="check-control"><input id="hideKanaOnly" type="checkbox"> Hide kana-only words</label>
-          <label class="check-control" title="Turn off when Migaku's own furigana is enabled to avoid double readings"><input id="showFurigana" type="checkbox"> Furigana on target</label>
+           <label class="check-control" title="Turn off when Migaku's own furigana is enabled to avoid double readings"><input id="showFurigana" type="checkbox"> Furigana on target</label>
+           <label class="check-control"><input id="pillHighlight" type="checkbox"> Pill highlight</label>
           <span class="filter-spacer"></span>
           <label class="control" style="grid-template-columns:auto auto;align-items:center;gap:8px;">
             <span>Per page</span>
@@ -585,6 +598,7 @@
           <label class="check-control"><input id="stickyHideKnown" type="checkbox"> Known</label>
           <label class="check-control"><input id="stickyHideKana" type="checkbox"> Kana-only</label>
           <label class="check-control"><input id="stickyFurigana" type="checkbox"> Furigana</label>
+          <label class="check-control"><input id="stickyPill" type="checkbox"> Pill</label>
           <label class="control"><span>Per page</span>
             <select id="stickyPageSize">
               <option value="25">25</option>
@@ -897,7 +911,7 @@
       mediaText: null,
       knownText: null,
       filters: {
-        search: '', hideKnown: false, hideKanaOnly: false, showFurigana: false,
+        search: '',       hideKnown: false, hideKanaOnly: false, showFurigana: false, pillHighlight: false,
         sentence: 'any', minOccurrences: 1, sort: 'occ-desc', pageSize: 50
       },
       page: 1
@@ -911,6 +925,7 @@
       errorBox: byId('errorBox'), filtersFieldset: byId('filtersFieldset'),
       searchInput: byId('searchInput'), stickySearch: byId('stickySearch'),
       hideKnown: byId('hideKnown'), hideKanaOnly: byId('hideKanaOnly'), showFurigana: byId('showFurigana'),
+      pillHighlight: byId('pillHighlight'), stickyPill: byId('stickyPill'),
       sentenceFilter: byId('sentenceFilter'), minOccurrences: byId('minOccurrences'),
       sortSelect: byId('sortSelect'), pageSize: byId('pageSize'),
       results: byId('results'), resultsHeading: byId('resultsHeading'),
@@ -954,6 +969,9 @@
       elements.hideKnown.disabled = state.knownWords.size === 0;
       elements.hideKanaOnly.checked = state.filters.hideKanaOnly;
       elements.showFurigana.checked = state.filters.showFurigana;
+      elements.pillHighlight.checked = state.filters.pillHighlight;
+      elements.stickyPill.checked = state.filters.pillHighlight;
+      document.body.classList.toggle('hl-pill', state.filters.pillHighlight);
       elements.sentenceFilter.value = state.filters.sentence;
       elements.minOccurrences.value = String(state.filters.minOccurrences);
       elements.sortSelect.value = state.filters.sort;
@@ -1043,17 +1061,31 @@
       sentence.querySelectorAll('.th-live').forEach((el) => el.classList.remove('th-live'));
     }
 
-    function markSentence(sentence, surface) {
+    function markSentence(sentence, surface, word) {
       unwrapThWraps(sentence);
-      const isParsed = [...sentence.querySelectorAll('span, a')].some((el) =>
-        !el.classList.contains('target-highlight') && !el.classList.contains('th-run') && !el.classList.contains('th-wrap') && !el.classList.contains('th-live')
+      const isParsed = [...sentence.querySelectorAll('span, a, ruby, b')].some((el) =>
+        !el.className || !/(target-highlight|th-run|th-wrap|th-live)/.test(el.className)
       );
       if (!isParsed) return;
 
       const { spans, text } = collectVisibleText(sentence);
-      const idx = text.indexOf(surface);
-      if (idx === -1) return;
-      const end = idx + surface.length;
+      let idx = text.indexOf(surface);
+      let target = surface;
+      if (idx === -1 && word) {
+        let stem = '';
+        const max = Math.min(surface.length, word.length);
+        for (let i = 0; i < max && surface[i] === word[i]; i += 1) stem += surface[i];
+        if (stem.length >= 2) {
+          idx = text.indexOf(stem);
+          target = stem;
+        }
+      }
+      if (idx === -1) {
+        const wrap = sentence.querySelector('.target-highlight');
+        if (wrap) wrap.classList.add('th-live');
+        return;
+      }
+      const end = idx + target.length;
 
       spans.forEach((s) => {
         if (s.end <= idx || s.start >= end) return;
@@ -1085,7 +1117,7 @@
     }
 
     function reapplyHighlights() {
-      document.querySelectorAll('.sentence[data-surface]').forEach((p) => markSentence(p, p.dataset.surface));
+      document.querySelectorAll('.sentence[data-surface]').forEach((p) => markSentence(p, p.dataset.surface, p.dataset.word));
     }
 
     let highlightTimer = null;
@@ -1102,6 +1134,7 @@
       core.parseHighlightSegments(entry.sentenceRaw).forEach((segment) => {
         if (segment.highlighted) {
           sentence.dataset.surface = segment.text;
+          sentence.dataset.word = entry.word;
           const span = document.createElement('span');
           span.className = 'target-highlight';
           if (showFurigana && entry.furiganaRuns.length > 0) {
@@ -1367,6 +1400,16 @@
       elements.hideKnown.addEventListener('change', () => { state.filters.hideKnown = elements.hideKnown.checked; resetPageAndRender(); });
       elements.hideKanaOnly.addEventListener('change', () => { state.filters.hideKanaOnly = elements.hideKanaOnly.checked; resetPageAndRender(); });
       elements.showFurigana.addEventListener('change', () => { state.filters.showFurigana = elements.showFurigana.checked; resetPageAndRender(); });
+      elements.pillHighlight.addEventListener('change', () => {
+        state.filters.pillHighlight = elements.pillHighlight.checked;
+        elements.stickyPill.checked = state.filters.pillHighlight;
+        document.body.classList.toggle('hl-pill', state.filters.pillHighlight);
+      });
+      elements.stickyPill.addEventListener('change', () => {
+        state.filters.pillHighlight = elements.stickyPill.checked;
+        elements.pillHighlight.checked = state.filters.pillHighlight;
+        document.body.classList.toggle('hl-pill', state.filters.pillHighlight);
+      });
       elements.sentenceFilter.addEventListener('change', () => { state.filters.sentence = elements.sentenceFilter.value; resetPageAndRender(); });
       elements.minOccurrences.addEventListener('input', () => {
         const value = Number.parseInt(elements.minOccurrences.value, 10);
@@ -1430,7 +1473,7 @@
     bindFilters();
     initFiles();
 
-    globalThis.JitenMinerApp = { state, loadJitenFile, loadKnownFile, loadJitenText, loadKnownText, applyKnownFlags, getProcessedEntries, changePage, handleGlobalKeydown, initFiles };
+    globalThis.JitenMinerApp = { state, loadJitenFile, loadKnownFile, loadJitenText, loadKnownText, applyKnownFlags, getProcessedEntries, changePage, handleGlobalKeydown, initFiles, markSentence };
   })();
   </script>
 </body>
