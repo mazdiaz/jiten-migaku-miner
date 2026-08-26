@@ -552,6 +552,7 @@
           <label class="check-control"><input id="hideKanaOnly" type="checkbox"> Hide kana-only words</label>
            <label class="check-control" title="Turn off when Migaku's own furigana is enabled to avoid double readings"><input id="showFurigana" type="checkbox"> Furigana on target</label>
            <label class="check-control"><input id="pillHighlight" type="checkbox"> Pill highlight</label>
+           <label class="check-control" title="Off = sentences left completely untouched for Migaku"><input id="showHighlight" type="checkbox"> Highlight target</label>
           <span class="filter-spacer"></span>
           <label class="control" style="grid-template-columns:auto auto;align-items:center;gap:8px;">
             <span>Per page</span>
@@ -599,6 +600,7 @@
           <label class="check-control"><input id="stickyHideKana" type="checkbox"> Kana-only</label>
           <label class="check-control"><input id="stickyFurigana" type="checkbox"> Furigana</label>
           <label class="check-control"><input id="stickyPill" type="checkbox"> Pill</label>
+          <label class="check-control"><input id="stickyHl" type="checkbox"> Highlight</label>
           <label class="control"><span>Per page</span>
             <select id="stickyPageSize">
               <option value="25">25</option>
@@ -911,7 +913,7 @@
       mediaText: null,
       knownText: null,
       filters: {
-        search: '',       hideKnown: false, hideKanaOnly: false, showFurigana: false, pillHighlight: false,
+        search: '',       hideKnown: false, hideKanaOnly: false, showFurigana: false, pillHighlight: false, showHighlight: false,
         sentence: 'any', minOccurrences: 1, sort: 'occ-desc', pageSize: 50
       },
       page: 1
@@ -926,6 +928,7 @@
       searchInput: byId('searchInput'), stickySearch: byId('stickySearch'),
       hideKnown: byId('hideKnown'), hideKanaOnly: byId('hideKanaOnly'), showFurigana: byId('showFurigana'),
       pillHighlight: byId('pillHighlight'), stickyPill: byId('stickyPill'),
+      showHighlight: byId('showHighlight'), stickyHl: byId('stickyHl'),
       sentenceFilter: byId('sentenceFilter'), minOccurrences: byId('minOccurrences'),
       sortSelect: byId('sortSelect'), pageSize: byId('pageSize'),
       results: byId('results'), resultsHeading: byId('resultsHeading'),
@@ -971,6 +974,8 @@
       elements.showFurigana.checked = state.filters.showFurigana;
       elements.pillHighlight.checked = state.filters.pillHighlight;
       elements.stickyPill.checked = state.filters.pillHighlight;
+      elements.showHighlight.checked = state.filters.showHighlight;
+      elements.stickyHl.checked = state.filters.showHighlight;
       document.body.classList.toggle('hl-pill', state.filters.pillHighlight);
       elements.sentenceFilter.value = state.filters.sentence;
       elements.minOccurrences.value = String(state.filters.minOccurrences);
@@ -1132,7 +1137,7 @@
       sentence.className = 'sentence';
       const showFurigana = Boolean(state.filters.showFurigana);
       core.parseHighlightSegments(entry.sentenceRaw).forEach((segment) => {
-        if (segment.highlighted) {
+        if (segment.highlighted && state.filters.showHighlight) {
           sentence.dataset.surface = segment.text;
           sentence.dataset.word = entry.word;
           const span = document.createElement('span');
@@ -1421,6 +1426,9 @@
         state.filters.pageSize = elements.pageSize.value === 'all' ? 'all' : Number(elements.pageSize.value);
         resetPageAndRender();
       });
+
+      elements.showHighlight.addEventListener('change', () => { state.filters.showHighlight = elements.showHighlight.checked; resetPageAndRender(); });
+      elements.stickyHl.addEventListener('change', () => { state.filters.showHighlight = elements.stickyHl.checked; resetPageAndRender(); });
 
       elements.stickySort.addEventListener('change', () => { state.filters.sort = elements.stickySort.value; resetPageAndRender(); });
       elements.stickySentence.addEventListener('change', () => { state.filters.sentence = elements.stickySentence.value; resetPageAndRender(); });
