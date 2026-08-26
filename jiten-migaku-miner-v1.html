@@ -1270,6 +1270,7 @@
         : 'Load a Jiten CSV to begin.';
 
       setPager(pageData);
+      persistPage();
       renderItems(pageData.items, pageData.startIndex);
     }
 
@@ -1289,6 +1290,16 @@
     }
 
     const STORAGE_KEY = 'jitenMiner.v1';
+    const PAGE_KEY = 'jitenMiner.page';
+
+    function persistPage() {
+      try { localStorage.setItem(PAGE_KEY, String(state.page || 1)); } catch { /* unavailable */ }
+    }
+
+    function restorePage() {
+      const saved = Number.parseInt(localStorage.getItem(PAGE_KEY) || '', 10);
+      return Number.isFinite(saved) && saved >= 1 ? saved : 1;
+    }
 
     function persistFiles() {
       try {
@@ -1399,6 +1410,7 @@
     }
 
     async function initFiles() {
+      const savedPage = restorePage();
       restorePersistedFiles();
       if (location.protocol === 'http:' || location.protocol === 'https:') {
         const csv = await fetchNewestInFolder('WORDS TO MINE', '.csv');
@@ -1406,6 +1418,7 @@
         const txt = await fetchNewestInFolder('MIGAKU KNOWN WORDS', '.txt');
         if (txt) loadKnownText(txt.text, `${txt.name} (auto)`, false);
       }
+      state.page = savedPage;
       render();
     }
 
@@ -1439,7 +1452,7 @@
       elements.stickySearch.addEventListener('input', () => syncSearch(elements.stickySearch.value));
       elements.hideKnown.addEventListener('change', () => { state.filters.hideKnown = elements.hideKnown.checked; resetPageAndRender(); });
       elements.hideKanaOnly.addEventListener('change', () => { state.filters.hideKanaOnly = elements.hideKanaOnly.checked; resetPageAndRender(); });
-      elements.showFurigana.addEventListener('change', () => { state.filters.showFurigana = elements.showFurigana.checked; resetPageAndRender(); });
+      elements.showFurigana.addEventListener('change', () => { state.filters.showFurigana = elements.showFurigana.checked; render(); });
       elements.pillHighlight.addEventListener('change', () => {
         state.filters.pillHighlight = elements.pillHighlight.checked;
         elements.stickyPill.checked = state.filters.pillHighlight;
@@ -1462,10 +1475,10 @@
         resetPageAndRender();
       });
 
-      elements.showHighlight.addEventListener('change', () => { state.filters.showHighlight = elements.showHighlight.checked; resetPageAndRender(); });
-      elements.stickyHl.addEventListener('change', () => { state.filters.showHighlight = elements.stickyHl.checked; resetPageAndRender(); });
-      elements.showDefinitions.addEventListener('change', () => { state.filters.showDefinitions = elements.showDefinitions.checked; resetPageAndRender(); });
-      elements.stickyDefs.addEventListener('change', () => { state.filters.showDefinitions = elements.stickyDefs.checked; resetPageAndRender(); });
+      elements.showHighlight.addEventListener('change', () => { state.filters.showHighlight = elements.showHighlight.checked; render(); });
+      elements.stickyHl.addEventListener('change', () => { state.filters.showHighlight = elements.stickyHl.checked; render(); });
+      elements.showDefinitions.addEventListener('change', () => { state.filters.showDefinitions = elements.showDefinitions.checked; render(); });
+      elements.stickyDefs.addEventListener('change', () => { state.filters.showDefinitions = elements.stickyDefs.checked; render(); });
 
       elements.stickySort.addEventListener('change', () => { state.filters.sort = elements.stickySort.value; resetPageAndRender(); });
       elements.stickySentence.addEventListener('change', () => { state.filters.sentence = elements.stickySentence.value; resetPageAndRender(); });
@@ -1476,7 +1489,7 @@
       });
       elements.stickyHideKnown.addEventListener('change', () => { state.filters.hideKnown = elements.stickyHideKnown.checked; resetPageAndRender(); });
       elements.stickyHideKana.addEventListener('change', () => { state.filters.hideKanaOnly = elements.stickyHideKana.checked; resetPageAndRender(); });
-      elements.stickyFurigana.addEventListener('change', () => { state.filters.showFurigana = elements.stickyFurigana.checked; resetPageAndRender(); });
+      elements.stickyFurigana.addEventListener('change', () => { state.filters.showFurigana = elements.stickyFurigana.checked; render(); });
       elements.stickyPageSize.addEventListener('change', () => {
         state.filters.pageSize = elements.stickyPageSize.value === 'all' ? 'all' : Number(elements.stickyPageSize.value);
         resetPageAndRender();
