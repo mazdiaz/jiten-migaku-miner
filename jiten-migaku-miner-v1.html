@@ -341,12 +341,9 @@
       overflow-wrap: anywhere;
     }
 
-    .target-highlight {
-      padding: 0 0.12em;
-    }
-
     .target-highlight:not(:has(*)) {
       background: rgba(255, 255, 0, 0.22);
+      padding: 0 0.12em;
       border-radius: 0.2em;
       box-decoration-break: clone;
       -webkit-box-decoration-break: clone;
@@ -354,11 +351,12 @@
 
     .target-highlight:has(*) {
       background: transparent;
+      padding: 0;
     }
 
     .target-highlight *:not(rt):not(rp):not(:has(*)) {
       background-color: rgba(255, 255, 0, 0.22) !important;
-      border-radius: 0.2em;
+      border-radius: 0 !important;
     }
 
     .target-highlight :is(rt, rp) {
@@ -436,7 +434,7 @@
         <div class="filter-grid">
           <label class="control">
             <span>Search target</span>
-            <input id="searchInput" type="search" placeholder="e.g. 気になる" autocomplete="off">
+             <input id="searchInput" type="search" placeholder="Word or sentence, e.g. 気になる / プール" autocomplete="off">
           </label>
           <label class="control">
             <span>Sort</span>
@@ -677,6 +675,10 @@
       return segments;
     }
 
+    function sentencePlain(sentenceRaw) {
+      return parseHighlightSegments(sentenceRaw).map((segment) => segment.text).join('');
+    }
+
     function filterEntries(entries, options = {}) {
       const search = normalizeText(options.search ?? '').toLocaleLowerCase();
       const hideKnown = Boolean(options.hideKnown);
@@ -686,8 +688,11 @@
       const minOccurrences = Number.isFinite(parsedMin) ? Math.max(0, parsedMin) : 0;
 
       return Array.from(entries ?? []).filter((entry) => {
-        const normalizedWord = normalizeText(entry.normalizedWord ?? entry.word).toLocaleLowerCase();
-        if (search && !normalizedWord.includes(search)) return false;
+        if (search) {
+          const wordMatch = normalizeText(entry.normalizedWord ?? entry.word).toLocaleLowerCase();
+          const sentenceMatch = sentencePlain(entry.sentenceRaw ?? '').toLocaleLowerCase();
+          if (!wordMatch.includes(search) && !sentenceMatch.includes(search)) return false;
+        }
         if (hideKnown && entry.known) return false;
         if (hideKanaOnly && isKanaOnly(entry.normalizedWord ?? entry.word)) return false;
         if (sentence === 'has' && !entry.hasSentence) return false;
@@ -746,6 +751,7 @@
       isKanaOnly,
       parseHighlightSegments,
       filterEntries,
+      sentencePlain,
       sortEntries,
       paginateEntries
     };
