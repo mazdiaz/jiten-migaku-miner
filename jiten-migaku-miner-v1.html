@@ -228,9 +228,7 @@
       top: 10px;
       z-index: 20;
       display: grid;
-      grid-template-columns: minmax(140px, auto) minmax(180px, 1fr) auto;
-      gap: 12px;
-      align-items: center;
+      gap: 10px;
       margin-bottom: 14px;
       padding: 10px 12px;
       border: 1px solid var(--border);
@@ -239,6 +237,51 @@
       backdrop-filter: blur(10px);
       box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
     }
+
+    .sticky-row-1 {
+      display: grid;
+      grid-template-columns: minmax(140px, auto) minmax(180px, 1fr) auto;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .sticky-row-2 {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px 16px;
+      align-items: center;
+    }
+
+    .sticky-row-2 .control {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+    }
+
+    .sticky-row-2 .control > span {
+      font-size: 0.72rem;
+    }
+
+    .sticky-row-2 select {
+      width: auto;
+      height: 32px;
+      padding: 0 8px;
+      font-size: 0.88rem;
+    }
+
+    .sticky-row-2 input[type="number"] {
+      width: 70px;
+      height: 32px;
+      padding: 0 8px;
+      font-size: 0.88rem;
+    }
+
+    .sticky-row-2 .check-control {
+      font-size: 0.88rem;
+      gap: 6px;
+    }
+
+    .sticky-row-2 .check-control input { width: 15px; height: 15px; }
 
     .sticky-title {
       min-width: 0;
@@ -408,7 +451,7 @@
     @media (max-width: 820px) {
       .import-grid { grid-template-columns: 1fr; }
       .filter-grid { grid-template-columns: 1fr 1fr; }
-      .sticky-toolbar { grid-template-columns: minmax(0, 1fr) auto; }
+      .sticky-row-1 { grid-template-columns: minmax(0, 1fr) auto; }
       .sticky-search { grid-column: 1 / -1; grid-row: 2; }
     }
 
@@ -499,12 +542,44 @@
 
     <section id="results" class="results-section" aria-live="polite" aria-label="Mining results">
       <div id="stickyToolbar" class="sticky-toolbar" hidden>
-        <div id="stickyTitle" class="sticky-title">Jiten media</div>
-        <input id="stickySearch" class="sticky-search" type="search" placeholder="Search target…" autocomplete="off">
-        <div class="pager" aria-label="Sticky page navigation">
-          <button id="stickyPrev" type="button" aria-label="Previous page">←</button>
-          <span id="stickyPage" class="page-label">Page 0 / 0</span>
-          <button id="stickyNext" type="button" aria-label="Next page">→</button>
+        <div class="sticky-row-1">
+          <div id="stickyTitle" class="sticky-title">Jiten media</div>
+          <input id="stickySearch" class="sticky-search" type="search" placeholder="Search target…" autocomplete="off">
+          <div class="pager" aria-label="Sticky page navigation">
+            <button id="stickyPrev" type="button" aria-label="Previous page">←</button>
+            <span id="stickyPage" class="page-label">Page 0 / 0</span>
+            <button id="stickyNext" type="button" aria-label="Next page">→</button>
+          </div>
+        </div>
+        <div class="sticky-row-2">
+          <label class="control"><span>Sort</span>
+            <select id="stickySort">
+              <option value="occ-desc">Occ ↓</option>
+              <option value="occ-asc">Occ ↑</option>
+              <option value="original">Original</option>
+            </select>
+          </label>
+          <label class="control"><span>Sentence</span>
+            <select id="stickySentence">
+              <option value="any">Any</option>
+              <option value="has">Has</option>
+              <option value="none">None</option>
+            </select>
+          </label>
+          <label class="control"><span>Min occ</span>
+            <input id="stickyMin" type="number" min="0" step="1" inputmode="numeric">
+          </label>
+          <label class="check-control"><input id="stickyHideKnown" type="checkbox"> Known</label>
+          <label class="check-control"><input id="stickyHideKana" type="checkbox"> Kana-only</label>
+          <label class="check-control"><input id="stickyFurigana" type="checkbox"> Furigana</label>
+          <label class="control"><span>Per page</span>
+            <select id="stickyPageSize">
+              <option value="25">25</option>
+              <option value="50">50</option>
+              <option value="100">100</option>
+              <option value="all">All</option>
+            </select>
+          </label>
         </div>
       </div>
 
@@ -826,6 +901,10 @@
       results: byId('results'), resultsHeading: byId('resultsHeading'),
       resultStats: byId('resultStats'), resultsList: byId('resultsList'),
       stickyToolbar: byId('stickyToolbar'), stickyTitle: byId('stickyTitle'),
+      stickySort: byId('stickySort'), stickySentence: byId('stickySentence'),
+      stickyMin: byId('stickyMin'), stickyHideKnown: byId('stickyHideKnown'),
+      stickyHideKana: byId('stickyHideKana'), stickyFurigana: byId('stickyFurigana'),
+      stickyPageSize: byId('stickyPageSize'),
       stickyPrev: byId('stickyPrev'), stickyNext: byId('stickyNext'), stickyPage: byId('stickyPage'),
       topPrev: byId('topPrev'), topNext: byId('topNext'), topPage: byId('topPage'),
       bottomPrev: byId('bottomPrev'), bottomNext: byId('bottomNext'), bottomPage: byId('bottomPage')
@@ -864,6 +943,14 @@
       elements.minOccurrences.value = String(state.filters.minOccurrences);
       elements.sortSelect.value = state.filters.sort;
       elements.pageSize.value = String(state.filters.pageSize);
+      elements.stickySort.value = state.filters.sort;
+      elements.stickySentence.value = state.filters.sentence;
+      elements.stickyMin.value = String(state.filters.minOccurrences);
+      elements.stickyHideKnown.checked = state.filters.hideKnown;
+      elements.stickyHideKnown.disabled = state.knownWords.size === 0;
+      elements.stickyHideKana.checked = state.filters.hideKanaOnly;
+      elements.stickyFurigana.checked = state.filters.showFurigana;
+      elements.stickyPageSize.value = String(state.filters.pageSize);
       elements.jitenStatus.textContent = state.mediaFileName ? `${state.mediaFileName} ✓` : 'No CSV loaded';
       elements.knownStatus.textContent = state.knownFileName ? `${state.knownFileName} ✓ · ${state.knownWords.size.toLocaleString()} entries` : 'Optional · no list loaded';
       elements.knownStatus.classList.toggle('optional', !state.knownFileName);
@@ -1103,6 +1190,21 @@
       elements.sortSelect.addEventListener('change', () => { state.filters.sort = elements.sortSelect.value; resetPageAndRender(); });
       elements.pageSize.addEventListener('change', () => {
         state.filters.pageSize = elements.pageSize.value === 'all' ? 'all' : Number(elements.pageSize.value);
+        resetPageAndRender();
+      });
+
+      elements.stickySort.addEventListener('change', () => { state.filters.sort = elements.stickySort.value; resetPageAndRender(); });
+      elements.stickySentence.addEventListener('change', () => { state.filters.sentence = elements.stickySentence.value; resetPageAndRender(); });
+      elements.stickyMin.addEventListener('input', () => {
+        const value = Number.parseInt(elements.stickyMin.value, 10);
+        state.filters.minOccurrences = Number.isFinite(value) ? Math.max(0, value) : 0;
+        resetPageAndRender();
+      });
+      elements.stickyHideKnown.addEventListener('change', () => { state.filters.hideKnown = elements.stickyHideKnown.checked; resetPageAndRender(); });
+      elements.stickyHideKana.addEventListener('change', () => { state.filters.hideKanaOnly = elements.stickyHideKana.checked; resetPageAndRender(); });
+      elements.stickyFurigana.addEventListener('change', () => { state.filters.showFurigana = elements.stickyFurigana.checked; resetPageAndRender(); });
+      elements.stickyPageSize.addEventListener('change', () => {
+        state.filters.pageSize = elements.stickyPageSize.value === 'all' ? 'all' : Number(elements.stickyPageSize.value);
         resetPageAndRender();
       });
     }
