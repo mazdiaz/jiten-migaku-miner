@@ -356,15 +356,33 @@
       border: 0;
     }
 
-    .target-highlight *:not(rt):not(rp):not(:has(*)) {
-      background-color: rgba(139, 167, 255, 0.08) !important;
-      box-shadow: inset 0 0 0 1px rgba(139, 167, 255, 0.55) !important;
-      border-radius: 0.3em !important;
-    }
-
     .target-highlight :is(rt, rp) {
       background: none !important;
-      box-shadow: none !important;
+      border: 0 !important;
+    }
+
+    .target-highlight *:not(rt):not(rp):not(:has(*)) {
+      background-color: rgba(139, 167, 255, 0.08) !important;
+      border: 0 solid rgba(139, 167, 255, 0.55) !important;
+      border-top-width: 1px !important;
+      border-bottom-width: 1px !important;
+      border-radius: 0 !important;
+    }
+
+    .target-highlight > :not(rb):not(rt):not(rp):not(:has(*)):first-child,
+    .target-highlight > :first-child > :not(rb):not(rt):not(rp):not(:has(*)):first-child,
+    .target-highlight > ruby:first-child rb {
+      border-left-width: 1px !important;
+      border-top-left-radius: 0.3em !important;
+      border-bottom-left-radius: 0.3em !important;
+    }
+
+    .target-highlight > :not(rb):not(rt):not(rp):not(:has(*)):last-child,
+    .target-highlight > :last-child > :not(rb):not(rt):not(rp):not(:has(*)):last-child,
+    .target-highlight > ruby:last-child rb {
+      border-right-width: 1px !important;
+      border-top-right-radius: 0.3em !important;
+      border-bottom-right-radius: 0.3em !important;
     }
 
     .empty-state {
@@ -868,6 +886,13 @@
     }
 
     function appendFuriganaTarget(container, surface, runs, word) {
+      const appendPlain = (text) => {
+        if (!text) return;
+        const span = document.createElement('span');
+        span.className = 'th-run';
+        span.textContent = text;
+        container.appendChild(span);
+      };
       let covered = 0;
       if (surface.startsWith(word) || word.startsWith(surface)) {
         for (const run of runs) {
@@ -879,16 +904,13 @@
             rt.textContent = run.reading;
             ruby.append(rb, rt);
             container.appendChild(ruby);
-            covered += run.text.length;
           } else {
-            container.appendChild(document.createTextNode(run.text));
-            covered += run.text.length;
+            appendPlain(run.text);
           }
+          covered += run.text.length;
         }
       }
-      if (covered < surface.length) {
-        container.appendChild(document.createTextNode(surface.slice(covered)));
-      }
+      if (covered < surface.length) appendPlain(surface.slice(covered));
     }
 
     function renderSentence(entry) {
@@ -922,7 +944,11 @@
       const target = document.createElement('div');
       target.className = 'target-word';
       target.lang = 'ja';
-      target.textContent = entry.word;
+      if (state.filters.showFurigana && entry.furiganaRuns.length > 0) {
+        appendFuriganaTarget(target, entry.word, entry.furiganaRuns, entry.word);
+      } else {
+        target.textContent = entry.word;
+      }
 
       const occurrences = document.createElement('span');
       occurrences.className = 'occurrence-count';
