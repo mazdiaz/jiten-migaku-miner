@@ -881,6 +881,8 @@
       knownWords: new Set(),
       mediaFileName: '',
       knownFileName: '',
+      mediaText: null,
+      knownText: null,
       filters: {
         search: '', hideKnown: false, hideKanaOnly: false, showFurigana: false,
         sentence: 'any', minOccurrences: 1, sort: 'occ-desc', pageSize: 50
@@ -1119,35 +1121,125 @@
       elements.resultsHeading.scrollIntoView({ block: 'start' });
     }
 
-    async function loadJitenFile(file) {
-      if (!file) return;
+    const STORAGE_KEY = 'jitenMiner.v1';
+
+    function persistFiles() {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({
+          mediaFileName: state.mediaFileName || null,
+          mediaText: state.mediaText || null,
+          knownFileName: state.knownFileName || null,
+          knownText: state.knownText || null
+        }));
+      } catch { /* quota or storage unavailable */ }
+    }
+
+    function loadJitenText(text, name, persist = true) {
       clearError();
       try {
-        const parsed = core.parseJitenCsv(await readTextFile(file));
+        const parsed = core.parseJitenCsv(text);
         state.entries = parsed.entries;
-        state.mediaFileName = file.name || 'Jiten CSV';
+        state.mediaFileName = name || 'Jiten CSV';
+        state.mediaText = text;
         applyKnownFlags();
         state.page = 1;
+        if (persist) persistFiles();
         render();
+        return true;
       } catch (error) {
         setError(error instanceof Error ? error.message : 'Could not read this as a Jiten CSV.');
+        return false;
+      }
+    }
+
+    function loadKnownText(text, name, persist = true) {
+      clearError();
+      try {
+        state.knownWords = core.parseKnownWords(text);
+        state.knownFileName = name || 'Migaku known words';
+        state.knownText = text;
+        state.filters.hideKnown = true;
+        applyKnownFlags();
+        state.page = 1;
+        if (persist) persistFiles();
+        render();
+        return true;
+      } catch (error) {
+        setError('The Migaku known-words file could not be read. Please use a plain-text file with one entry per line.');
+        return false;
+      }
+    }
+
+    async function loadJitenFile(file) {
+      if (!file) return;
+      try {
+        loadJitenText(await readTextFile(file), file.name);
+      } catch (error) {
+        setError('This file could not be read as text.');
       }
     }
 
     async function loadKnownFile(file) {
       if (!file) return;
-      clearError();
       try {
-        const nextKnownWords = core.parseKnownWords(await readTextFile(file));
-        state.knownWords = nextKnownWords;
-        state.knownFileName = file.name || 'Migaku known words';
-        state.filters.hideKnown = true;
-        applyKnownFlags();
-        state.page = 1;
-        render();
+        loadKnownText(await readTextFile(file), file.name);
       } catch (error) {
         setError('The Migaku known-words file could not be read. Please use a plain-text file with one entry per line.');
       }
+    }
+
+    function restorePersistedFiles() {
+      let saved = null;
+      try {
+        saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
+      } catch { saved = null; }
+      if (!saved) return;
+      if (saved.mediaText) loadJitenText(saved.mediaText, saved.mediaFileName || 'Jiten CSV', false);
+      if (saved.knownText) loadKnownText(saved.knownText, saved.knownFileName || 'Migaku known words', false);
+    }
+
+    async function fetchNewestInFolder(dir, ext) {
+      try {
+        const res = await fetch(`${dir}/`, { cache: 'no-store' });
+        if (!res.ok) return null;
+        const doc = new DOMParser().parseFromString(await res.text(), 'text/html');
+        const names = [...doc.querySelectorAll('a[href]')]
+          .map((a) => decodeURIComponent(a.getAttribute('href') || '').split('/').pop())
+          .filter((n) => n.toLowerCase().endsWith(ext));
+        if (names.length === 0) return null;
+
+        let best = null;
+        let bestDate = 0;
+        for (const name of names.slice(0, 20)) {
+          try {
+            const head = await fetch(`${dir}/${encodeURIComponent(name)}`, { method: 'HEAD', cache: 'no-store' });
+            if (!head.ok) continue;
+            const modified = Date.parse(head.headers.get('Last-Modified') || '');
+            if (Number.isFinite(modified) && modified > bestDate) {
+              bestDate = modified;
+              best = name;
+            }
+          } catch { /* skip */ }
+        }
+        if (!best) best = names.sort().pop();
+
+        const fileRes = await fetch(`${dir}/${encodeURIComponent(best)}`, { cache: 'no-store' });
+        if (!fileRes.ok) return null;
+        return { name: best, text: await fileRes.text() };
+      } catch {
+        return null;
+      }
+    }
+
+    async function initFiles() {
+      restorePersistedFiles();
+      if (location.protocol === 'http:' || location.protocol === 'https:') {
+        const csv = await fetchNewestInFolder('WORDS TO MINE', '.csv');
+        if (csv) loadJitenText(csv.text, `${csv.name} (auto)`, false);
+        const txt = await fetchNewestInFolder('MIGAKU KNOWN WORDS', '.txt');
+        if (txt) loadKnownText(txt.text, `${txt.name} (auto)`, false);
+      }
+      render();
     }
 
     function bindDropzone(dropzone, input, loader) {
@@ -1242,9 +1334,9 @@
     bindDropzone(elements.jitenDropzone, elements.jitenInput, loadJitenFile);
     bindDropzone(elements.knownDropzone, elements.knownInput, loadKnownFile);
     bindFilters();
-    render();
+    initFiles();
 
-    globalThis.JitenMinerApp = { state, loadJitenFile, loadKnownFile, applyKnownFlags, getProcessedEntries, changePage, handleGlobalKeydown };
+    globalThis.JitenMinerApp = { state, loadJitenFile, loadKnownFile, loadJitenText, loadKnownText, applyKnownFlags, getProcessedEntries, changePage, handleGlobalKeydown, initFiles };
   })();
   </script>
 </body>
