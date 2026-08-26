@@ -419,10 +419,9 @@
     }
 
     .target-highlight:not(:has(*)) {
-      border: 1px solid rgba(139, 167, 255, 0.55);
-      border-radius: 0.3em;
-      background: rgba(139, 167, 255, 0.08);
-      padding: 0 0.15em;
+      background: rgba(255, 255, 0, 0.22);
+      border-radius: 0.2em;
+      padding: 0 0.12em;
       box-decoration-break: clone;
       -webkit-box-decoration-break: clone;
     }
@@ -433,33 +432,13 @@
       border: 0;
     }
 
+    .th-live {
+      background-color: rgba(255, 255, 0, 0.22);
+      border-radius: 0.2em;
+    }
+
     .target-highlight :is(rt, rp) {
       background: none !important;
-      border: 0 !important;
-    }
-
-    .target-highlight *:not(rt):not(rp):not(:has(*)) {
-      background-color: rgba(139, 167, 255, 0.08) !important;
-      border: 0 solid rgba(139, 167, 255, 0.55) !important;
-      border-top-width: 1px !important;
-      border-bottom-width: 1px !important;
-      border-radius: 0 !important;
-    }
-
-    .target-highlight > :not(rb):not(rt):not(rp):not(:has(*)):first-child,
-    .target-highlight > :first-child > :not(rb):not(rt):not(rp):not(:has(*)):first-child,
-    .target-highlight > ruby:first-child rb {
-      border-left-width: 1px !important;
-      border-top-left-radius: 0.3em !important;
-      border-bottom-left-radius: 0.3em !important;
-    }
-
-    .target-highlight > :not(rb):not(rt):not(rp):not(:has(*)):last-child,
-    .target-highlight > :last-child > :not(rb):not(rt):not(rp):not(:has(*)):last-child,
-    .target-highlight > ruby:last-child rb {
-      border-right-width: 1px !important;
-      border-top-right-radius: 0.3em !important;
-      border-bottom-right-radius: 0.3em !important;
     }
 
     .empty-state {
@@ -1036,12 +1015,93 @@
       if (covered < surface.length) appendPlain(surface.slice(covered));
     }
 
+    function collectVisibleText(root) {
+      const spans = [];
+      let text = '';
+      function visit(node) {
+        if (node.nodeType === 3) {
+          spans.push({ node, start: text.length, end: text.length + node.data.length, parent: node.parentElement });
+          text += node.data;
+          return;
+        }
+        if (node.nodeType !== 1) return;
+        const tag = node.tagName;
+        if (tag === 'RT' || tag === 'RP' || tag === 'SCRIPT' || tag === 'STYLE') return;
+        for (const child of node.childNodes) visit(child);
+      }
+      visit(root);
+      return { spans, text };
+    }
+
+    function unwrapThWraps(sentence) {
+      sentence.querySelectorAll('span.th-wrap').forEach((w) => {
+        const parent = w.parentNode;
+        while (w.firstChild) parent.insertBefore(w.firstChild, w);
+        parent.removeChild(w);
+        parent.normalize();
+      });
+      sentence.querySelectorAll('.th-live').forEach((el) => el.classList.remove('th-live'));
+    }
+
+    function markSentence(sentence, surface) {
+      unwrapThWraps(sentence);
+      const isParsed = [...sentence.querySelectorAll('span, a')].some((el) =>
+        !el.classList.contains('target-highlight') && !el.classList.contains('th-run') && !el.classList.contains('th-wrap') && !el.classList.contains('th-live')
+      );
+      if (!isParsed) return;
+
+      const { spans, text } = collectVisibleText(sentence);
+      const idx = text.indexOf(surface);
+      if (idx === -1) return;
+      const end = idx + surface.length;
+
+      spans.forEach((s) => {
+        if (s.end <= idx || s.start >= end) return;
+        const parent = s.parent;
+        if (!parent) return;
+        if (parent === sentence) {
+          const overlapStart = Math.max(idx - s.start, 0);
+          const overlapEnd = Math.min(end - s.start, s.node.data.length);
+          if (overlapStart === 0 && overlapEnd === s.node.data.length) {
+            const w = document.createElement('span');
+            w.className = 'th-wrap th-live';
+            s.node.parentNode.insertBefore(w, s.node);
+            w.appendChild(s.node);
+          } else if (overlapEnd > overlapStart) {
+            try {
+              const range = document.createRange();
+              range.setStart(s.node, overlapStart);
+              range.setEnd(s.node, overlapEnd);
+              const w = document.createElement('span');
+              w.className = 'th-wrap th-live';
+              range.surroundContents(w);
+            } catch { /* boundary mismatch - skip */ }
+          }
+          return;
+        }
+        if (parent.classList.contains('target-highlight') || parent.classList.contains('th-run')) return;
+        parent.classList.add('th-live');
+      });
+    }
+
+    function reapplyHighlights() {
+      document.querySelectorAll('.sentence[data-surface]').forEach((p) => markSentence(p, p.dataset.surface));
+    }
+
+    let highlightTimer = null;
+    const highlightObserver = new MutationObserver(() => {
+      clearTimeout(highlightTimer);
+      highlightTimer = setTimeout(reapplyHighlights, 200);
+    });
+    highlightObserver.observe(elements.resultsList, { childList: true, subtree: true, characterData: true });
+
     function renderSentence(entry) {
       const sentence = document.createElement('p');
       sentence.className = 'sentence';
       const showFurigana = Boolean(state.filters.showFurigana);
       core.parseHighlightSegments(entry.sentenceRaw).forEach((segment) => {
         if (segment.highlighted) {
+          sentence.dataset.surface = segment.text;
           const span = document.createElement('span');
           span.className = 'target-highlight';
           if (showFurigana && entry.furiganaRuns.length > 0) {
