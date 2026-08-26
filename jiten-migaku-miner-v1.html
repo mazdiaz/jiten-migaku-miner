@@ -384,6 +384,25 @@
       overflow-wrap: anywhere;
     }
 
+    .sentence,
+    .target-word {
+      --keep: 0;
+    }
+
+    .sentence :is(span, a, ruby, rb, b, i, em, strong, u),
+    .target-word :is(span, a, ruby, rb, b, i, em, strong, u) {
+      vertical-align: baseline !important;
+      top: auto !important;
+      bottom: auto !important;
+      margin-top: 0 !important;
+      margin-bottom: 0 !important;
+    }
+
+    .sentence span,
+    .target-word span {
+      overflow: visible !important;
+    }
+
     .target-highlight:not(:has(*)) {
       border: 1px solid rgba(139, 167, 255, 0.55);
       border-radius: 0.3em;
