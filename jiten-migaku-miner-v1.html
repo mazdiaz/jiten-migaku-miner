@@ -396,6 +396,8 @@
       bottom: auto !important;
       margin-top: 0 !important;
       margin-bottom: 0 !important;
+      font-size: inherit !important;
+      line-height: inherit !important;
     }
 
     .sentence span,
@@ -434,13 +436,32 @@
 
     .th-live {
       background-color: rgba(255, 255, 0, 0.22);
-      border-radius: 0.2em;
+      border-radius: 0;
+    }
+
+    .th-live.th-first {
+      border-top-left-radius: 0.2em;
+      border-bottom-left-radius: 0.2em;
+    }
+
+    .th-live.th-last {
+      border-top-right-radius: 0.2em;
+      border-bottom-right-radius: 0.2em;
     }
 
     body.hl-pill .th-live {
       background-color: rgba(139, 167, 255, 0.10);
-      border-radius: 0.3em;
       box-shadow: inset 0 0 0 1px rgba(139, 167, 255, 0.55);
+    }
+
+    body.hl-pill .th-live.th-first {
+      border-top-left-radius: 0.3em;
+      border-bottom-left-radius: 0.3em;
+    }
+
+    body.hl-pill .th-live.th-last {
+      border-top-right-radius: 0.3em;
+      border-bottom-right-radius: 0.3em;
     }
 
     body.hl-pill .target-highlight:not(:has(*)) {
@@ -1063,7 +1084,9 @@
         parent.removeChild(w);
         parent.normalize();
       });
-      sentence.querySelectorAll('.th-live').forEach((el) => el.classList.remove('th-live'));
+      sentence.querySelectorAll('.th-live').forEach((el) => {
+        el.classList.remove('th-live', 'th-first', 'th-last');
+      });
     }
 
     function markSentence(sentence, surface, word) {
@@ -1091,6 +1114,10 @@
         return;
       }
       const end = idx + target.length;
+      const marked = [];
+      const push = (el) => {
+        if (el && !marked.includes(el)) marked.push(el);
+      };
 
       spans.forEach((s) => {
         if (s.end <= idx || s.start >= end) return;
@@ -1104,6 +1131,7 @@
             w.className = 'th-wrap th-live';
             s.node.parentNode.insertBefore(w, s.node);
             w.appendChild(s.node);
+            push(w);
           } else if (overlapEnd > overlapStart) {
             try {
               const range = document.createRange();
@@ -1112,13 +1140,22 @@
               const w = document.createElement('span');
               w.className = 'th-wrap th-live';
               range.surroundContents(w);
+              push(w);
             } catch { /* boundary mismatch - skip */ }
           }
           return;
         }
         if (parent.classList.contains('target-highlight') || parent.classList.contains('th-run')) return;
         parent.classList.add('th-live');
+        push(parent);
       });
+
+      if (marked.length === 1) {
+        marked[0].classList.add('th-first', 'th-last');
+      } else if (marked.length > 1) {
+        marked[0].classList.add('th-first');
+        marked[marked.length - 1].classList.add('th-last');
+      }
     }
 
     function reapplyHighlights() {
