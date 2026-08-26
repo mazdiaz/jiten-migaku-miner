@@ -389,48 +389,6 @@
       --keep: 0;
     }
 
-    .target-word :is(span, a, ruby, rb, b, i, em, strong, u) {
-      vertical-align: baseline !important;
-      top: auto !important;
-      bottom: auto !important;
-      margin-top: 0 !important;
-      margin-bottom: 0 !important;
-      margin-left: 0 !important;
-      margin-right: 0 !important;
-      padding-left: 0 !important;
-      padding-right: 0 !important;
-      font-size: inherit !important;
-      line-height: inherit !important;
-    }
-
-    .target-word :is(span, a, ruby, rb, b, i, em, strong, u) {
-      transform: none !important;
-      translate: none !important;
-      rotate: none !important;
-      font-family: inherit !important;
-      font-weight: inherit !important;
-      letter-spacing: inherit !important;
-    }
-
-    .target-word span {
-      overflow: visible !important;
-    }
-
-    .target-word :is(span, a, ruby, rb, b, i, em, strong, u) {
-      transform: none !important;
-      translate: none !important;
-      rotate: none !important;
-      font-family: inherit !important;
-      font-size: inherit !important;
-      font-weight: inherit !important;
-      line-height: inherit !important;
-      letter-spacing: inherit !important;
-      padding-left: 0 !important;
-      padding-right: 0 !important;
-      margin-left: 0 !important;
-      margin-right: 0 !important;
-    }
-
     .target-highlight:not(:has(*)) {
       background: rgba(255, 255, 0, 0.22);
       border-radius: 0.2em;
@@ -445,34 +403,41 @@
       border: 0;
     }
 
-    .th-live {
+    .th-wrap {
       background-color: rgba(255, 255, 0, 0.22);
       border-radius: 0;
+      box-decoration-break: clone;
+      -webkit-box-decoration-break: clone;
     }
 
-    .th-live.th-first {
+    .th-wrap.th-first {
       border-top-left-radius: 0.2em;
       border-bottom-left-radius: 0.2em;
     }
 
-    .th-live.th-last {
+    .th-wrap.th-last {
       border-top-right-radius: 0.2em;
       border-bottom-right-radius: 0.2em;
     }
 
-    body.hl-pill .th-live {
+    body.hl-pill .th-wrap {
       background-color: rgba(139, 167, 255, 0.10);
       box-shadow: inset 0 0 0 1px rgba(139, 167, 255, 0.55);
     }
 
-    body.hl-pill .th-live.th-first {
+    body.hl-pill .th-wrap.th-first {
       border-top-left-radius: 0.3em;
       border-bottom-left-radius: 0.3em;
     }
 
-    body.hl-pill .th-live.th-last {
+    body.hl-pill .th-wrap.th-last {
       border-top-right-radius: 0.3em;
       border-bottom-right-radius: 0.3em;
+    }
+
+    .th-live {
+      background-color: rgba(255, 255, 0, 0.22);
+      border-radius: 0.2em;
     }
 
     body.hl-pill .target-highlight:not(:has(*)) {
@@ -1138,29 +1103,20 @@
       };
 
       const inRange = leaves.filter((l) => l.pos >= idx && l.pos < end);
-      const bareByNode = new Map();
+      const byNode = new Map();
       for (const leaf of inRange) {
-        const parent = leaf.parent;
-        const cls = parent.className || '';
-        if (parent === sentence || parent.classList.contains('target-highlight') || parent.classList.contains('th-run')) {
-          if (parent !== sentence && parent.classList.contains('target-highlight') && parent.querySelector('.migaku-token')) continue;
-          let rec = bareByNode.get(leaf.node);
-          if (!rec) { rec = { node: leaf.node, first: leaf.offset, last: leaf.offset }; bareByNode.set(leaf.node, rec); }
-          rec.first = Math.min(rec.first, leaf.offset);
-          rec.last = Math.max(rec.last, leaf.offset);
-          continue;
-        }
-        const paint = parent.querySelector(':scope > ruby > rb, :scope > rb') || parent;
-        if (!paint.classList.contains('th-live')) paint.classList.add('th-live');
-        push(paint);
+        let rec = byNode.get(leaf.node);
+        if (!rec) { rec = { node: leaf.node, first: leaf.offset, last: leaf.offset }; byNode.set(leaf.node, rec); }
+        rec.first = Math.min(rec.first, leaf.offset);
+        rec.last = Math.max(rec.last, leaf.offset);
       }
-      bareByNode.forEach((rec) => {
+      byNode.forEach((rec) => {
         try {
           const range = document.createRange();
           range.setStart(rec.node, rec.first);
           range.setEnd(rec.node, rec.last + 1);
           const w = document.createElement('span');
-          w.className = 'th-wrap th-live';
+          w.className = 'th-wrap';
           range.surroundContents(w);
           push(w);
         } catch { /* skip */ }
