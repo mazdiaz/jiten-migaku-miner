@@ -554,6 +554,7 @@
            <label class="check-control" title="Turn off when Migaku's own furigana is enabled to avoid double readings"><input id="showFurigana" type="checkbox"> Furigana on target</label>
            <label class="check-control"><input id="pillHighlight" type="checkbox"> Pill highlight</label>
            <label class="check-control" title="Off = sentences left completely untouched for Migaku"><input id="showHighlight" type="checkbox"> Highlight target</label>
+           <label class="check-control"><input id="showDefinitions" type="checkbox" checked> Definitions</label>
           <span class="filter-spacer"></span>
           <label class="control" style="grid-template-columns:auto auto;align-items:center;gap:8px;">
             <span>Per page</span>
@@ -602,6 +603,7 @@
           <label class="check-control"><input id="stickyFurigana" type="checkbox"> Furigana</label>
           <label class="check-control"><input id="stickyPill" type="checkbox"> Pill</label>
           <label class="check-control"><input id="stickyHl" type="checkbox"> Highlight</label>
+          <label class="check-control"><input id="stickyDefs" type="checkbox"> Defs</label>
           <label class="control"><span>Per page</span>
             <select id="stickyPageSize">
               <option value="25">25</option>
@@ -914,7 +916,7 @@
       mediaText: null,
       knownText: null,
       filters: {
-        search: '',       hideKnown: false, hideKanaOnly: false, showFurigana: false, pillHighlight: false, showHighlight: false,
+        search: '',       hideKnown: false, hideKanaOnly: false, showFurigana: false, pillHighlight: false, showHighlight: false, showDefinitions: true,
         sentence: 'any', minOccurrences: 1, sort: 'occ-desc', pageSize: 50
       },
       page: 1
@@ -930,6 +932,7 @@
       hideKnown: byId('hideKnown'), hideKanaOnly: byId('hideKanaOnly'), showFurigana: byId('showFurigana'),
       pillHighlight: byId('pillHighlight'), stickyPill: byId('stickyPill'),
       showHighlight: byId('showHighlight'), stickyHl: byId('stickyHl'),
+      showDefinitions: byId('showDefinitions'), stickyDefs: byId('stickyDefs'),
       sentenceFilter: byId('sentenceFilter'), minOccurrences: byId('minOccurrences'),
       sortSelect: byId('sortSelect'), pageSize: byId('pageSize'),
       results: byId('results'), resultsHeading: byId('resultsHeading'),
@@ -977,6 +980,8 @@
       elements.stickyPill.checked = state.filters.pillHighlight;
       elements.showHighlight.checked = state.filters.showHighlight;
       elements.stickyHl.checked = state.filters.showHighlight;
+      elements.showDefinitions.checked = state.filters.showDefinitions;
+      elements.stickyDefs.checked = state.filters.showDefinitions;
       document.body.classList.toggle('hl-pill', state.filters.pillHighlight);
       elements.sentenceFilter.value = state.filters.sentence;
       elements.minOccurrences.value = String(state.filters.minOccurrences);
@@ -1192,7 +1197,7 @@
       occurrences.textContent = `×${entry.occurrences}`;
 
       header.append(target, occurrences);
-      if (entry.definitions) {
+      if (entry.definitions && state.filters.showDefinitions) {
         const parts = entry.definitions.split(',').map((part) => part.trim()).filter(Boolean);
         const max = 3;
         const shown = parts.slice(0, max).join(', ');
@@ -1445,6 +1450,8 @@
 
       elements.showHighlight.addEventListener('change', () => { state.filters.showHighlight = elements.showHighlight.checked; resetPageAndRender(); });
       elements.stickyHl.addEventListener('change', () => { state.filters.showHighlight = elements.stickyHl.checked; resetPageAndRender(); });
+      elements.showDefinitions.addEventListener('change', () => { state.filters.showDefinitions = elements.showDefinitions.checked; resetPageAndRender(); });
+      elements.stickyDefs.addEventListener('change', () => { state.filters.showDefinitions = elements.stickyDefs.checked; resetPageAndRender(); });
 
       elements.stickySort.addEventListener('change', () => { state.filters.sort = elements.stickySort.value; resetPageAndRender(); });
       elements.stickySentence.addEventListener('change', () => { state.filters.sentence = elements.stickySentence.value; resetPageAndRender(); });
