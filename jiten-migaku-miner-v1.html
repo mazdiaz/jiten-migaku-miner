@@ -384,6 +384,16 @@
       overflow-wrap: anywhere;
     }
 
+    .entry-number {
+      flex: 0 0 auto;
+      min-width: 3.2em;
+      color: var(--subtle);
+      font-size: 0.88rem;
+      font-variant-numeric: tabular-nums;
+      font-weight: 700;
+      user-select: none;
+    }
+
     .sentence,
     .target-word {
       --keep: 0;
@@ -1176,12 +1186,16 @@
       return sentence;
     }
 
-    function renderEntry(entry) {
+    function renderEntry(entry, number) {
       const article = document.createElement('article');
       article.className = 'mining-entry';
 
       const header = document.createElement('div');
       header.className = 'entry-header';
+
+      const numberEl = document.createElement('span');
+      numberEl.className = 'entry-number';
+      numberEl.textContent = `${number}.`;
 
       const target = document.createElement('div');
       target.className = 'target-word';
@@ -1196,7 +1210,7 @@
       occurrences.className = 'occurrence-count';
       occurrences.textContent = `×${entry.occurrences}`;
 
-      header.append(target, occurrences);
+      header.append(numberEl, target, occurrences);
       if (entry.definitions && state.filters.showDefinitions) {
         const parts = entry.definitions.split(',').map((part) => part.trim()).filter(Boolean);
         const max = 3;
@@ -1222,7 +1236,7 @@
       return article;
     }
 
-    function renderItems(items) {
+    function renderItems(items, numberFrom = 1) {
       elements.resultsList.textContent = '';
       if (!state.entries.length) {
         const empty = document.createElement('div');
@@ -1239,7 +1253,7 @@
         return;
       }
       const fragment = document.createDocumentFragment();
-      items.forEach((entry) => fragment.appendChild(renderEntry(entry)));
+      items.forEach((entry, i) => fragment.appendChild(renderEntry(entry, numberFrom + i)));
       elements.resultsList.appendChild(fragment);
     }
 
@@ -1256,7 +1270,7 @@
         : 'Load a Jiten CSV to begin.';
 
       setPager(pageData);
-      renderItems(pageData.items);
+      renderItems(pageData.items, pageData.startIndex);
     }
 
     function resetPageAndRender() {
