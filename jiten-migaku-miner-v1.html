@@ -403,6 +403,21 @@
       overflow: visible !important;
     }
 
+    .target-word :is(span, a, ruby, rb, b, i, em, strong, u) {
+      transform: none !important;
+      translate: none !important;
+      rotate: none !important;
+      font-family: inherit !important;
+      font-size: inherit !important;
+      font-weight: inherit !important;
+      line-height: inherit !important;
+      letter-spacing: inherit !important;
+      padding-left: 0 !important;
+      padding-right: 0 !important;
+      margin-left: 0 !important;
+      margin-right: 0 !important;
+    }
+
     .target-highlight:not(:has(*)) {
       border: 1px solid rgba(139, 167, 255, 0.55);
       border-radius: 0.3em;
