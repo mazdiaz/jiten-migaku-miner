@@ -389,13 +389,36 @@
       --keep: 0;
     }
 
-    .sentence :is(span, a, ruby, rb, b, i, em, strong, u),
+    .sentence :is(span, a, b, i, em, strong, u),
     .target-word :is(span, a, ruby, rb, b, i, em, strong, u) {
       vertical-align: baseline !important;
       top: auto !important;
       bottom: auto !important;
       margin-top: 0 !important;
       margin-bottom: 0 !important;
+      margin-left: 0 !important;
+      margin-right: 0 !important;
+      padding-left: 0 !important;
+      padding-right: 0 !important;
+      font-size: inherit !important;
+      line-height: inherit !important;
+    }
+
+    .sentence :is(ruby, rb) {
+      vertical-align: baseline !important;
+      top: auto !important;
+      bottom: auto !important;
+      margin-top: 0 !important;
+      margin-bottom: 0 !important;
+      margin-left: 0 !important;
+      margin-right: 0 !important;
+    }
+
+    .sentence ruby {
+      ruby-align: center;
+    }
+
+    .sentence rb {
       font-size: inherit !important;
       line-height: inherit !important;
     }
@@ -1146,8 +1169,11 @@
           return;
         }
         if (parent.classList.contains('target-highlight') || parent.classList.contains('th-run')) return;
-        parent.classList.add('th-live');
-        push(parent);
+        const paintTarget = parent.tagName === 'RUBY'
+          ? (parent.querySelector('rb') || parent)
+          : parent;
+        paintTarget.classList.add('th-live');
+        push(paintTarget);
       });
 
       if (marked.length === 1) {
@@ -1519,6 +1545,19 @@
     initFiles();
 
     globalThis.JitenMinerApp = { state, loadJitenFile, loadKnownFile, loadJitenText, loadKnownText, applyKnownFlags, getProcessedEntries, changePage, handleGlobalKeydown, initFiles, markSentence };
+
+    globalThis.__minerDebug = () => {
+      const reports = [...document.querySelectorAll('.sentence[data-surface]')].slice(0, 60).map((p) => {
+        const styles = [...p.querySelectorAll('span, ruby')].slice(0, 12).map((el) => {
+          const s = getComputedStyle(el);
+          return `  <${el.tagName.toLowerCase()} class="${el.className}"> "${el.textContent.slice(0, 12)}" display=${s.display} va=${s.verticalAlign} lh=${s.lineHeight} fs=${s.fontSize} pos=${s.position} ml=${s.marginLeft} mr=${s.marginRight} pl=${s.paddingLeft} pr=${s.paddingRight}`;
+        });
+        return `SENTENCE surface="${p.dataset.surface}" word="${p.dataset.word}"\n  HTML: ${p.outerHTML.slice(0, 1500)}\n${styles.join('\n')}`;
+      });
+      const out = reports.join('\n\n');
+      try { navigator.clipboard.writeText(out); } catch { /* clipboard may need focus */ }
+      return out;
+    };
   })();
   </script>
 </body>
