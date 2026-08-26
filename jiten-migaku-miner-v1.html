@@ -389,7 +389,6 @@
       --keep: 0;
     }
 
-    .sentence :is(span, a, b, i, em, strong, u),
     .target-word :is(span, a, ruby, rb, b, i, em, strong, u) {
       vertical-align: baseline !important;
       top: auto !important;
@@ -404,26 +403,15 @@
       line-height: inherit !important;
     }
 
-    .sentence :is(ruby, rb) {
-      vertical-align: baseline !important;
-      top: auto !important;
-      bottom: auto !important;
-      margin-top: 0 !important;
-      margin-bottom: 0 !important;
-      margin-left: 0 !important;
-      margin-right: 0 !important;
+    .target-word :is(span, a, ruby, rb, b, i, em, strong, u) {
+      transform: none !important;
+      translate: none !important;
+      rotate: none !important;
+      font-family: inherit !important;
+      font-weight: inherit !important;
+      letter-spacing: inherit !important;
     }
 
-    .sentence ruby {
-      ruby-align: center;
-    }
-
-    .sentence rb {
-      font-size: inherit !important;
-      line-height: inherit !important;
-    }
-
-    .sentence span,
     .target-word span {
       overflow: visible !important;
     }
@@ -1083,12 +1071,19 @@
     }
 
     function collectVisibleText(root) {
-      const spans = [];
+      const leaves = [];
       let text = '';
       function visit(node) {
         if (node.nodeType === 3) {
-          spans.push({ node, start: text.length, end: text.length + node.data.length, parent: node.parentElement });
-          text += node.data;
+          const parent = node.parentElement;
+          if (!parent) return;
+          if (/migaku-spacer/.test(parent.className || '')) return;
+          for (let i = 0; i < node.data.length; i += 1) {
+            const ch = node.data[i];
+            if (ch === '\u200B') continue;
+            leaves.push({ pos: text.length, node, offset: i, parent });
+            text += ch;
+          }
           return;
         }
         if (node.nodeType !== 1) return;
@@ -1097,7 +1092,7 @@
         for (const child of node.childNodes) visit(child);
       }
       visit(root);
-      return { spans, text };
+      return { leaves, text };
     }
 
     function unwrapThWraps(sentence) {
@@ -1119,7 +1114,7 @@
       );
       if (!isParsed) return;
 
-      const { spans, text } = collectVisibleText(sentence);
+      const { leaves, text } = collectVisibleText(sentence);
       let idx = text.indexOf(surface);
       let target = surface;
       if (idx === -1 && word) {
@@ -1142,38 +1137,33 @@
         if (el && !marked.includes(el)) marked.push(el);
       };
 
-      spans.forEach((s) => {
-        if (s.end <= idx || s.start >= end) return;
-        const parent = s.parent;
-        if (!parent) return;
-        if (parent === sentence) {
-          const overlapStart = Math.max(idx - s.start, 0);
-          const overlapEnd = Math.min(end - s.start, s.node.data.length);
-          if (overlapStart === 0 && overlapEnd === s.node.data.length) {
-            const w = document.createElement('span');
-            w.className = 'th-wrap th-live';
-            s.node.parentNode.insertBefore(w, s.node);
-            w.appendChild(s.node);
-            push(w);
-          } else if (overlapEnd > overlapStart) {
-            try {
-              const range = document.createRange();
-              range.setStart(s.node, overlapStart);
-              range.setEnd(s.node, overlapEnd);
-              const w = document.createElement('span');
-              w.className = 'th-wrap th-live';
-              range.surroundContents(w);
-              push(w);
-            } catch { /* boundary mismatch - skip */ }
-          }
-          return;
+      const inRange = leaves.filter((l) => l.pos >= idx && l.pos < end);
+      const bareByNode = new Map();
+      for (const leaf of inRange) {
+        const parent = leaf.parent;
+        const cls = parent.className || '';
+        if (parent === sentence || parent.classList.contains('target-highlight') || parent.classList.contains('th-run')) {
+          if (parent !== sentence && parent.classList.contains('target-highlight') && parent.querySelector('.migaku-token')) continue;
+          let rec = bareByNode.get(leaf.node);
+          if (!rec) { rec = { node: leaf.node, first: leaf.offset, last: leaf.offset }; bareByNode.set(leaf.node, rec); }
+          rec.first = Math.min(rec.first, leaf.offset);
+          rec.last = Math.max(rec.last, leaf.offset);
+          continue;
         }
-        if (parent.classList.contains('target-highlight') || parent.classList.contains('th-run')) return;
-        const paintTarget = parent.tagName === 'RUBY'
-          ? (parent.querySelector('rb') || parent)
-          : parent;
-        paintTarget.classList.add('th-live');
-        push(paintTarget);
+        const paint = parent.querySelector(':scope > ruby > rb, :scope > rb') || parent;
+        if (!paint.classList.contains('th-live')) paint.classList.add('th-live');
+        push(paint);
+      }
+      bareByNode.forEach((rec) => {
+        try {
+          const range = document.createRange();
+          range.setStart(rec.node, rec.first);
+          range.setEnd(rec.node, rec.last + 1);
+          const w = document.createElement('span');
+          w.className = 'th-wrap th-live';
+          range.surroundContents(w);
+          push(w);
+        } catch { /* skip */ }
       });
 
       if (marked.length === 1) {
