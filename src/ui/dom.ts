@@ -6,6 +6,10 @@ export interface DomMap {
   readonly jitenStatus: HTMLElement;
   readonly knownStatus: HTMLElement;
   readonly clearData: HTMLButtonElement;
+  readonly exportBackup: HTMLButtonElement;
+  readonly restoreBackup: HTMLButtonElement;
+  readonly restoreBackupInput: HTMLInputElement;
+  readonly backupStatus: HTMLElement;
   readonly errorBox: HTMLElement;
   readonly filtersFieldset: HTMLFieldSetElement;
   readonly searchInput: HTMLInputElement;
@@ -83,6 +87,10 @@ export function getDomMap(): DomMap {
     jitenStatus: byId<HTMLElement>("jitenStatus"),
     knownStatus: byId<HTMLElement>("knownStatus"),
     clearData: byId<HTMLButtonElement>("clearData"),
+    exportBackup: byId<HTMLButtonElement>("exportBackup"),
+    restoreBackup: byId<HTMLButtonElement>("restoreBackup"),
+    restoreBackupInput: byId<HTMLInputElement>("restoreBackupInput"),
+    backupStatus: byId<HTMLElement>("backupStatus"),
     errorBox: byId<HTMLElement>("errorBox"),
     filtersFieldset: byId<HTMLFieldSetElement>("filtersFieldset"),
     searchInput: byId<HTMLInputElement>("searchInput"),

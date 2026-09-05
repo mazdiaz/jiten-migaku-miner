@@ -34,6 +34,12 @@
         <button id="clearData" type="button" class="clear-button">Clear saved data…</button>
         <span class="clear-note">Removes imported datasets, known words, and preferences stored in this browser.</span>
       </div>
+      <div class="portability-row" aria-label="Data portability">
+        <button id="exportBackup" type="button" class="clear-button">Export backup</button>
+        <button id="restoreBackup" type="button" class="clear-button">Restore backup…</button>
+        <input id="restoreBackupInput" type="file" accept=".json,application/json" hidden>
+        <span id="backupStatus" class="clear-note" aria-live="polite"></span>
+      </div>
       <div id="errorBox" class="error-box" role="alert" hidden></div>
     </section>
 
