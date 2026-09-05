@@ -30,6 +30,7 @@ const query: QueryState = {
   sort: "occ-desc",
   pageSize: 50,
   page: 1,
+  decision: "all",
 };
 
 const view: ViewState = {

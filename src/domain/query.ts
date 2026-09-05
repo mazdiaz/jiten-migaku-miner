@@ -6,6 +6,7 @@ import type {
   QueryResult,
   QueryState,
   QueryWindow,
+  WordDecision,
 } from "./types";
 
 function nonNegative(value: number): number {
@@ -23,8 +24,20 @@ function originalOrder(a: EntryWithKnown, b: EntryWithKnown): number {
 export function applyKnownWords(
   entries: readonly Entry[],
   knownWords: ReadonlySet<string>,
+  decisions: ReadonlyMap<string, WordDecision> = new Map(),
 ): EntryWithKnown[] {
-  return entries.map((entry) => ({ ...entry, known: knownWords.has(entry.normalizedWord) }));
+  return entries.map((entry) => {
+    const knownByMigaku = knownWords.has(entry.normalizedWord);
+    const local = decisions.get(entry.normalizedWord);
+    const knownByDecision = local?.status === "known";
+    return {
+      ...entry,
+      known: knownByMigaku || knownByDecision,
+      knownByMigaku,
+      knownByDecision,
+      decision: local?.status ?? "unreviewed",
+    };
+  });
 }
 
 export function filterEntries(
@@ -46,6 +59,7 @@ export function filterEntries(
     if (query.sentence === "has" && !entry.hasSentence) return false;
     if (query.sentence === "none" && entry.hasSentence) return false;
     if (occurrenceCount(entry) < minOccurrences) return false;
+    if (query.decision !== "all" && entry.decision !== query.decision) return false;
     return true;
   });
 }
@@ -153,8 +167,9 @@ export function queryEntries(
   knownWords: ReadonlySet<string>,
   query: QueryState,
   window?: QueryWindow,
+  decisions: ReadonlyMap<string, WordDecision> = new Map(),
 ): QueryResult {
-  const withKnown = applyKnownWords(entries, knownWords);
+  const withKnown = applyKnownWords(entries, knownWords, decisions);
   const knownCount = withKnown.reduce((count, entry) => count + (entry.known ? 1 : 0), 0);
   const filtered = filterEntries(withKnown, query);
   const sorted = sortEntries(filtered, query.sort);

@@ -33,6 +33,16 @@ export class ImportError extends Error {
 
 export type PageSize = number | "all";
 
+export type WordDecisionStatus = "known" | "mined" | "skip" | "later";
+
+export type WordDecisionFilter = "all" | "unreviewed" | WordDecisionStatus;
+
+export interface WordDecision {
+  normalizedWord: string;
+  status: WordDecisionStatus;
+  updatedAt: string;
+}
+
 export interface QueryState {
   search: string;
   hideKnown: boolean;
@@ -42,6 +52,7 @@ export interface QueryState {
   sort: "occ-desc" | "occ-asc" | "original";
   pageSize: PageSize;
   page: number;
+  decision: WordDecisionFilter;
 }
 
 export interface ViewState {
@@ -56,7 +67,12 @@ export interface QueryWindow {
   size: number;
 }
 
-export type EntryWithKnown = Entry & { known: boolean };
+export type EntryWithKnown = Entry & {
+  known: boolean;
+  decision: WordDecisionStatus | "unreviewed";
+  knownByMigaku: boolean;
+  knownByDecision: boolean;
+};
 
 export interface QueryResult {
   items: EntryWithKnown[];

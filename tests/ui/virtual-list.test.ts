@@ -15,6 +15,9 @@ function entry(index: number): EntryWithKnown {
     definitions: "",
     furiganaRuns: [],
     known: false,
+    knownByMigaku: false,
+    knownByDecision: false,
+    decision: "unreviewed",
   };
 }
 

@@ -6,7 +6,7 @@ import {
   queryEntries,
   sortEntries,
 } from "../../src/domain/query";
-import type { Entry, EntryWithKnown, QueryState } from "../../src/domain/types";
+import type { Entry, EntryWithKnown, QueryState, WordDecision } from "../../src/domain/types";
 
 const entries: Entry[] = Array.from({ length: 150 }, (_, originalIndex) => ({
   id: `entry-${originalIndex}`,
@@ -33,6 +33,9 @@ function entryWithKnown(overrides: Partial<Entry>, known = false): EntryWithKnow
     furiganaRuns: [],
     ...overrides,
     known,
+    knownByMigaku: false,
+    knownByDecision: false,
+    decision: "unreviewed",
   };
 }
 
@@ -46,6 +49,7 @@ function queryState(overrides: Partial<QueryState> = {}): QueryState {
     sort: "original",
     pageSize: 50,
     page: 1,
+    decision: "all",
     ...overrides,
   };
 }
@@ -179,7 +183,13 @@ describe("sortEntries", () => {
 });
 
 describe("paginateEntries", () => {
-  const source = entries.slice(0, 5).map((entry, index) => ({ ...entry, known: index % 2 === 0 }));
+  const source = entries.slice(0, 5).map((entry, index) => ({
+    ...entry,
+    known: index % 2 === 0,
+    knownByMigaku: false,
+    knownByDecision: false,
+    decision: "unreviewed" as const,
+  }));
 
   it("returns empty result metadata for empty input", () => {
     expect(paginateEntries([], 3, 25)).toEqual({
@@ -255,11 +265,133 @@ describe("queryEntries", () => {
       sort: "original",
       pageSize: "all",
       page: 1,
+      decision: "all",
     };
     const result = queryEntries(entries, new Set(), query, { start: 100, size: 25 });
     expect(result.windowed).toBe(true);
     expect(result.items).toHaveLength(25);
     expect(result.totalEntries).toBe(entries.length);
     expect(result.startIndex).toBe(101);
+  });
+});
+
+describe("word decisions", () => {
+  const decisionKnownWords = new Set(["migaku-known"]);
+
+  const decisionDecisions = new Map<string, WordDecision>(
+    (
+      [
+        ["local-known", "known"],
+        ["mined-word", "mined"],
+        ["skip-word", "skip"],
+        ["later-word", "later"],
+      ] as const
+    ).map(([normalizedWord, status]) => [
+      normalizedWord,
+      { normalizedWord, status, updatedAt: "2026-09-05T00:00:00.000Z" },
+    ]),
+  );
+
+  function decisionSource(): Entry[] {
+    return [
+      "unreviewed-word",
+      "migaku-known",
+      "local-known",
+      "mined-word",
+      "skip-word",
+      "later-word",
+    ].map((normalizedWord, originalIndex) => ({
+      id: normalizedWord,
+      originalIndex,
+      word: normalizedWord,
+      normalizedWord,
+      occurrences: 1,
+      sentenceRaw: "",
+      hasSentence: false,
+      definitions: "",
+      furiganaRuns: [],
+    }));
+  }
+
+  function entriesWithDecisions(): EntryWithKnown[] {
+    return applyKnownWords(decisionSource(), decisionKnownWords, decisionDecisions);
+  }
+
+  it("defaults entries to unreviewed", () => {
+    const entry = entriesWithDecisions().find((item) => item.id === "unreviewed-word");
+    expect(entry).toMatchObject({
+      decision: "unreviewed",
+      known: false,
+      knownByMigaku: false,
+      knownByDecision: false,
+    });
+  });
+
+  it("marks local known decisions as effectively known", () => {
+    const entry = entriesWithDecisions().find((item) => item.id === "local-known");
+    expect(entry).toMatchObject({
+      decision: "known",
+      known: true,
+      knownByMigaku: false,
+      knownByDecision: true,
+    });
+  });
+
+  it("keeps mined separate from known", () => {
+    const entry = entriesWithDecisions().find((item) => item.id === "mined-word");
+    expect(entry).toMatchObject({
+      decision: "mined",
+      known: false,
+      knownByMigaku: false,
+      knownByDecision: false,
+    });
+  });
+
+  it("keeps imported known separate from local decision", () => {
+    const entry = entriesWithDecisions().find((item) => item.id === "migaku-known");
+    expect(entry).toMatchObject({
+      decision: "unreviewed",
+      known: true,
+      knownByMigaku: true,
+      knownByDecision: false,
+    });
+  });
+
+  it("filters unreviewed decisions", () => {
+    expect(
+      filterEntries(entriesWithDecisions(), queryState({ decision: "unreviewed" })).map((entry) => entry.id),
+    ).toEqual(["unreviewed-word", "migaku-known"]);
+  });
+
+  it("filters mined decisions", () => {
+    expect(
+      filterEntries(entriesWithDecisions(), queryState({ decision: "mined" })).map((entry) => entry.id),
+    ).toEqual(["mined-word"]);
+  });
+
+  it("hideKnown removes both Migaku-known and manually-known entries", () => {
+    const ids = filterEntries(entriesWithDecisions(), queryState({ hideKnown: true })).map(
+      (entry) => entry.id,
+    );
+    expect(ids).not.toContain("migaku-known");
+    expect(ids).not.toContain("local-known");
+  });
+
+  it("hideKnown does not remove mined/skip/later entries", () => {
+    expect(
+      filterEntries(entriesWithDecisions(), queryState({ hideKnown: true })).map((entry) => entry.id),
+    ).toEqual(["unreviewed-word", "mined-word", "skip-word", "later-word"]);
+  });
+
+  it("queries by decision across the full pipeline", () => {
+    const result = queryEntries(
+      decisionSource(),
+      decisionKnownWords,
+      queryState({ decision: "mined", sort: "original", pageSize: "all" }),
+      undefined,
+      decisionDecisions,
+    );
+    expect(result.items.map((entry) => entry.id)).toEqual(["mined-word"]);
+    expect(result.knownCount).toBe(2);
   });
 });

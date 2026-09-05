@@ -55,6 +55,7 @@ const query: QueryState = {
   sort: "occ-desc",
   pageSize: 50,
   page: 2,
+  decision: "all",
 };
 
 const view: ViewState = {

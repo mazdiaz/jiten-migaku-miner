@@ -235,6 +235,7 @@ function validateQuery(value: unknown): QueryState {
     sort,
     pageSize,
     page: positiveInteger(value, "page"),
+    decision: "all",
   };
 }
 

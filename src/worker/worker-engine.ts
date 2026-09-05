@@ -307,7 +307,8 @@ export class WorkerEngine {
           if (entryIndex === undefined) continue;
           const value = dataset.entries[entryIndex];
           if (value !== undefined) {
-            items.push({ ...value, known: knownByIndex.get(entryIndex) === true });
+            const known = knownByIndex.get(entryIndex) === true;
+            items.push({ ...value, known, knownByMigaku: known, knownByDecision: false, decision: "unreviewed" });
           }
         }
         if (this.isCancelled(request.requestId)) return;
@@ -338,7 +339,8 @@ export class WorkerEngine {
         if (entryIndex === undefined) continue;
         const value = dataset.entries[entryIndex];
         if (value !== undefined) {
-          ordered.push({ ...value, known: knownByIndex.get(entryIndex) === true });
+          const known = knownByIndex.get(entryIndex) === true;
+          ordered.push({ ...value, known, knownByMigaku: known, knownByDecision: false, decision: "unreviewed" });
         }
         if ((offset + 1) % WORKER_IMPORT_CHUNK_SIZE === 0 && await this.chunkFinished(request.requestId)) return;
       }

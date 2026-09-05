@@ -57,6 +57,7 @@ function queryState(overrides: Partial<QueryState> = {}): QueryState {
     sort: "original",
     pageSize: 50,
     page: 1,
+    decision: "all",
     ...overrides,
   };
 }

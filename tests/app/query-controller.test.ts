@@ -44,6 +44,7 @@ function makeState(overrides: Partial<AppState> = {}): AppState {
       sort: "occ-desc",
       pageSize: 50,
       page: 1,
+      decision: "all",
     },
     view: { showFurigana: false, pillHighlight: false, showHighlight: false, showDefinitions: true },
     page: 1,

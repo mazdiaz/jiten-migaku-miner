@@ -44,6 +44,7 @@ export const DEFAULT_QUERY: QueryState = {
   sort: "occ-desc",
   pageSize: 50,
   page: 1,
+  decision: "all",
 };
 
 export const DEFAULT_VIEW: ViewState = {

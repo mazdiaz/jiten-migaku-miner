@@ -26,6 +26,7 @@ const validQueryRequest: WorkerRequest = {
     sort: "original",
     pageSize: 25,
     page: 1,
+    decision: "all",
   },
   window: { start: 10, size: 5 },
 };
