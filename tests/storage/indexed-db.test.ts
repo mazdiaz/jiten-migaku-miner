@@ -2,7 +2,12 @@ import "fake-indexeddb/auto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createIndexedDbAppStore } from "../../src/storage/indexed-db";
 import type { AppStore, DatasetMetadata } from "../../src/storage/contracts";
-import type { Entry, QueryState, ViewState } from "../../src/domain/types";
+import type {
+  Entry,
+  QueryState,
+  ViewState,
+  WordDecision,
+} from "../../src/domain/types";
 
 const databaseName = "jiten-migaku-miner-task-4-test";
 
@@ -68,6 +73,78 @@ const view: ViewState = {
   showDefinitions: false,
 };
 
+const decision = (normalizedWord: string, status: WordDecision["status"], updatedAt: string): WordDecision => ({
+  normalizedWord,
+  status,
+  updatedAt,
+});
+
+function openVersion1Database(name: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(name, 1);
+    request.onupgradeneeded = () => {
+      const database = request.result;
+      database.createObjectStore("datasets", { keyPath: "id" });
+      database.createObjectStore("entryChunks", {
+        keyPath: ["datasetId", "chunkIndex"],
+      });
+      database.createObjectStore("knownWordSets", { keyPath: "id" });
+      database.createObjectStore("preferences", { keyPath: "id" });
+      database.createObjectStore("meta", { keyPath: "key" });
+    };
+    request.onsuccess = () => {
+      const database = request.result;
+      const transaction = database.transaction(
+        ["datasets", "entryChunks", "knownWordSets", "preferences", "meta"],
+        "readwrite",
+      );
+      transaction.objectStore("datasets").put({
+        ...metadata("legacy"),
+        ready: true,
+      });
+      transaction.objectStore("entryChunks").put({
+        datasetId: "legacy",
+        chunkIndex: 0,
+        entries: [entry("legacy-entry", 0)],
+      });
+      transaction.objectStore("knownWordSets").put({
+        id: "migaku",
+        name: "Migaku known words",
+        words: ["透過"],
+      });
+      transaction.objectStore("preferences").put({
+        id: "current",
+        query,
+        view,
+        page: 1,
+      });
+      transaction.objectStore("meta").put({
+        key: "activeDatasetId",
+        value: "legacy",
+      });
+      transaction.objectStore("meta").put({
+        key: "activeKnownWordSetId",
+        value: "migaku",
+      });
+      transaction.oncomplete = () => {
+        database.close();
+        resolve();
+      };
+      transaction.onerror = () => reject(transaction.error);
+      transaction.onabort = () => reject(transaction.error);
+    };
+    request.onerror = () => reject(request.error ?? new Error("Could not create version 1 database"));
+  });
+}
+
+function openRawDatabase(name: string): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(name);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error ?? new Error("Could not open test database"));
+  });
+}
+
 function deleteDatabase(name: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.deleteDatabase(name);
@@ -98,28 +175,54 @@ describe("IndexedDbAppStore", () => {
     expect(await store.datasets.getActive()).toEqual(metadata("first"));
   });
 
-  it("creates version 1 schema with required object stores", async () => {
+  it("creates version 2 schema with required object stores", async () => {
     const store = createIndexedDbAppStore(databaseName);
     await store.datasets.list();
 
-    const database = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open(databaseName, 1);
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error ?? new Error("Could not open test database"));
-    });
+    const database = await openRawDatabase(databaseName);
+    try {
+      expect(database.version).toBe(2);
+      expect([...database.objectStoreNames]).toEqual(
+        expect.arrayContaining([
+          "datasets",
+          "entryChunks",
+          "knownWordSets",
+          "preferences",
+          "meta",
+          "wordDecisions",
+        ]),
+      );
+      expect(database.objectStoreNames.length).toBe(6);
+    } finally {
+      database.close();
+    }
+  });
 
-    expect(database.version).toBe(1);
-    expect([...database.objectStoreNames]).toEqual(
-      expect.arrayContaining([
-        "datasets",
-        "entryChunks",
-        "knownWordSets",
-        "preferences",
-        "meta",
-      ]),
-    );
-    expect(database.objectStoreNames.length).toBe(5);
-    database.close();
+  it("upgrades a version 1 database in place without losing data", async () => {
+    await openVersion1Database(databaseName);
+
+    const store = createIndexedDbAppStore(databaseName);
+
+    expect(await store.datasets.list()).toEqual([metadata("legacy")]);
+    expect(await store.datasets.getActive()).toEqual(metadata("legacy"));
+    await expect(
+      collectChunks(store.datasets.readChunks("legacy", 10)),
+    ).resolves.toEqual([[entry("legacy-entry", 0)]]);
+    expect(await store.knownWords.getActive()).toEqual({
+      id: "migaku",
+      name: "Migaku known words",
+      words: new Set(["透過"]),
+    });
+    expect(await store.preferences.load()).toEqual({ query, view, page: 1 });
+
+    const database = await openRawDatabase(databaseName);
+    try {
+      expect(database.version).toBe(2);
+      expect(database.objectStoreNames.length).toBe(6);
+      expect([...database.objectStoreNames]).toContain("wordDecisions");
+    } finally {
+      database.close();
+    }
   });
 
   it("round-trips entries in order and requested chunk sizes", async () => {
@@ -217,6 +320,7 @@ describe("IndexedDbAppStore", () => {
     await store.datasets.activate("clear-me");
     await store.knownWords.save("known", "Known words", ["alpha"]);
     await store.preferences.save({ query, view, page: 1 });
+    await store.wordDecisions.set(decision("透過", "known", "2026-09-05T00:00:00.000Z"));
 
     await store.clearAll();
 
@@ -224,6 +328,48 @@ describe("IndexedDbAppStore", () => {
     expect(await store.datasets.getActive()).toBeNull();
     expect(await store.knownWords.getActive()).toBeNull();
     expect(await store.preferences.load()).toBeNull();
+    expect(await store.wordDecisions.list()).toEqual([]);
+  });
+
+  it("round-trips word decisions and removes them by word", async () => {
+    const store = createIndexedDbAppStore(databaseName);
+    const record = decision("透過", "known", "2026-09-05T00:00:00.000Z");
+
+    await store.wordDecisions.set(record);
+
+    expect(await store.wordDecisions.get("透過")).toEqual(record);
+    expect(await store.wordDecisions.get("unknown-word")).toBeNull();
+    expect(await store.wordDecisions.list()).toEqual([record]);
+
+    await store.wordDecisions.set(decision("透過", "mined", "2026-09-05T01:00:00.000Z"));
+
+    expect(await store.wordDecisions.get("透過")).toEqual(
+      decision("透過", "mined", "2026-09-05T01:00:00.000Z"),
+    );
+
+    await store.wordDecisions.remove("透過");
+
+    expect(await store.wordDecisions.get("透過")).toBeNull();
+    expect(await store.wordDecisions.list()).toEqual([]);
+  });
+
+  it("keeps decisions and other data intact across reopen", async () => {
+    const store = createIndexedDbAppStore(databaseName);
+    const record = decision("遠い", "later", "2026-09-05T00:00:00.000Z");
+
+    await store.wordDecisions.set(record);
+    await store.knownWords.save("known", "Known words", ["alpha"]);
+    await store.preferences.save({ query, view, page: 2 });
+
+    const reopened = createIndexedDbAppStore(databaseName);
+
+    expect(await reopened.wordDecisions.get("遠い")).toEqual(record);
+    expect(await reopened.knownWords.getActive()).toEqual({
+      id: "known",
+      name: "Known words",
+      words: new Set(["alpha"]),
+    });
+    expect(await reopened.preferences.load()).toEqual({ query, view, page: 2 });
   });
 
   it("does not leave partial data or replace active data when staging fails", async () => {

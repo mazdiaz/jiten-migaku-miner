@@ -1,20 +1,27 @@
-import type { Entry, QueryState, ViewState } from "../domain/types";
+import type {
+  Entry,
+  QueryState,
+  ViewState,
+  WordDecision,
+} from "../domain/types";
 import type {
   AppStore,
   DatasetMetadata,
   DatasetStore,
   KnownWordStore,
   PreferencesStore,
+  WordDecisionStore,
 } from "./contracts";
 
 export const INDEXED_DB_NAME = "jiten-migaku-miner";
-export const INDEXED_DB_VERSION = 1;
+export const INDEXED_DB_VERSION = 2;
 
 const DATASETS_STORE = "datasets";
 const ENTRY_CHUNKS_STORE = "entryChunks";
 const KNOWN_WORD_SETS_STORE = "knownWordSets";
 const PREFERENCES_STORE = "preferences";
 const META_STORE = "meta";
+const WORD_DECISIONS_STORE = "wordDecisions";
 const ACTIVE_DATASET_KEY = "activeDatasetId";
 const ACTIVE_KNOWN_WORD_SET_KEY = "activeKnownWordSetId";
 const PREFERENCES_KEY = "current";
@@ -25,7 +32,8 @@ type StoreName =
   | typeof ENTRY_CHUNKS_STORE
   | typeof KNOWN_WORD_SETS_STORE
   | typeof PREFERENCES_STORE
-  | typeof META_STORE;
+  | typeof META_STORE
+  | typeof WORD_DECISIONS_STORE;
 
 interface DatasetRecord extends DatasetMetadata {
   ready: boolean;
@@ -64,6 +72,10 @@ function cloneEntry(value: Entry): Entry {
 
 function cloneMetadata(value: DatasetMetadata): DatasetMetadata {
   return { ...value, headers: [...value.headers] };
+}
+
+function cloneDecision(value: WordDecision): WordDecision {
+  return { ...value };
 }
 
 function datasetRange(datasetId: string): IDBKeyRange {
@@ -107,6 +119,11 @@ function openDatabase(name: string): Promise<IDBDatabase> {
       }
       if (!database.objectStoreNames.contains(META_STORE)) {
         database.createObjectStore(META_STORE, { keyPath: "key" });
+      }
+      if (!database.objectStoreNames.contains(WORD_DECISIONS_STORE)) {
+        database.createObjectStore(WORD_DECISIONS_STORE, {
+          keyPath: "normalizedWord",
+        });
       }
     };
     request.onerror = () => reject(requestError(request));
@@ -673,9 +690,91 @@ class IndexedDbPreferencesStore implements PreferencesStore {
   }
 }
 
+class IndexedDbWordDecisionStore implements WordDecisionStore {
+  constructor(private readonly databaseName: string) {}
+
+  async get(normalizedWord: string): Promise<WordDecision | null> {
+    return withDatabase(this.databaseName, async (database) => {
+      const record = await runTransaction<WordDecision | undefined>(
+        database,
+        [WORD_DECISIONS_STORE],
+        "readonly",
+        (transaction, resolveResult) => {
+          const request = transaction.objectStore(WORD_DECISIONS_STORE).get(
+            normalizedWord,
+          ) as IDBRequest<WordDecision | undefined>;
+          request.onsuccess = () => resolveResult(request.result);
+        },
+      );
+      return record ? cloneDecision(record) : null;
+    });
+  }
+
+  async list(): Promise<WordDecision[]> {
+    return withDatabase(this.databaseName, async (database) => {
+      const records = await runTransaction<WordDecision[]>(
+        database,
+        [WORD_DECISIONS_STORE],
+        "readonly",
+        (transaction, resolveResult) => {
+          const request = transaction.objectStore(WORD_DECISIONS_STORE).getAll() as IDBRequest<
+            WordDecision[]
+          >;
+          request.onsuccess = () => resolveResult(request.result);
+        },
+      );
+
+      return records.map(cloneDecision);
+    });
+  }
+
+  async set(decision: WordDecision): Promise<void> {
+    await withDatabase(this.databaseName, async (database) => {
+      await runTransaction<void>(
+        database,
+        [WORD_DECISIONS_STORE],
+        "readwrite",
+        (transaction, resolveResult) => {
+          transaction.objectStore(WORD_DECISIONS_STORE).put(cloneDecision(decision));
+          resolveResult(undefined);
+        },
+      );
+    });
+  }
+
+  async remove(normalizedWord: string): Promise<void> {
+    await withDatabase(this.databaseName, async (database) => {
+      await runTransaction<void>(
+        database,
+        [WORD_DECISIONS_STORE],
+        "readwrite",
+        (transaction, resolveResult) => {
+          transaction.objectStore(WORD_DECISIONS_STORE).delete(normalizedWord);
+          resolveResult(undefined);
+        },
+      );
+    });
+  }
+
+  async clear(): Promise<void> {
+    await withDatabase(this.databaseName, async (database) => {
+      await runTransaction<void>(
+        database,
+        [WORD_DECISIONS_STORE],
+        "readwrite",
+        (transaction, resolveResult) => {
+          transaction.objectStore(WORD_DECISIONS_STORE).clear();
+          resolveResult(undefined);
+        },
+      );
+    });
+  }
+}
+
 export class IndexedDbAppStore implements AppStore {
   readonly datasets: DatasetStore;
   readonly knownWords: KnownWordStore;
+  readonly wordDecisions: WordDecisionStore;
   readonly preferences: PreferencesStore;
 
   private readonly databaseName: string;
@@ -684,6 +783,7 @@ export class IndexedDbAppStore implements AppStore {
     this.databaseName = databaseName;
     this.datasets = new IndexedDbDatasetStore(databaseName);
     this.knownWords = new IndexedDbKnownWordStore(databaseName);
+    this.wordDecisions = new IndexedDbWordDecisionStore(databaseName);
     this.preferences = new IndexedDbPreferencesStore(databaseName);
   }
 
@@ -697,6 +797,7 @@ export class IndexedDbAppStore implements AppStore {
           KNOWN_WORD_SETS_STORE,
           PREFERENCES_STORE,
           META_STORE,
+          WORD_DECISIONS_STORE,
         ],
         "readwrite",
         (transaction, resolveResult) => {
@@ -705,6 +806,7 @@ export class IndexedDbAppStore implements AppStore {
           transaction.objectStore(KNOWN_WORD_SETS_STORE).clear();
           transaction.objectStore(PREFERENCES_STORE).clear();
           transaction.objectStore(META_STORE).clear();
+          transaction.objectStore(WORD_DECISIONS_STORE).clear();
           resolveResult(undefined);
         },
       );
