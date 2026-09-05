@@ -32,12 +32,13 @@ export type JitenImportChunk = Extract<ImportChunkResponse, { kind: "jiten" }>;
 export type KnownImportChunk = Extract<ImportChunkResponse, { kind: "known" }>;
 export type JitenImportComplete = Extract<ImportCompleteResponse, { kind: "jiten" }>;
 export type KnownImportComplete = Extract<ImportCompleteResponse, { kind: "known" }>;
-export type WorkerQueryChannel = "user" | "candidate" | "review";
+export type WorkerQueryChannel = "user" | "candidate" | "review" | "queue";
 
 export interface WorkerQueryInput {
   datasetId: string;
   knownWords: Iterable<string>;
   decisions?: Array<[string, WordDecisionStatus]>;
+  includeNormalizedWords?: string[];
   query: QueryState;
   window?: QueryWindow;
   queryChannel?: WorkerQueryChannel;
@@ -361,6 +362,7 @@ class BrowserWorkerClient implements WorkerClient {
       decisions: input.decisions ?? [],
       query: { ...input.query },
     };
+    if (input.includeNormalizedWords !== undefined) request.includeNormalizedWords = [...input.includeNormalizedWords];
     if (input.window !== undefined) request.window = input.window;
 
     try {

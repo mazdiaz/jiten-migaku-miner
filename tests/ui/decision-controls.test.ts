@@ -94,6 +94,12 @@ function seedDom(): DomMap {
   intoPanel("reviewMined", "button");
   intoPanel("reviewSkip", "button");
   intoPanel("reviewLater", "button");
+  add("queueToggle", "button");
+  add("queueHeader", "div");
+  add("queueHeading", "h2");
+  add("queueStats", "p");
+  add("exitQueue", "button");
+  add("clearQueue", "button");
   add("stickyToolbar", "div");
   add("stickyTitle", "div");
   add("stickyPrev", "button");
@@ -116,6 +122,11 @@ interface FakeController extends MinerController {
     reviewDecision: string[];
     startReview: number;
     stopReview: number;
+    toggleQueued: string[];
+    removeQueued: string[];
+    clearQueue: number;
+    startQueueMode: number;
+    stopQueueMode: number;
   };
   notify(queryPatch?: Partial<QueryState>): void;
   publishState(patch: Partial<AppState>): void;
@@ -130,6 +141,11 @@ function createFakeController(initial?: Partial<AppState>): FakeController {
     reviewDecision: [] as string[],
     startReview: 0,
     stopReview: 0,
+    toggleQueued: [] as string[],
+    removeQueued: [] as string[],
+    clearQueue: 0,
+    startQueueMode: 0,
+    stopQueueMode: 0,
   };
   const controller: FakeController = {
     calls,
@@ -166,6 +182,21 @@ function createFakeController(initial?: Partial<AppState>): FakeController {
     }),
     reviewDecision: vi.fn(async (status: string) => {
       calls.reviewDecision.push(status);
+    }),
+    toggleQueued: vi.fn((word: string) => {
+      calls.toggleQueued.push(word);
+    }),
+    removeQueued: vi.fn((word: string) => {
+      calls.removeQueued.push(word);
+    }),
+    clearQueue: vi.fn(() => {
+      calls.clearQueue += 1;
+    }),
+    startQueueMode: vi.fn(async () => {
+      calls.startQueueMode += 1;
+    }),
+    stopQueueMode: vi.fn(() => {
+      calls.stopQueueMode += 1;
     }),
     clearSavedData: vi.fn(async () => {}),
     init: vi.fn(async () => {}),

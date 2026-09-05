@@ -117,6 +117,8 @@ function windowCacheSignature(
     sentence: request.query.sentence,
     minOccurrences: request.query.minOccurrences,
     sort: request.query.sort,
+    includeNormalizedWords:
+      request.includeNormalizedWords === undefined ? null : [...request.includeNormalizedWords].sort(),
   });
 }
 
@@ -298,8 +300,7 @@ export class WorkerEngine {
         decisionByIndex = cache.decisionByIndex;
         knownCount = cache.knownCount;
       } else {
-        const scan = await this.scanDataset(request, dataset, knownWords, decisions);
-        if (scan === null || this.isCancelled(request.requestId)) return;
+        const scan = await this.scanDataset(request, dataset, knownWords, decisions);        if (scan === null || this.isCancelled(request.requestId)) return;
         orderedIndexes = scan.orderedIndexes;
         knownByMigakuByIndex = scan.knownByMigakuByIndex;
         decisionByIndex = scan.decisionByIndex;
@@ -397,6 +398,7 @@ export class WorkerEngine {
     const knownByMigakuByIndex = new Map<number, boolean>();
     const decisionByIndex = new Map<number, WordDecisionStatus | "unreviewed">();
     const matching = new Set<number>();
+    const includeWords = request.includeNormalizedWords === undefined ? null : new Set(request.includeNormalizedWords);
     const search = normalizeText(request.query.search).toLocaleLowerCase();
     const minimumOccurrences = Number.isFinite(request.query.minOccurrences)
       ? Math.max(0, request.query.minOccurrences)
@@ -423,6 +425,7 @@ export class WorkerEngine {
         fields.sentence.includes(search);
       const passes =
         searchMatches &&
+        (includeWords === null || includeWords.has(value.normalizedWord)) &&
         !(request.query.hideKnown && known) &&
         !(request.query.hideKanaOnly && isKanaOnly(value.normalizedWord)) &&
         !(request.query.sentence === "has" && !value.hasSentence) &&

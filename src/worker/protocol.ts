@@ -33,6 +33,7 @@ export type WorkerRequest =
       knownWords: string[];
       decisions: Array<[string, WordDecisionStatus]>;
       query: QueryState;
+      includeNormalizedWords?: string[];
       window?: QueryWindow;
     }
   | { protocolVersion: 1; type: "cancel"; requestId: string }
@@ -289,6 +290,14 @@ function validateKnownWords(value: unknown): string[] {
   return [...value];
 }
 
+function validateIncludeNormalizedWords(value: unknown): string[] {
+  if (!Array.isArray(value) || value.some((word) => typeof word !== "string" || word.length === 0)) {
+    throw invalidMessage("includeNormalizedWords must be an array of non-empty strings");
+  }
+
+  return [...value];
+}
+
 export function parseWorkerRequest(value: unknown): WorkerRequest {
   if (!isRecord(value)) throw invalidMessage("worker request must be an object");
 
@@ -357,6 +366,9 @@ export function parseWorkerRequest(value: unknown): WorkerRequest {
       decisions: validateDecisions(value.decisions),
       query: validateQuery(value.query),
     };
+    if (value.includeNormalizedWords !== undefined) {
+      request.includeNormalizedWords = validateIncludeNormalizedWords(value.includeNormalizedWords);
+    }
     if (value.window !== undefined) request.window = validateWindow(value.window);
     return request;
   }

@@ -5,6 +5,7 @@ import type { DomMap } from "./dom";
 
 export interface ControlsOptions {
   confirmClear?: (message: string) => boolean;
+  confirmQueueClear?: (message: string) => boolean;
   onSearch?: (value: string) => void;
 }
 
@@ -49,6 +50,7 @@ export function bindControls(
 ): ControlBindings {
   const recorder = new EventRecorder();
   const confirmClear = options.confirmClear ?? ((message: string) => globalThis.confirm(message));
+  const confirmQueueClear = options.confirmQueueClear ?? ((message: string) => globalThis.confirm(message));
   const onSearch = options.onSearch;
   let latest: Readonly<AppState> | null = null;
   let reviewWasActive = false;
@@ -180,9 +182,35 @@ export function bindControls(
   bindPagerButton(dom.bottomNext, 1);
   bindPagerButton(dom.stickyNext, 1);
 
+  recorder.add(dom.queueToggle, "click", () => {
+    if (latest?.queue.mode === "queue") controller.stopQueueMode();
+    else void controller.startQueueMode();
+  });
+  recorder.add(dom.exitQueue, "click", () => controller.stopQueueMode());
+  recorder.add(dom.clearQueue, "click", () => {
+    const count = latest?.queue.normalizedWords.length ?? 0;
+    if (count === 0) return;
+    if (confirmQueueClear(`Clear all ${count} words from this mining queue?`)) {
+      controller.clearQueue();
+    }
+  });
+
   recorder.add(dom.resultsList, "click", (event) => {
     const target = event.target;
     if (target === null || !(target instanceof Element)) return;
+    const queueButton = target.closest<HTMLButtonElement>("[data-queue-action]");
+    if (queueButton !== null && !queueButton.disabled) {
+      const word = queueButton.dataset.word ?? "";
+      if (queueButton.dataset.queueAction === "remove") {
+        controller.removeQueued(word);
+      } else if (latest?.queue.normalizedWords.includes(word) === true) {
+        controller.removeQueued(word);
+      } else {
+        controller.toggleQueued(word);
+      }
+      return;
+    }
+
     const button = target.closest<HTMLButtonElement>("[data-decision-action]");
     if (button === null || button.disabled) return;
     const word = button.dataset.word ?? "";
@@ -238,6 +266,11 @@ export function bindControls(
         keyboard.preventDefault();
         controller.stopReview();
       }
+      return;
+    }
+
+    if (latest.queue.mode === "queue") {
+      // Queue Mode has no paging; ignore list shortcuts until exited.
       return;
     }
 

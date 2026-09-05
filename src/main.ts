@@ -39,16 +39,26 @@ async function bootstrap(): Promise<void> {
 
   const virtualList = createVirtualList(
     dom.resultsList,
-    (entry, index) => renderEntryNode(entry, index + 1, latest?.view ?? DEFAULT_VIEW),
+    (entry, index) => renderEntryNode(entry, index + 1, latest?.view ?? DEFAULT_VIEW, {
+      queued: latest?.queue.normalizedWords.includes(entry.normalizedWord) ?? false,
+      queueMode: latest?.queue.mode === "queue",
+    }),
     { onRequestWindow: (start) => queryController.setViewportStart(start) },
   );
   queryController = createQueryController({ controller, virtualList });
 
+  let lastQueueKey = `${""}|normal`;
   controller.subscribe((state) => {
     latest = state;
     renderer.render(state);
     queryController.applyResult(state.result);
     highlight.reconcile(dom.resultsList);
+    const queueKey = `${state.queue.normalizedWords.join("\n")}|${state.queue.mode}`;
+    if (queueKey !== lastQueueKey && state.result?.windowed === true) {
+      virtualList.setTotal(state.result.totalEntries);
+      virtualList.setWindow(Math.max(0, state.result.startIndex - 1), state.result.items);
+    }
+    lastQueueKey = queueKey;
   });
   bindControls(dom, controller, { onSearch: (value) => queryController.search(value) });
   await controller.init();

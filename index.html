@@ -39,7 +39,7 @@
 
     <section class="panel filters-panel" aria-label="Mining filters">
       <fieldset id="filtersFieldset" class="filters-fieldset" disabled>
-        <div class="filter-grid">
+        <div class="filter-grid queue-hidden">
           <label class="control">
             <span>Search target</span>
              <input id="searchInput" type="search" placeholder="Word or sentence, e.g. 気になる / プール" autocomplete="off">
@@ -77,14 +77,14 @@
           </label>
         </div>
         <div class="filter-row-2">
-          <label class="check-control"><input id="hideKnown" type="checkbox" disabled> Hide Migaku-known words</label>
-          <label class="check-control"><input id="hideKanaOnly" type="checkbox"> Hide kana-only words</label>
+          <label class="check-control queue-hidden"><input id="hideKnown" type="checkbox" disabled> Hide Migaku-known words</label>
+          <label class="check-control queue-hidden"><input id="hideKanaOnly" type="checkbox"> Hide kana-only words</label>
            <label class="check-control" title="Turn off when Migaku's own furigana is enabled to avoid double readings"><input id="showFurigana" type="checkbox"> Furigana on target</label>
            <label class="check-control"><input id="pillHighlight" type="checkbox"> Pill highlight</label>
            <label class="check-control" title="Off = sentences left completely untouched for Migaku"><input id="showHighlight" type="checkbox"> Highlight target</label>
            <label class="check-control"><input id="showDefinitions" type="checkbox" checked> Definitions</label>
           <span class="filter-spacer"></span>
-          <label class="control" style="grid-template-columns:auto auto;align-items:center;gap:8px;">
+          <label class="control queue-hidden" style="grid-template-columns:auto auto;align-items:center;gap:8px;">
             <span>Per page</span>
             <select id="pageSize" style="width:90px;">
               <option value="25">25</option>
@@ -101,29 +101,30 @@
       <div id="stickyToolbar" class="sticky-toolbar" hidden>
         <div class="sticky-row-1">
           <div id="stickyTitle" class="sticky-title">Jiten media</div>
-          <input id="stickySearch" class="sticky-search" type="search" placeholder="Search target…" autocomplete="off">
-          <div class="pager" aria-label="Sticky page navigation">
+          <input id="stickySearch" class="sticky-search queue-hidden" type="search" placeholder="Search target…" autocomplete="off">
+          <button id="queueToggle" type="button" class="queue-button" aria-pressed="false" disabled>Queue (0)</button>
+          <div class="pager queue-hidden" aria-label="Sticky page navigation">
             <button id="stickyPrev" type="button" aria-label="Previous page">←</button>
             <span id="stickyPage" class="page-label">Page 0 / 0</span>
             <button id="stickyNext" type="button" aria-label="Next page">→</button>
           </div>
         </div>
         <div class="sticky-row-2">
-          <label class="control"><span>Sort</span>
+          <label class="control queue-hidden"><span>Sort</span>
             <select id="stickySort">
               <option value="occ-desc">Occ ↓</option>
               <option value="occ-asc">Occ ↑</option>
               <option value="original">Original</option>
             </select>
           </label>
-          <label class="control"><span>Sentence</span>
+          <label class="control queue-hidden"><span>Sentence</span>
             <select id="stickySentence">
               <option value="any">Any</option>
               <option value="has">Has</option>
               <option value="none">None</option>
             </select>
           </label>
-          <label class="control"><span>Decision</span>
+          <label class="control queue-hidden"><span>Decision</span>
             <select id="stickyDecision">
               <option value="all">All</option>
               <option value="unreviewed">Unreviewed</option>
@@ -133,16 +134,16 @@
               <option value="later">Later</option>
             </select>
           </label>
-          <label class="control"><span>Min occ</span>
+          <label class="control queue-hidden"><span>Min occ</span>
             <input id="stickyMin" type="number" min="0" step="1" inputmode="numeric">
           </label>
-          <label class="check-control"><input id="stickyHideKnown" type="checkbox"> Known</label>
-          <label class="check-control"><input id="stickyHideKana" type="checkbox"> Kana-only</label>
+          <label class="check-control queue-hidden"><input id="stickyHideKnown" type="checkbox"> Known</label>
+          <label class="check-control queue-hidden"><input id="stickyHideKana" type="checkbox"> Kana-only</label>
           <label class="check-control"><input id="stickyFurigana" type="checkbox"> Furigana</label>
           <label class="check-control"><input id="stickyPill" type="checkbox"> Pill</label>
           <label class="check-control"><input id="stickyHl" type="checkbox"> Highlight</label>
           <label class="check-control"><input id="stickyDefs" type="checkbox"> Defs</label>
-          <label class="control"><span>Per page</span>
+          <label class="control queue-hidden"><span>Per page</span>
             <select id="stickyPageSize">
               <option value="25">25</option>
               <option value="50">50</option>
@@ -153,7 +154,18 @@
         </div>
       </div>
 
-      <div class="results-head">
+      <div id="queueHeader" class="queue-header" hidden>
+        <div>
+          <h2 id="queueHeading">Mining Queue</h2>
+          <p id="queueStats" class="result-stats" aria-live="polite"></p>
+        </div>
+        <div class="queue-actions">
+          <button id="exitQueue" type="button" class="queue-action">Exit Queue</button>
+          <button id="clearQueue" type="button" class="queue-action queue-clear">Clear Queue…</button>
+        </div>
+      </div>
+
+      <div class="results-head queue-hidden">
         <div>
           <h2 id="resultsHeading">Mining entries</h2>
           <p id="resultStats" class="result-stats">Load a Jiten CSV to begin.</p>
@@ -170,7 +182,7 @@
         <div class="empty-state">Load a Jiten CSV above. Everything stays in this browser tab.</div>
       </div>
 
-      <div class="pager bottom-pager" aria-label="Bottom page navigation">
+      <div class="pager bottom-pager queue-hidden" aria-label="Bottom page navigation">
         <button id="bottomPrev" type="button" aria-label="Previous page" disabled>←</button>
         <span id="bottomPage" class="page-label">Page 0 / 0</span>
         <button id="bottomNext" type="button" aria-label="Next page" disabled>→</button>
