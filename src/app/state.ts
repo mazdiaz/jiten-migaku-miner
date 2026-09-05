@@ -18,6 +18,12 @@ export interface ReviewState {
   errorMessage: string | null;
 }
 
+export interface MiningQueueState {
+  datasetId: string | null;
+  normalizedWords: string[];
+  mode: "normal" | "queue";
+}
+
 export interface AppState {
   dataset: DatasetMetadata | null;
   knownWords: Set<string>;
@@ -31,6 +37,7 @@ export interface AppState {
   errorMessage: string | null;
   persistence: "indexeddb" | "memory";
   review: ReviewState;
+  queue: MiningQueueState;
 }
 
 export interface FileSource {
@@ -54,6 +61,11 @@ export interface MinerController {
   startReview(): Promise<void>;
   stopReview(): void;
   reviewDecision(status: WordDecisionStatus): Promise<void>;
+  toggleQueued(normalizedWord: string): void;
+  removeQueued(normalizedWord: string): void;
+  clearQueue(): void;
+  startQueueMode(): Promise<void>;
+  stopQueueMode(): void;
   clearSavedData(): Promise<void>;
   init(): Promise<void>;
 }
@@ -87,6 +99,12 @@ export const EMPTY_REVIEW: ReviewState = {
   errorMessage: null,
 };
 
+export const EMPTY_QUEUE: MiningQueueState = {
+  datasetId: null,
+  normalizedWords: [],
+  mode: "normal",
+};
+
 export function createInitialAppState(
   persistence: AppState["persistence"] = "indexeddb",
 ): AppState {
@@ -103,6 +121,7 @@ export function createInitialAppState(
     errorMessage: null,
     persistence,
     review: { ...EMPTY_REVIEW },
+    queue: { ...EMPTY_QUEUE, normalizedWords: [] },
   };
 }
 
@@ -126,6 +145,10 @@ function cloneReview(value: ReviewState): ReviewState {
   return { ...value };
 }
 
+function cloneQueue(value: MiningQueueState): MiningQueueState {
+  return { ...value, normalizedWords: [...value.normalizedWords] };
+}
+
 export function cloneAppState(value: AppState): AppState {
   return {
     ...value,
@@ -136,6 +159,7 @@ export function cloneAppState(value: AppState): AppState {
     view: cloneView(value.view),
     result: cloneResult(value.result),
     review: cloneReview(value.review),
+    queue: cloneQueue(value.queue),
   };
 }
 
@@ -144,6 +168,7 @@ export function snapshotAppState(value: AppState): Readonly<AppState> {
   Object.freeze(snapshot.query);
   Object.freeze(snapshot.view);
   Object.freeze(snapshot.review);
+  Object.freeze(snapshot.queue);
   if (snapshot.result !== null) Object.freeze(snapshot.result);
   Object.freeze(snapshot);
   return snapshot;

@@ -1,5 +1,6 @@
 import type {
   Entry,
+  EntryWithKnown,
   QueryResult,
   QueryState,
   ViewState,
@@ -7,6 +8,7 @@ import type {
   WordDecisionStatus,
 } from "../domain/types";
 import { normalizeText } from "../domain/text";
+import { createSessionQueueStore, type SessionQueueStore } from "../platform/session-queue";
 import { createIndexedDbAppStore } from "../storage/indexed-db";
 import { createMemoryAppStore } from "../storage/memory-store";
 import { clearLegacyData } from "../storage/legacy";
@@ -34,6 +36,7 @@ export interface MinerControllerOptions {
   indexedDbStoreFactory?: () => AppStore;
   worker?: WorkerClient;
   legacyStorage?: Storage | null;
+  sessionQueueStore?: SessionQueueStore;
   now?: () => string;
   createId?: (kind: "dataset" | "known") => string;
 }
@@ -58,6 +61,16 @@ function defaultLegacyStorage(): Storage | null {
 }
 
 const VIEWPORT_WINDOW_SIZE = 100;
+const QUEUE_SAFETY_THRESHOLD = 5_000;
+
+function orderByQueue(items: readonly EntryWithKnown[], queue: readonly string[]): EntryWithKnown[] {
+  const order = new Map(queue.map((word, index) => [word, index]));
+  return [...items].sort((left, right) =>
+    (order.get(left.normalizedWord) ?? Number.MAX_SAFE_INTEGER) -
+      (order.get(right.normalizedWord) ?? Number.MAX_SAFE_INTEGER) ||
+    left.originalIndex - right.originalIndex,
+  );
+}
 
 async function* copiedEntryChunks(chunks: readonly Entry[][]): AsyncIterable<readonly Entry[]> {
   for (const chunk of chunks) yield chunk;
@@ -71,6 +84,7 @@ class MinerControllerImpl implements MinerController {
   private store: AppStore;
   private readonly worker: WorkerClient;
   private readonly legacyStorage: Storage | null;
+  private readonly sessionQueue: SessionQueueStore;
   private readonly indexedDbStoreFactory: () => AppStore;
   private readonly storeWasProvided: boolean;
   private readonly now: () => string;
@@ -95,6 +109,7 @@ class MinerControllerImpl implements MinerController {
     this.indexedDbStoreFactory = options.indexedDbStoreFactory ?? (() => createIndexedDbAppStore());
     this.worker = options.worker ?? createWorkerClient();
     this.legacyStorage = options.legacyStorage === undefined ? defaultLegacyStorage() : options.legacyStorage;
+    this.sessionQueue = options.sessionQueueStore ?? createSessionQueueStore();
     this.now = options.now ?? (() => new Date().toISOString());
     this.createId = options.createId ?? defaultId;
     this.state = createInitialAppState(this.storeWasProvided ? "memory" : "indexeddb");
@@ -182,6 +197,9 @@ class MinerControllerImpl implements MinerController {
         this.state.page = 1;
         this.state.query = { ...this.state.query, page: 1 };
         this.state.result = candidateResult;
+        // A newly activated dataset starts with a fresh queue association.
+        this.state.queue = { datasetId: dataset.id, normalizedWords: [], mode: "normal" };
+        this.sessionQueue.clear();
         this.viewportStart = 0;
         this.queryGeneration += 1;
         this.setState({ status: "ready", errorMessage: this.warningMessage });
@@ -377,6 +395,46 @@ class MinerControllerImpl implements MinerController {
     }
   }
 
+  toggleQueued(normalizedWord: string): void {
+    const dataset = this.state.dataset;
+    if (dataset === null) return;
+    const word = normalizeText(normalizedWord).toLocaleLowerCase();
+    if (word.length === 0) return;
+    const words = this.state.queue.normalizedWords;
+    // Adding an already-queued word leaves the queue unchanged; removal is a
+    // separate explicit action.
+    if (words.includes(word)) return;
+    this.setQueueWords(dataset.id, [...words, word]);
+  }
+
+  removeQueued(normalizedWord: string): void {
+    const dataset = this.state.dataset;
+    if (dataset === null) return;
+    const word = normalizeText(normalizedWord).toLocaleLowerCase();
+    this.setQueueWords(dataset.id, this.state.queue.normalizedWords.filter((queued) => queued !== word));
+  }  clearQueue(): void {
+    const dataset = this.state.dataset;
+    if (dataset === null) return;
+    this.setQueueWords(dataset.id, []);
+  }
+
+  async startQueueMode(): Promise<void> {
+    const dataset = this.state.dataset;
+    if (dataset === null || this.state.queue.mode === "queue") return;
+    // An empty queue cannot enter mining mode.
+    if (this.state.queue.normalizedWords.length === 0) return;
+    this.state.queue = { ...this.state.queue, mode: "queue" };
+    this.publish();
+    await this.runQueueQuery();
+  }
+
+  stopQueueMode(): void {
+    if (this.state.queue.mode !== "queue") return;
+    this.state.queue = { ...this.state.queue, mode: "normal" };
+    this.publish();
+    void this.runQuery();
+  }
+
   async clearSavedData(): Promise<void> {
     this.importGeneration += 1;
     this.queryGeneration += 1;
@@ -396,6 +454,7 @@ class MinerControllerImpl implements MinerController {
       }
     }
     this.worker.dispose();
+    this.sessionQueue.clear();
     this.state = createInitialAppState(this.state.persistence);
     this.warningMessage = this.fallbackWarning;
     this.state.errorMessage = this.fallbackWarning;
@@ -451,6 +510,7 @@ class MinerControllerImpl implements MinerController {
       this.state.page = preferences.page;
     }
     this.state.dataset = active;
+    this.restoreQueueSnapshot(active);
     this.publish();
 
     if (active === null) {
@@ -575,6 +635,56 @@ class MinerControllerImpl implements MinerController {
     return [...this.state.wordDecisions.values()].map((decision) => [decision.normalizedWord, decision.status]);
   }
 
+  private setQueueWords(datasetId: string, words: string[]): void {
+    this.state.queue = { ...this.state.queue, datasetId, normalizedWords: words };
+    this.sessionQueue.save({ version: 1, datasetId, normalizedWords: words });
+    this.publish();
+    if (this.state.queue.mode === "queue") void this.runQueueQuery();
+  }
+
+  private restoreQueueSnapshot(active: DatasetMetadata | null): void {
+    if (active === null) return;
+    const snapshot = this.sessionQueue.load();
+    const words = snapshot !== null && snapshot.datasetId === active.id ? [...snapshot.normalizedWords] : [];
+    this.state.queue = { datasetId: active.id, normalizedWords: words, mode: "normal" };
+  }
+
+  private async runQueueQuery(): Promise<void> {
+    const dataset = this.state.dataset;
+    if (dataset === null || this.state.queue.mode !== "queue") return;
+    const words = this.state.queue.normalizedWords;
+    // Above the safety threshold keep worker paging / the virtual list; the
+    // simple path mounts every queued entry ordered by time added.
+    const bounded = words.length > QUEUE_SAFETY_THRESHOLD;
+    const queueQuery: QueryState = bounded
+      ? { ...this.state.query, page: Math.max(1, this.state.page) }
+      : { ...this.state.query, pageSize: "all", page: 1 };
+    const window = bounded && this.state.query.pageSize === "all"
+      ? { start: this.viewportStart, size: VIEWPORT_WINDOW_SIZE }
+      : undefined;
+    const generation = ++this.queryGeneration;
+    try {
+      const result = await this.worker.query({
+        datasetId: dataset.id,
+        knownWords: [...this.state.knownWords],
+        decisions: this.decisionTuples(),
+        includeNormalizedWords: [...words],
+        query: queueQuery,
+        queryChannel: "queue",
+        ...(window === undefined ? {} : { window }),
+      });
+      if (generation !== this.queryGeneration || this.state.queue.mode !== "queue") return;
+      this.state.result = {
+        ...result,
+        items: bounded ? result.items : orderByQueue(result.items, words),
+      };
+      this.setState({ status: "ready", errorMessage: this.warningMessage });
+    } catch (error) {
+      if (generation !== this.queryGeneration) return;
+      this.setState({ status: "error", errorMessage: errorMessage(error) });
+    }
+  }
+
   private async runReviewQuery(options: { captureInitial?: boolean } = {}): Promise<void> {
     const dataset = this.state.dataset;
     if (dataset === null || !this.state.review.active) return;
@@ -626,8 +736,17 @@ class MinerControllerImpl implements MinerController {
       await this.storageOperation((store) => store.wordDecisions.set(decision));
       this.state.wordDecisions.set(normalizedWord, decision);
     }
+    // A successful decision removes the word from the mining queue; a failed
+    // write leaves the queue untouched so the word can be retried.
+    const queueDatasetId = this.state.queue.datasetId;
+    if (queueDatasetId !== null && this.state.queue.normalizedWords.includes(normalizedWord)) {
+      const remaining = this.state.queue.normalizedWords.filter((queued) => queued !== normalizedWord);
+      this.state.queue = { ...this.state.queue, normalizedWords: remaining };
+      this.sessionQueue.save({ version: 1, datasetId: queueDatasetId, normalizedWords: remaining });
+    }
     this.publish();
-    await this.runQuery();
+    if (this.state.queue.mode === "queue") await this.runQueueQuery();
+    else await this.runQuery();
   }
 
   private async loadAndQuery(datasetId: string, expectedEntryCount: number): Promise<void> {

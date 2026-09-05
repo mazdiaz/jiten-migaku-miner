@@ -62,6 +62,7 @@ function makeState(overrides: Partial<AppState> = {}): AppState {
       status: "idle",
       errorMessage: null,
     },
+    queue: { datasetId: null, normalizedWords: [], mode: "normal" },
     ...overrides,
   };
 }
