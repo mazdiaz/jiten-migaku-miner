@@ -1,10 +1,17 @@
-import type { QueryResult, QueryState, ViewState } from "../domain/types";
+import type {
+  QueryResult,
+  QueryState,
+  ViewState,
+  WordDecision,
+  WordDecisionStatus,
+} from "../domain/types";
 import type { DatasetMetadata } from "../storage/contracts";
 
 export interface AppState {
   dataset: DatasetMetadata | null;
   knownWords: Set<string>;
   knownWordsName: string | null;
+  wordDecisions: Map<string, WordDecision>;
   query: QueryState;
   view: ViewState;
   page: number;
@@ -31,6 +38,7 @@ export interface MinerController {
   updateView(patch: Partial<ViewState>): void;
   updateViewport(start: number): void;
   changePage(delta: number): void;
+  setWordDecision(normalizedWord: string, status: WordDecisionStatus | "unreviewed"): Promise<void>;
   clearSavedData(): Promise<void>;
   init(): Promise<void>;
 }
@@ -61,6 +69,7 @@ export function createInitialAppState(
     dataset: null,
     knownWords: new Set<string>(),
     knownWordsName: null,
+    wordDecisions: new Map<string, WordDecision>(),
     query: { ...DEFAULT_QUERY },
     view: { ...DEFAULT_VIEW },
     page: 1,
@@ -92,6 +101,7 @@ export function cloneAppState(value: AppState): AppState {
     ...value,
     dataset: cloneDataset(value.dataset),
     knownWords: new Set(value.knownWords),
+    wordDecisions: new Map(value.wordDecisions),
     query: cloneQuery(value.query),
     view: cloneView(value.view),
     result: cloneResult(value.result),

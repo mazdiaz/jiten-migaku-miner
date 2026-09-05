@@ -35,6 +35,7 @@ function makeState(overrides: Partial<AppState> = {}): AppState {
     dataset: null,
     knownWords: new Set<string>(),
     knownWordsName: null,
+    wordDecisions: new Map(),
     query: {
       search: "",
       hideKnown: false,

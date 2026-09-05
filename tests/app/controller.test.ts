@@ -1,6 +1,6 @@
 import "fake-indexeddb/auto";
 import { afterEach, describe, expect, it } from "vitest";
-import type { Entry, QueryResult, QueryState, ViewState } from "../../src/domain/types";
+import type { Entry, QueryResult, QueryState, ViewState, WordDecisionStatus } from "../../src/domain/types";
 import type { AppState, FileSource } from "../../src/app/state";
 import {
   createMinerController,
@@ -843,6 +843,236 @@ function responseLike(
 async function flushMicrotasks(rounds = 6): Promise<void> {
   for (let index = 0; index < rounds; index += 1) await Promise.resolve();
 }
+
+const FIXED_NOW = "2026-09-05T00:00:00.000Z";
+
+function decisionOptions(store: AppStore, worker: FakeWorkerClient, storage?: Storage): MinerControllerOptions {
+  return { ...controllerOptions(store, worker, storage), now: () => FIXED_NOW };
+}
+
+describe("MinerController word decisions", () => {
+  afterEach(() => {
+    delete (globalThis as { indexedDB?: IDBFactory }).indexedDB;
+  });
+
+  it("restores persisted decisions on initialization and defaults missing preference decision to all", async () => {
+    const store = createMemoryAppStore();
+    await seedActive(store);
+    await store.wordDecisions.set({ normalizedWord: "猫", status: "known", updatedAt: "2026-09-01T00:00:00.000Z" });
+    await store.wordDecisions.set({ normalizedWord: "犬", status: "later", updatedAt: "2026-09-01T00:00:00.000Z" });
+    const legacyQuery: Record<string, unknown> = { ...query };
+    delete legacyQuery.decision;
+    await store.preferences.save({ query: legacyQuery as unknown as QueryState, view, page: 1 });
+    const worker = new FakeWorkerClient();
+    const controller = createMinerController(decisionOptions(store, worker));
+    const states: Readonly<AppState>[] = [];
+    controller.subscribe((state) => states.push(state));
+
+    await controller.init();
+
+    const final = states.at(-1)!;
+    expect(final.wordDecisions.get("猫")).toMatchObject({ status: "known" });
+    expect(final.wordDecisions.get("犬")).toMatchObject({ status: "later" });
+    expect(final.query.decision).toBe("all");
+    expect(worker.queryCalls[0]?.decisions).toEqual(expect.arrayContaining([["猫", "known"], ["犬", "later"]]));
+  });
+
+  it("marks known, persists the record, and sends the decision on the next query", async () => {
+    const store = createMemoryAppStore();
+    await seedActive(store);
+    const worker = new FakeWorkerClient();
+    const controller = createMinerController(decisionOptions(store, worker));
+    const states: Readonly<AppState>[] = [];
+    controller.subscribe((state) => states.push(state));
+    await controller.init();
+
+    await controller.setWordDecision("猫", "known");
+
+    expect(await store.wordDecisions.get("猫")).toEqual({
+      normalizedWord: "猫",
+      status: "known",
+      updatedAt: FIXED_NOW,
+    });
+    expect(states.at(-1)?.wordDecisions.get("猫")).toMatchObject({ status: "known" });
+    expect(worker.queryCalls.at(-1)?.decisions).toEqual([["猫", "known"]]);
+  });
+
+  it("marks mined without making the entry known", async () => {
+    const store = createMemoryAppStore();
+    await seedActive(store);
+    const worker = new FakeWorkerClient();
+    const controller = createMinerController(decisionOptions(store, worker));
+    const states: Readonly<AppState>[] = [];
+    controller.subscribe((state) => states.push(state));
+    await controller.init();
+
+    await controller.setWordDecision("猫", "mined");
+
+    expect(await store.wordDecisions.get("猫")).toMatchObject({ status: "mined" });
+    expect(states.at(-1)?.knownWords.size).toBe(0);
+    expect(worker.queryCalls.at(-1)?.knownWords).toEqual([]);
+    expect(worker.queryCalls.at(-1)?.decisions).toEqual([["猫", "mined"]]);
+  });
+
+  it("removes the store record when resetting to unreviewed", async () => {
+    const store = createMemoryAppStore();
+    await seedActive(store);
+    await store.wordDecisions.set({ normalizedWord: "猫", status: "known", updatedAt: "2026-09-01T00:00:00.000Z" });
+    const worker = new FakeWorkerClient();
+    const controller = createMinerController(decisionOptions(store, worker));
+    const states: Readonly<AppState>[] = [];
+    controller.subscribe((state) => states.push(state));
+    await controller.init();
+
+    await controller.setWordDecision("猫", "unreviewed");
+    await expect(controller.setWordDecision("", "known")).rejects.toThrow();
+
+    expect(await store.wordDecisions.get("猫")).toBeNull();
+    expect(states.at(-1)?.wordDecisions.has("猫")).toBe(false);
+    expect(worker.queryCalls.at(-1)?.decisions).toEqual([]);
+  });
+
+  it("keeps prior state and surfaces an error when the decision write fails", async () => {
+    const store = createMemoryAppStore();
+    await seedActive(store);
+    store.wordDecisions.set = async () => { throw new Error("decision write failed"); };
+    const worker = new FakeWorkerClient();
+    const controller = createMinerController(decisionOptions(store, worker));
+    const states: Readonly<AppState>[] = [];
+    controller.subscribe((state) => states.push(state));
+    await controller.init();
+
+    await controller.setWordDecision("猫", "known");
+
+    const final = states.at(-1)!;
+    expect(final.wordDecisions.has("猫")).toBe(false);
+    expect(await store.wordDecisions.get("猫")).toBeNull();
+    expect(final.status).toBe("ready");
+    expect(final.errorMessage).toContain("decision write failed");
+  });
+
+  it("keeps decisions when a new Jiten CSV is imported", async () => {
+    const store = createMemoryAppStore();
+    await seedActive(store);
+    await store.wordDecisions.set({ normalizedWord: "猫", status: "known", updatedAt: "2026-09-01T00:00:00.000Z" });
+    const worker = new FakeWorkerClient();
+    const controller = createMinerController(decisionOptions(store, worker));
+    const states: Readonly<AppState>[] = [];
+    controller.subscribe((state) => states.push(state));
+    await controller.init();
+
+    await controller.importJiten({ name: "new.csv", text: async () => "Word\n新しい" });
+
+    expect(await store.wordDecisions.get("猫")).toMatchObject({ status: "known" });
+    expect(states.at(-1)?.wordDecisions.get("猫")).toMatchObject({ status: "known" });
+    expect(worker.queryCalls.at(-1)?.decisions).toEqual([["猫", "known"]]);
+  });
+
+  it("keeps decisions when the Migaku known file is replaced", async () => {
+    const store = createMemoryAppStore();
+    await seedActive(store);
+    await store.wordDecisions.set({ normalizedWord: "猫", status: "mined", updatedAt: "2026-09-01T00:00:00.000Z" });
+    const worker = new FakeWorkerClient();
+    worker.nextKnown = {
+      chunks: [["犬"]],
+      complete: {
+        protocolVersion: 1,
+        type: "import-complete",
+        requestId: "known-new",
+        kind: "known",
+        name: "known.txt",
+        wordCount: 1,
+      },
+    };
+    const controller = createMinerController(decisionOptions(store, worker));
+    const states: Readonly<AppState>[] = [];
+    controller.subscribe((state) => states.push(state));
+    await controller.init();
+
+    await controller.importKnown({ name: "known.txt", text: async () => "犬\n" });
+
+    expect(await store.wordDecisions.get("猫")).toMatchObject({ status: "mined" });
+    expect(states.at(-1)?.wordDecisions.get("猫")).toMatchObject({ status: "mined" });
+    expect(states.at(-1)?.knownWords).toEqual(new Set(["犬"]));
+    expect(worker.queryCalls.at(-1)?.decisions).toEqual([["猫", "mined"]]);
+  });
+
+  it("removes decisions when saved data is cleared", async () => {
+    const store = createMemoryAppStore();
+    await seedActive(store);
+    await store.wordDecisions.set({ normalizedWord: "猫", status: "known", updatedAt: "2026-09-01T00:00:00.000Z" });
+    const worker = new FakeWorkerClient();
+    const controller = createMinerController(decisionOptions(store, worker));
+    const states: Readonly<AppState>[] = [];
+    controller.subscribe((state) => states.push(state));
+    await controller.init();
+
+    await controller.clearSavedData();
+
+    expect(await store.wordDecisions.list()).toEqual([]);
+    expect(states.at(-1)?.wordDecisions.size).toBe(0);
+  });
+
+  it("preserves the current page when the changed row stays in the result set", async () => {
+    const store = createMemoryAppStore();
+    await seedActive(store);
+    await store.preferences.save({ query: { ...query, page: 2 }, view, page: 2 });
+    const worker = new FakeWorkerClient();
+    worker.queryResult = { ...result(), page: 2, totalPages: 2, totalEntries: 100 };
+    const controller = createMinerController(decisionOptions(store, worker));
+    const states: Readonly<AppState>[] = [];
+    controller.subscribe((state) => states.push(state));
+    await controller.init();
+
+    await controller.setWordDecision("猫", "known");
+
+    expect(states.at(-1)?.page).toBe(2);
+    expect(worker.queryCalls.at(-1)?.query.page).toBe(2);
+    expect(worker.queryCalls.at(-1)?.decisions).toEqual([["猫", "known"]]);
+  });
+
+  it("clamps the page when the decision filter drops the last item on the last page", async () => {
+    const store = createMemoryAppStore();
+    await seedActive(store);
+    await store.preferences.save({ query: { ...query, page: 2 }, view, page: 2 });
+    const worker = new FakeWorkerClient();
+    worker.queryHandler = async (request) => {
+      if ((request.decisions ?? []).some(([word]) => word === "猫")) {
+        return { ...result(), page: 1, totalPages: 1, totalEntries: 50 };
+      }
+      return { ...result(), page: 2, totalPages: 2, totalEntries: 100 };
+    };
+    const controller = createMinerController(decisionOptions(store, worker));
+    const states: Readonly<AppState>[] = [];
+    controller.subscribe((state) => states.push(state));
+    await controller.init();
+    expect(states.at(-1)?.page).toBe(2);
+
+    await controller.setWordDecision("猫", "known");
+
+    expect(states.at(-1)?.page).toBe(1);
+    expect(worker.queryCalls.at(-1)?.query.page).toBe(2);
+  });
+
+  it("resolves rapid clicks deterministically in submission order", async () => {
+    const store = createMemoryAppStore();
+    await seedActive(store);
+    const worker = new FakeWorkerClient();
+    const controller = createMinerController(decisionOptions(store, worker));
+    const states: Readonly<AppState>[] = [];
+    controller.subscribe((state) => states.push(state));
+    await controller.init();
+
+    await Promise.all([
+      controller.setWordDecision("猫", "known"),
+      controller.setWordDecision("猫", "mined"),
+    ]);
+
+    expect(await store.wordDecisions.get("猫")).toMatchObject({ status: "mined", updatedAt: FIXED_NOW });
+    expect(states.at(-1)?.wordDecisions.get("猫")).toMatchObject({ status: "mined" });
+    expect(worker.queryCalls.at(-1)?.decisions).toEqual([["猫", "mined"]]);
+  });
+});
 
 describe("source adapters", () => {
   it("wraps browser File text reads", async () => {

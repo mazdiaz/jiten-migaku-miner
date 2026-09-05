@@ -1,4 +1,12 @@
-import type { Entry, QueryResult, QueryState, ViewState } from "../domain/types";
+import type {
+  Entry,
+  QueryResult,
+  QueryState,
+  ViewState,
+  WordDecision,
+  WordDecisionStatus,
+} from "../domain/types";
+import { normalizeText } from "../domain/text";
 import { createIndexedDbAppStore } from "../storage/indexed-db";
 import { createMemoryAppStore } from "../storage/memory-store";
 import { clearLegacyData } from "../storage/legacy";
@@ -8,6 +16,7 @@ import {
   createInitialAppState,
   cloneAppState,
   snapshotAppState,
+  DEFAULT_QUERY,
   type AppState,
   type FileSource,
   type MinerController,
@@ -76,6 +85,7 @@ class MinerControllerImpl implements MinerController {
   private fallbackWarning: string | null = null;
   private persistentStore: AppStore | null = null;
   private importLock: Promise<unknown> = Promise.resolve();
+  private decisionLock: Promise<unknown> = Promise.resolve();
 
   constructor(options: MinerControllerOptions) {
     this.storeWasProvided = options.store !== undefined;
@@ -152,6 +162,7 @@ class MinerControllerImpl implements MinerController {
       candidateResult = await this.worker.query({
         datasetId: dataset.id,
         knownWords: [...this.state.knownWords],
+        decisions: this.decisionTuples(),
         query: { ...this.state.query, page: 1 },
         queryChannel: "candidate",
         ...(candidateWindow === undefined ? {} : { window: candidateWindow }),
@@ -298,6 +309,19 @@ class MinerControllerImpl implements MinerController {
     void this.runQuery();
   }
 
+  async setWordDecision(normalizedWord: string, status: WordDecisionStatus | "unreviewed"): Promise<void> {
+    const normalized = normalizeText(normalizedWord).toLocaleLowerCase();
+    if (normalized.length === 0) {
+      throw new Error("Word decision requires a non-empty normalized word");
+    }
+    const write = this.decisionLock.then(
+      () => this.applyWordDecision(normalized, status),
+      () => this.applyWordDecision(normalized, status),
+    );
+    this.decisionLock = write.then(() => undefined, () => undefined);
+    await write;
+  }
+
   async clearSavedData(): Promise<void> {
     this.importGeneration += 1;
     this.queryGeneration += 1;
@@ -346,11 +370,13 @@ class MinerControllerImpl implements MinerController {
 
     let active: DatasetMetadata | null;
     let known: { id: string; name: string; words: Set<string> } | null;
+    let decisions: WordDecision[];
     let preferences: { query: QueryState; view: ViewState; page: number } | null;
     try {
-      [active, known, preferences] = await this.storageOperation((store) => Promise.all([
+      [active, known, decisions, preferences] = await this.storageOperation((store) => Promise.all([
         store.datasets.getActive(),
         store.knownWords.getActive(),
+        store.wordDecisions.list(),
         store.preferences.load(),
       ]));
     } catch (error) {
@@ -362,8 +388,10 @@ class MinerControllerImpl implements MinerController {
       this.state.knownWords = new Set(known.words);
       this.state.knownWordsName = known.name;
     }
+    this.state.wordDecisions = new Map(decisions.map((decision) => [decision.normalizedWord, decision]));
     if (preferences !== null) {
-      this.state.query = { ...preferences.query, page: preferences.page };
+      // Preferences written before word decisions lack query.decision; DEFAULT_QUERY fills it as "all".
+      this.state.query = { ...DEFAULT_QUERY, ...preferences.query, page: preferences.page };
       this.state.view = { ...preferences.view };
       this.state.page = preferences.page;
     }
@@ -488,6 +516,27 @@ class MinerControllerImpl implements MinerController {
     return result;
   }
 
+  private decisionTuples(): Array<[string, WordDecisionStatus]> {
+    return [...this.state.wordDecisions.values()].map((decision) => [decision.normalizedWord, decision.status]);
+  }
+
+  private async applyWordDecision(normalizedWord: string, status: WordDecisionStatus | "unreviewed"): Promise<void> {
+    try {
+      if (status === "unreviewed") {
+        await this.storageOperation((store) => store.wordDecisions.remove(normalizedWord));
+        this.state.wordDecisions.delete(normalizedWord);
+      } else {
+        const decision: WordDecision = { normalizedWord, status, updatedAt: this.now() };
+        await this.storageOperation((store) => store.wordDecisions.set(decision));
+        this.state.wordDecisions.set(normalizedWord, decision);
+      }
+      this.publish();
+      await this.runQuery();
+    } catch (error) {
+      this.setState({ errorMessage: `Word decision could not be saved: ${errorMessage(error)}` });
+    }
+  }
+
   private async loadAndQuery(datasetId: string, expectedEntryCount: number): Promise<void> {
     try {
       const loaded = await this.readDatasetChunks(datasetId);
@@ -517,6 +566,7 @@ class MinerControllerImpl implements MinerController {
       const result = await this.worker.query({
         datasetId: dataset.id,
         knownWords: [...this.state.knownWords],
+        decisions: this.decisionTuples(),
         query: { ...this.state.query, page: this.state.page },
         queryChannel: "user",
         ...(window === undefined ? {} : { window }),

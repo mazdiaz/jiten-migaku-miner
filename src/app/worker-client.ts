@@ -1,4 +1,10 @@
-import type { Entry, QueryResult, QueryState, QueryWindow } from "../domain/types";
+import type {
+  Entry,
+  QueryResult,
+  QueryState,
+  QueryWindow,
+  WordDecisionStatus,
+} from "../domain/types";
 import {
   WORKER_PROTOCOL_VERSION,
   type ImportChunkResponse,
@@ -31,6 +37,7 @@ export type WorkerQueryChannel = "user" | "candidate";
 export interface WorkerQueryInput {
   datasetId: string;
   knownWords: Iterable<string>;
+  decisions?: Array<[string, WordDecisionStatus]>;
   query: QueryState;
   window?: QueryWindow;
   queryChannel?: WorkerQueryChannel;
@@ -351,8 +358,7 @@ class BrowserWorkerClient implements WorkerClient {
       requestId,
       datasetId: input.datasetId,
       knownWords: [...input.knownWords],
-      // Task 5 wires real decision state here; protocol requires the field now.
-      decisions: [],
+      decisions: input.decisions ?? [],
       query: { ...input.query },
     };
     if (input.window !== undefined) request.window = input.window;
