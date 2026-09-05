@@ -1,4 +1,4 @@
-import type { Entry, QueryState, ViewState } from "../domain/types";
+import type { Entry, QueryState, ViewState, WordDecision } from "../domain/types";
 
 export interface DatasetMetadata {
   id: string;
@@ -34,9 +34,18 @@ export interface PreferencesStore {
   clear?(): Promise<void> | void;
 }
 
+export interface WordDecisionStore {
+  get(normalizedWord: string): Promise<WordDecision | null>;
+  list(): Promise<WordDecision[]>;
+  set(decision: WordDecision): Promise<void>;
+  remove(normalizedWord: string): Promise<void>;
+  clear?(): Promise<void> | void;
+}
+
 export interface AppStore {
   datasets: DatasetStore;
   knownWords: KnownWordStore;
+  wordDecisions: WordDecisionStore;
   preferences: PreferencesStore;
   clearAll(): Promise<void>;
 }

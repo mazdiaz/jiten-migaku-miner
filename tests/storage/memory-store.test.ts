@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { createMemoryAppStore } from "../../src/storage/memory-store";
 import type { AppStore, DatasetMetadata } from "../../src/storage/contracts";
-import type { Entry, QueryState, ViewState } from "../../src/domain/types";
+import type {
+  Entry,
+  QueryState,
+  ViewState,
+  WordDecision,
+} from "../../src/domain/types";
 
 const metadata = (id: string): DatasetMetadata => ({
   id,
@@ -64,6 +69,12 @@ const view: ViewState = {
   showHighlight: true,
   showDefinitions: false,
 };
+
+const decision = (normalizedWord: string, status: WordDecision["status"], updatedAt: string): WordDecision => ({
+  normalizedWord,
+  status,
+  updatedAt,
+});
 
 describe("MemoryAppStore", () => {
   it("keeps staged data inactive until an explicit activation", async () => {
@@ -149,6 +160,7 @@ describe("MemoryAppStore", () => {
     await store.datasets.activate("clear-me");
     await store.knownWords.save("known", "Known words", ["alpha"]);
     await store.preferences.save({ query, view, page: 1 });
+    await store.wordDecisions.set(decision("透過", "known", "2026-09-05T00:00:00.000Z"));
 
     await store.clearAll();
 
@@ -156,6 +168,7 @@ describe("MemoryAppStore", () => {
     expect(await store.datasets.getActive()).toBeNull();
     expect(await store.knownWords.getActive()).toBeNull();
     expect(await store.preferences.load()).toBeNull();
+    expect(await store.wordDecisions.list()).toEqual([]);
   });
 
   it("does not leave partial data or replace active data when staging fails", async () => {
@@ -174,5 +187,87 @@ describe("MemoryAppStore", () => {
     await expect(
       collectChunks(store.datasets.readChunks("failed", 10)),
     ).rejects.toThrow("Dataset not found");
+  });
+});
+
+describe("MemoryAppStore wordDecisions", () => {
+  it("saves and reads a decision by normalized word", async () => {
+    const store = createMemoryAppStore();
+    const record = decision("透過", "known", "2026-09-05T00:00:00.000Z");
+
+    await store.wordDecisions.set(record);
+
+    expect(await store.wordDecisions.get("透過")).toEqual(record);
+    expect(await store.wordDecisions.get("unknown-word")).toBeNull();
+  });
+
+  it("overwrites the status for the same normalized word", async () => {
+    const store = createMemoryAppStore();
+
+    await store.wordDecisions.set(decision("透過", "known", "2026-09-05T00:00:00.000Z"));
+    await store.wordDecisions.set(decision("透過", "mined", "2026-09-05T01:00:00.000Z"));
+
+    expect(await store.wordDecisions.get("透過")).toEqual(
+      decision("透過", "mined", "2026-09-05T01:00:00.000Z"),
+    );
+    expect(await store.wordDecisions.list()).toEqual([
+      decision("透過", "mined", "2026-09-05T01:00:00.000Z"),
+    ]);
+  });
+
+  it("returns defensive copies from get and list", async () => {
+    const store = createMemoryAppStore();
+
+    const record = decision("透過", "later", "2026-09-05T00:00:00.000Z");
+    await store.wordDecisions.set(record);
+    record.status = "skip";
+
+    const fetched = await store.wordDecisions.get("透過");
+    expect(fetched).toEqual(decision("透過", "later", "2026-09-05T00:00:00.000Z"));
+    fetched!.status = "mined";
+
+    const listed = await store.wordDecisions.list();
+    expect(listed).toEqual([decision("透過", "later", "2026-09-05T00:00:00.000Z")]);
+    listed[0]!.status = "skip";
+
+    expect(await store.wordDecisions.get("透過")).toEqual(
+      decision("透過", "later", "2026-09-05T00:00:00.000Z"),
+    );
+    expect(await store.wordDecisions.list()).toEqual([
+      decision("透過", "later", "2026-09-05T00:00:00.000Z"),
+    ]);
+  });
+
+  it("removes a decision by normalized word", async () => {
+    const store = createMemoryAppStore();
+
+    await store.wordDecisions.set(decision("透過", "skip", "2026-09-05T00:00:00.000Z"));
+    await store.wordDecisions.remove("透過");
+
+    expect(await store.wordDecisions.get("透過")).toBeNull();
+    expect(await store.wordDecisions.list()).toEqual([]);
+  });
+
+  it("treats removing an unknown word as a no-op", async () => {
+    const store = createMemoryAppStore();
+
+    await store.wordDecisions.set(decision("透過", "skip", "2026-09-05T00:00:00.000Z"));
+    await store.wordDecisions.remove("unknown-word");
+
+    expect(await store.wordDecisions.get("透過")).toEqual(
+      decision("透過", "skip", "2026-09-05T00:00:00.000Z"),
+    );
+  });
+
+  it("clears every decision", async () => {
+    const store = createMemoryAppStore();
+
+    await store.wordDecisions.set(decision("透過", "known", "2026-09-05T00:00:00.000Z"));
+    await store.wordDecisions.set(decision("遠い", "later", "2026-09-05T01:00:00.000Z"));
+
+    await store.wordDecisions.clear?.();
+
+    expect(await store.wordDecisions.list()).toEqual([]);
+    expect(await store.wordDecisions.get("透過")).toBeNull();
   });
 });

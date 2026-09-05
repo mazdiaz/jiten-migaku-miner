@@ -1,10 +1,17 @@
-import type { Entry, FuriganaRun, QueryState, ViewState } from "../domain/types";
+import type {
+  Entry,
+  FuriganaRun,
+  QueryState,
+  ViewState,
+  WordDecision,
+} from "../domain/types";
 import type {
   AppStore,
   DatasetMetadata,
   DatasetStore,
   KnownWordStore,
   PreferencesStore,
+  WordDecisionStore,
 } from "./contracts";
 
 interface StoredDataset {
@@ -38,6 +45,10 @@ function cloneEntries(values: readonly Entry[]): Entry[] {
 
 function cloneMetadata(value: DatasetMetadata): DatasetMetadata {
   return { ...value, headers: [...value.headers] };
+}
+
+function cloneDecision(value: WordDecision): WordDecision {
+  return { ...value };
 }
 
 class MemoryDatasetStore implements DatasetStore {
@@ -192,27 +203,59 @@ class MemoryPreferencesStore implements PreferencesStore {
   }
 }
 
+class MemoryWordDecisionStore implements WordDecisionStore {
+  private readonly decisions = new Map<string, WordDecision>();
+
+  async get(normalizedWord: string): Promise<WordDecision | null> {
+    const decision = this.decisions.get(normalizedWord);
+    return decision ? cloneDecision(decision) : null;
+  }
+
+  async list(): Promise<WordDecision[]> {
+    return [...this.decisions.values()]
+      .sort((left, right) => left.normalizedWord.localeCompare(right.normalizedWord))
+      .map(cloneDecision);
+  }
+
+  async set(decision: WordDecision): Promise<void> {
+    this.decisions.set(decision.normalizedWord, cloneDecision(decision));
+  }
+
+  async remove(normalizedWord: string): Promise<void> {
+    this.decisions.delete(normalizedWord);
+  }
+
+  clear(): void {
+    this.decisions.clear();
+  }
+}
+
 export class MemoryAppStore implements AppStore {
   readonly datasets: DatasetStore;
   readonly knownWords: KnownWordStore;
+  readonly wordDecisions: WordDecisionStore;
   readonly preferences: PreferencesStore;
 
   private readonly datasetStore: MemoryDatasetStore;
   private readonly knownWordStore: MemoryKnownWordStore;
+  private readonly wordDecisionStore: MemoryWordDecisionStore;
   private readonly preferencesStore: MemoryPreferencesStore;
 
   constructor() {
     this.datasetStore = new MemoryDatasetStore();
     this.knownWordStore = new MemoryKnownWordStore();
+    this.wordDecisionStore = new MemoryWordDecisionStore();
     this.preferencesStore = new MemoryPreferencesStore();
     this.datasets = this.datasetStore;
     this.knownWords = this.knownWordStore;
+    this.wordDecisions = this.wordDecisionStore;
     this.preferences = this.preferencesStore;
   }
 
   async clearAll(): Promise<void> {
     this.datasetStore.clear();
     this.knownWordStore.clear();
+    this.wordDecisionStore.clear();
     this.preferencesStore.clear();
   }
 }
