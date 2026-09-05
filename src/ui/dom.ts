@@ -20,6 +20,7 @@ export interface DomMap {
   readonly showDefinitions: HTMLInputElement;
   readonly stickyDefs: HTMLInputElement;
   readonly sentenceFilter: HTMLSelectElement;
+  readonly decisionFilter: HTMLSelectElement;
   readonly minOccurrences: HTMLInputElement;
   readonly sortSelect: HTMLSelectElement;
   readonly pageSize: HTMLSelectElement;
@@ -31,6 +32,7 @@ export interface DomMap {
   readonly stickyTitle: HTMLElement;
   readonly stickySort: HTMLSelectElement;
   readonly stickySentence: HTMLSelectElement;
+  readonly stickyDecision: HTMLSelectElement;
   readonly stickyMin: HTMLInputElement;
   readonly stickyHideKnown: HTMLInputElement;
   readonly stickyHideKana: HTMLInputElement;
@@ -76,6 +78,7 @@ export function getDomMap(): DomMap {
     showDefinitions: byId<HTMLInputElement>("showDefinitions"),
     stickyDefs: byId<HTMLInputElement>("stickyDefs"),
     sentenceFilter: byId<HTMLSelectElement>("sentenceFilter"),
+    decisionFilter: byId<HTMLSelectElement>("decisionFilter"),
     minOccurrences: byId<HTMLInputElement>("minOccurrences"),
     sortSelect: byId<HTMLSelectElement>("sortSelect"),
     pageSize: byId<HTMLSelectElement>("pageSize"),
@@ -87,6 +90,7 @@ export function getDomMap(): DomMap {
     stickyTitle: byId<HTMLElement>("stickyTitle"),
     stickySort: byId<HTMLSelectElement>("stickySort"),
     stickySentence: byId<HTMLSelectElement>("stickySentence"),
+    stickyDecision: byId<HTMLSelectElement>("stickyDecision"),
     stickyMin: byId<HTMLInputElement>("stickyMin"),
     stickyHideKnown: byId<HTMLInputElement>("stickyHideKnown"),
     stickyHideKana: byId<HTMLInputElement>("stickyHideKana"),

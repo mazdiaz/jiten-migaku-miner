@@ -1,4 +1,4 @@
-import type { QueryState, ViewState } from "../domain/types";
+import type { QueryState, ViewState, WordDecisionStatus } from "../domain/types";
 import type { AppState, FileSource, MinerController } from "../app/state";
 import { createFileSource } from "../platform/file-source";
 import type { DomMap } from "./dom";
@@ -152,6 +152,8 @@ export function bindControls(
   bindSelect(dom.stickySort, (value) => ({ sort: value as QueryState["sort"] }));
   bindSelect(dom.sentenceFilter, (value) => ({ sentence: value as QueryState["sentence"] }));
   bindSelect(dom.stickySentence, (value) => ({ sentence: value as QueryState["sentence"] }));
+  bindSelect(dom.decisionFilter, (value) => ({ decision: value as QueryState["decision"] }));
+  bindSelect(dom.stickyDecision, (value) => ({ decision: value as QueryState["decision"] }));
   bindSelect(dom.pageSize, parsePageSize);
   bindSelect(dom.stickyPageSize, parsePageSize);
 
@@ -173,6 +175,17 @@ export function bindControls(
   bindPagerButton(dom.topNext, 1);
   bindPagerButton(dom.bottomNext, 1);
   bindPagerButton(dom.stickyNext, 1);
+
+  recorder.add(dom.resultsList, "click", (event) => {
+    const target = event.target;
+    if (target === null || !(target instanceof Element)) return;
+    const button = target.closest<HTMLButtonElement>("[data-decision-action]");
+    if (button === null || button.disabled) return;
+    const word = button.dataset.word ?? "";
+    const action = button.dataset.decisionAction;
+    if (action !== "known" && action !== "mined" && action !== "skip" && action !== "later" && action !== "unreviewed") return;
+    void controller.setWordDecision(word, action satisfies WordDecisionStatus | "unreviewed");
+  });
 
   recorder.add(dom.clearData, "click", () => {
     if (confirmClear("Clear all saved data from this browser? Imported datasets, known words, and preferences will be removed.")) {

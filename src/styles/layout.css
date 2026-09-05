@@ -136,7 +136,7 @@ input[type="file"] {
 
 .filter-grid {
   display: grid;
-  grid-template-columns: 1.45fr 1fr 1fr 0.75fr;
+  grid-template-columns: 1.45fr 1fr 1fr 1fr 0.75fr;
   gap: 12px;
   align-items: end;
 }

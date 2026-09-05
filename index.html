@@ -61,6 +61,17 @@
             </select>
           </label>
           <label class="control">
+            <span>Decision</span>
+            <select id="decisionFilter">
+              <option value="all" selected>All decisions</option>
+              <option value="unreviewed">Unreviewed</option>
+              <option value="known">Known</option>
+              <option value="mined">Mined</option>
+              <option value="skip">Skipped</option>
+              <option value="later">Later</option>
+            </select>
+          </label>
+          <label class="control">
             <span>Min occurrences</span>
             <input id="minOccurrences" type="number" min="0" step="1" value="1" inputmode="numeric">
           </label>
@@ -110,6 +121,16 @@
               <option value="any">Any</option>
               <option value="has">Has</option>
               <option value="none">None</option>
+            </select>
+          </label>
+          <label class="control"><span>Decision</span>
+            <select id="stickyDecision">
+              <option value="all">All</option>
+              <option value="unreviewed">Unreviewed</option>
+              <option value="known">Known</option>
+              <option value="mined">Mined</option>
+              <option value="skip">Skipped</option>
+              <option value="later">Later</option>
             </select>
           </label>
           <label class="control"><span>Min occ</span>

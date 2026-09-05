@@ -1,11 +1,20 @@
 import { parseHighlightSegments } from "../domain/text";
-import type { EntryWithKnown, QueryResult, ViewState } from "../domain/types";
+import type { EntryWithKnown, QueryResult, ViewState, WordDecisionStatus } from "../domain/types";
 import type { AppState } from "../app/state";
 import type { DomMap } from "./dom";
 
 export interface Renderer {
   render(state: Readonly<AppState>): void;
 }
+
+const DECISION_LABELS: Record<WordDecisionStatus, string> = {
+  known: "Known",
+  mined: "Mined",
+  skip: "Skip",
+  later: "Later",
+};
+
+const DECISION_STATUSES: readonly WordDecisionStatus[] = ["known", "mined", "skip", "later"];
 
 const EMPTY_LOAD_MESSAGE = "Load a Jiten CSV above. Everything stays in this browser tab.";
 const EMPTY_FILTER_MESSAGE = "No entries match the current filters.";
@@ -66,6 +75,53 @@ function renderSentence(entry: EntryWithKnown, view: ViewState): HTMLElement {
   return sentence;
 }
 
+function appendBadges(header: HTMLElement, entry: EntryWithKnown): void {
+  const badges = document.createElement("span");
+  badges.className = "entry-badges";
+  if (entry.knownByMigaku) {
+    const badge = document.createElement("span");
+    badge.className = "entry-badge entry-badge-migaku";
+    badge.textContent = "Migaku known";
+    badges.appendChild(badge);
+  }
+  if (entry.decision !== "unreviewed") {
+    const badge = document.createElement("span");
+    badge.className = "entry-badge entry-badge-decision";
+    badge.textContent = DECISION_LABELS[entry.decision];
+    badges.appendChild(badge);
+  }
+  if (badges.childNodes.length > 0) header.appendChild(badges);
+}
+
+function appendDecisionActions(article: HTMLElement, entry: EntryWithKnown): void {
+  const actions = document.createElement("div");
+  actions.className = "entry-decision";
+  actions.setAttribute("role", "group");
+  actions.setAttribute("aria-label", `Decision for ${entry.word}`);
+
+  for (const status of DECISION_STATUSES) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "decision-button";
+    button.textContent = DECISION_LABELS[status];
+    button.dataset.word = entry.normalizedWord;
+    button.dataset.decisionAction = status;
+    button.setAttribute("aria-pressed", entry.decision === status ? "true" : "false");
+    actions.appendChild(button);
+  }
+
+  const reset = document.createElement("button");
+  reset.type = "button";
+  reset.className = "decision-button decision-reset";
+  reset.textContent = "Reset";
+  reset.dataset.word = entry.normalizedWord;
+  reset.dataset.decisionAction = "unreviewed";
+  reset.disabled = entry.decision === "unreviewed";
+  actions.appendChild(reset);
+
+  article.appendChild(actions);
+}
+
 export function renderEntryNode(entry: EntryWithKnown, number: number, view: ViewState): HTMLElement {
   const article = document.createElement("article");
   article.className = "mining-entry";
@@ -105,7 +161,10 @@ export function renderEntryNode(entry: EntryWithKnown, number: number, view: Vie
     }
     header.insertBefore(definitions, occurrences);
   }
+  appendBadges(header, entry);
   article.appendChild(header);
+
+  appendDecisionActions(article, entry);
 
   if (entry.hasSentence && entry.sentenceRaw) {
     const sentence = renderSentence(entry, view);
@@ -158,10 +217,12 @@ export function createRenderer(dom: DomMap): Renderer {
     dom.filtersFieldset.disabled = !hasData;
     dom.searchInput.value = state.query.search;
     dom.stickySearch.value = state.query.search;
+    const hasKnownSource = state.knownWords.size > 0
+      || [...state.wordDecisions.values()].some((entryDecision) => entryDecision.status === "known");
     dom.hideKnown.checked = state.query.hideKnown;
-    dom.hideKnown.disabled = state.knownWords.size === 0;
+    dom.hideKnown.disabled = !hasKnownSource;
     dom.stickyHideKnown.checked = state.query.hideKnown;
-    dom.stickyHideKnown.disabled = state.knownWords.size === 0;
+    dom.stickyHideKnown.disabled = !hasKnownSource;
     dom.hideKanaOnly.checked = state.query.hideKanaOnly;
     dom.stickyHideKana.checked = state.query.hideKanaOnly;
     dom.showFurigana.checked = state.view.showFurigana;
@@ -174,6 +235,8 @@ export function createRenderer(dom: DomMap): Renderer {
     dom.stickyDefs.checked = state.view.showDefinitions;
     dom.sentenceFilter.value = state.query.sentence;
     dom.stickySentence.value = state.query.sentence;
+    dom.decisionFilter.value = state.query.decision;
+    dom.stickyDecision.value = state.query.decision;
     dom.minOccurrences.value = String(state.query.minOccurrences);
     dom.stickyMin.value = String(state.query.minOccurrences);
     dom.sortSelect.value = state.query.sort;
