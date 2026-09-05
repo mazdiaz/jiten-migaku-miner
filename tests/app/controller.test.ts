@@ -1230,11 +1230,12 @@ describe("MinerController review mode", () => {
     await controller.init();
     await controller.startReview();
 
-    let releaseReviewQuery: (() => void) | null = null;
+    let releaseReviewQuery: () => void = () => undefined;
     const gate = new Promise<void>((resolve) => {
       releaseReviewQuery = resolve;
     });
     const originalHandler = worker.queryHandler;
+    if (originalHandler === null) throw new Error("review pool handler missing");
     worker.queryHandler = async (request) => {
       const outcome = await originalHandler(request);
       if (request.queryChannel === "review" && (request.decisions ?? []).length > 0) await gate;
@@ -1243,7 +1244,7 @@ describe("MinerController review mode", () => {
 
     const first = controller.reviewDecision("mined");
     const second = controller.reviewDecision("later");
-    releaseReviewQuery?.();
+    releaseReviewQuery();
     await Promise.all([first, second]);
 
     const review = states.at(-1)!.review;

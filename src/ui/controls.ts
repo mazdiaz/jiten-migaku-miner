@@ -51,7 +51,11 @@ export function bindControls(
   const confirmClear = options.confirmClear ?? ((message: string) => globalThis.confirm(message));
   const onSearch = options.onSearch;
   let latest: Readonly<AppState> | null = null;
+  let reviewWasActive = false;
   const unsubscribe = controller.subscribe((state) => {
+    if (reviewWasActive && !state.review.active) dom.reviewButton.focus();
+    else if (!reviewWasActive && state.review.active) dom.reviewPanel.focus();
+    reviewWasActive = state.review.active;
     latest = state;
   });
 
@@ -193,12 +197,51 @@ export function bindControls(
     }
   });
 
+  const REVIEW_ACTION_KEYS: Record<string, WordDecisionStatus> = {
+    k: "known",
+    m: "mined",
+    s: "skip",
+    l: "later",
+  };
+
+  const submitReviewDecision = (status: WordDecisionStatus): void => {
+    if (latest === null || latest.review.status !== "ready") return;
+    void controller.reviewDecision(status);
+  };
+
+  recorder.add(dom.reviewButton, "click", () => {
+    void controller.startReview();
+  });
+  recorder.add(dom.reviewExit, "click", () => controller.stopReview());
+  recorder.add(dom.reviewReturn, "click", () => controller.stopReview());
+  for (const [button, status] of [
+    [dom.reviewKnown, "known"],
+    [dom.reviewMined, "mined"],
+    [dom.reviewSkip, "skip"],
+    [dom.reviewLater, "later"],
+  ] as const) {
+    recorder.add(button, "click", () => submitReviewDecision(status));
+  }
+
   const handleKeydown = (event: Event): void => {
     const keyboard = event as KeyboardEvent;
-    if (latest === null || latest.dataset === null || keyboard.defaultPrevented) return;
+    if (latest === null || keyboard.defaultPrevented) return;
     if (keyboard.ctrlKey || keyboard.metaKey || keyboard.altKey || keyboard.shiftKey) return;
     if (isTypingTarget(keyboard.target)) return;
 
+    if (latest.review.active) {
+      const action = REVIEW_ACTION_KEYS[keyboard.key.toLowerCase()];
+      if (action !== undefined) {
+        keyboard.preventDefault();
+        submitReviewDecision(action);
+      } else if (keyboard.key === "Escape") {
+        keyboard.preventDefault();
+        controller.stopReview();
+      }
+      return;
+    }
+
+    if (latest.dataset === null) return;
     if (keyboard.key === "ArrowRight" || keyboard.key === "n") {
       keyboard.preventDefault();
       controller.changePage(1);

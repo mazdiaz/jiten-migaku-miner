@@ -18,6 +18,40 @@ const DECISION_STATUSES: readonly WordDecisionStatus[] = ["known", "mined", "ski
 
 const EMPTY_LOAD_MESSAGE = "Load a Jiten CSV above. Everything stays in this browser tab.";
 const EMPTY_FILTER_MESSAGE = "No entries match the current filters.";
+const REVIEW_COMPLETE_MESSAGE = "No unreviewed candidates remain for the current filters.";
+
+function renderReviewSurface(dom: DomMap, state: Readonly<AppState>): void {
+  const review = state.review;
+  dom.reviewOverlay.hidden = !review.active;
+  document.body.classList.toggle("review-open", review.active);
+  dom.reviewButton.disabled = state.dataset === null || state.status === "loading" || review.active;
+
+  const triageButtons = [dom.reviewKnown, dom.reviewMined, dom.reviewSkip, dom.reviewLater];
+  for (const button of triageButtons) button.disabled = review.status !== "ready";
+
+  const complete = review.active && review.status === "complete";
+  dom.reviewComplete.hidden = !complete;
+  dom.reviewContent.hidden = !review.active || complete;
+
+  if (!review.active) {
+    dom.reviewContent.textContent = "";
+    dom.reviewProgress.textContent = "";
+    return;
+  }
+
+  dom.reviewProgress.textContent = `${review.processed} processed · ${review.remaining} remaining`;
+
+  if (review.status === "error" && review.errorMessage !== null) {
+    dom.reviewContent.textContent = review.errorMessage;
+    return;
+  }
+  if (review.current === null) {
+    dom.reviewContent.textContent = review.status === "loading" ? "Loading review queue…" : REVIEW_COMPLETE_MESSAGE;
+    return;
+  }
+  dom.reviewContent.textContent = "";
+  dom.reviewContent.appendChild(renderReviewEntryNode(review.current, state.view));
+}
 
 function appendFuriganaTarget(
   container: HTMLElement,
@@ -122,16 +156,16 @@ function appendDecisionActions(article: HTMLElement, entry: EntryWithKnown): voi
   article.appendChild(actions);
 }
 
-export function renderEntryNode(entry: EntryWithKnown, number: number, view: ViewState): HTMLElement {
-  const article = document.createElement("article");
-  article.className = "mining-entry";
-
+function buildEntryHeader(entry: EntryWithKnown, view: ViewState, number: number | null): HTMLElement {
   const header = document.createElement("div");
   header.className = "entry-header";
 
-  const numberEl = document.createElement("span");
-  numberEl.className = "entry-number";
-  numberEl.textContent = `${number}.`;
+  if (number !== null) {
+    const numberEl = document.createElement("span");
+    numberEl.className = "entry-number";
+    numberEl.textContent = `${number}.`;
+    header.appendChild(numberEl);
+  }
 
   const target = document.createElement("div");
   target.className = "target-word";
@@ -146,7 +180,7 @@ export function renderEntryNode(entry: EntryWithKnown, number: number, view: Vie
   occurrences.className = "occurrence-count";
   occurrences.textContent = `×${entry.occurrences}`;
 
-  header.append(numberEl, target, occurrences);
+  header.append(target, occurrences);
   if (entry.definitions && view.showDefinitions) {
     const parts = entry.definitions.split(",").map((part) => part.trim()).filter(Boolean);
     const max = 3;
@@ -162,16 +196,32 @@ export function renderEntryNode(entry: EntryWithKnown, number: number, view: Vie
     header.insertBefore(definitions, occurrences);
   }
   appendBadges(header, entry);
-  article.appendChild(header);
+  return header;
+}
 
+function buildSentenceBlock(entry: EntryWithKnown, view: ViewState): HTMLElement | null {
+  if (!entry.hasSentence || !entry.sentenceRaw) return null;
+  const sentence = renderSentence(entry, view);
+  sentence.lang = "ja";
+  return sentence;
+}
+
+export function renderEntryNode(entry: EntryWithKnown, number: number, view: ViewState): HTMLElement {
+  const article = document.createElement("article");
+  article.className = "mining-entry";
+  article.appendChild(buildEntryHeader(entry, view, number));
   appendDecisionActions(article, entry);
+  const sentence = buildSentenceBlock(entry, view);
+  if (sentence !== null) article.appendChild(sentence);
+  return article;
+}
 
-  if (entry.hasSentence && entry.sentenceRaw) {
-    const sentence = renderSentence(entry, view);
-    sentence.lang = "ja";
-    article.appendChild(sentence);
-  }
-
+export function renderReviewEntryNode(entry: EntryWithKnown, view: ViewState): HTMLElement {
+  const article = document.createElement("article");
+  article.className = "mining-entry review-entry";
+  article.appendChild(buildEntryHeader(entry, view, null));
+  const sentence = buildSentenceBlock(entry, view);
+  if (sentence !== null) article.appendChild(sentence);
   return article;
 }
 
@@ -278,6 +328,7 @@ export function createRenderer(dom: DomMap): Renderer {
 
       setPager(state.result);
       renderItems(state, hasData);
+      renderReviewSurface(dom, state);
     },
   };
 }

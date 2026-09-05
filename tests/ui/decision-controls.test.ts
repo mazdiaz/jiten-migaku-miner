@@ -68,6 +68,32 @@ function seedDom(): DomMap {
   add("resultsHeading", "h2");
   add("resultStats", "p");
   add("resultsList", "div");
+  add("reviewButton", "button");
+  const reviewOverlay = add("reviewOverlay", "div");
+  reviewOverlay.setAttribute("role", "dialog");
+  reviewOverlay.setAttribute("aria-modal", "true");
+  reviewOverlay.setAttribute("aria-labelledby", "reviewHeading");
+  const reviewPanel = add("reviewPanel", "div");
+  reviewPanel.setAttribute("tabindex", "-1");
+  reviewOverlay.appendChild(reviewPanel);
+  const intoPanel = (id: string, tag: string): HTMLElement => {
+    const element = add(id, tag);
+    reviewPanel.appendChild(element);
+    return element;
+  };
+  intoPanel("reviewHeading", "h2");
+  intoPanel("reviewProgress", "span");
+  intoPanel("reviewContent", "div");
+  const reviewComplete = intoPanel("reviewComplete", "div");
+  const completeCopy = document.createElement("p");
+  completeCopy.textContent = "No unreviewed candidates remain for the current filters.";
+  reviewComplete.appendChild(completeCopy);
+  intoPanel("reviewReturn", "button");
+  intoPanel("reviewExit", "button");
+  intoPanel("reviewKnown", "button");
+  intoPanel("reviewMined", "button");
+  intoPanel("reviewSkip", "button");
+  intoPanel("reviewLater", "button");
   add("stickyToolbar", "div");
   add("stickyTitle", "div");
   add("stickyPrev", "button");
@@ -87,8 +113,12 @@ interface FakeController extends MinerController {
   calls: {
     updateQuery: Partial<QueryState>[];
     setWordDecision: Array<[string, string]>;
+    reviewDecision: string[];
+    startReview: number;
+    stopReview: number;
   };
   notify(queryPatch?: Partial<QueryState>): void;
+  publishState(patch: Partial<AppState>): void;
 }
 
 function createFakeController(initial?: Partial<AppState>): FakeController {
@@ -97,11 +127,18 @@ function createFakeController(initial?: Partial<AppState>): FakeController {
   const calls = {
     updateQuery: [] as Partial<QueryState>[],
     setWordDecision: [] as Array<[string, string]>,
+    reviewDecision: [] as string[],
+    startReview: 0,
+    stopReview: 0,
   };
   const controller: FakeController = {
     calls,
     notify(queryPatch) {
       if (queryPatch) state = { ...state, query: { ...state.query, ...queryPatch } };
+      for (const listener of listeners) listener(state);
+    },
+    publishState(patch) {
+      state = { ...state, ...patch };
       for (const listener of listeners) listener(state);
     },
     subscribe(listener: Listener) {
@@ -120,6 +157,15 @@ function createFakeController(initial?: Partial<AppState>): FakeController {
     changePage: vi.fn(),
     setWordDecision: vi.fn(async (word: string, status: string) => {
       calls.setWordDecision.push([word, status]);
+    }),
+    startReview: vi.fn(async () => {
+      calls.startReview += 1;
+    }),
+    stopReview: vi.fn(() => {
+      calls.stopReview += 1;
+    }),
+    reviewDecision: vi.fn(async (status: string) => {
+      calls.reviewDecision.push(status);
     }),
     clearSavedData: vi.fn(async () => {}),
     init: vi.fn(async () => {}),
@@ -359,6 +405,186 @@ describe("hide-known gate", () => {
     try {
       expect(harness.dom.hideKnown.disabled).toBe(false);
       expect(harness.dom.stickyHideKnown.disabled).toBe(false);
+    } finally {
+      harness.dispose();
+    }
+  });
+});
+
+function reviewState(active: Partial<AppState["review"]> = {}): Partial<AppState> {
+  return {
+    review: {
+      active: true,
+      initialTotal: 3,
+      processed: 0,
+      remaining: 3,
+      current: null,
+      status: "ready",
+      errorMessage: null,
+      ...active,
+    },
+  };
+}
+
+describe("review mode ui", () => {
+  it("opens from the review button and renders the current entry", () => {
+    const harness = setup();
+    try {
+      harness.controller.publishState({
+        dataset: {
+          id: "d1", name: "book.csv", sourceType: "file", sourceName: "book.csv",
+          headers: ["Word"], entryCount: 3, createdAt: "x", updatedAt: "x", schemaVersion: 1,
+        },
+        status: "ready",
+      });
+      harness.dom.reviewButton.dispatchEvent(new Event("click"));
+      expect(harness.controller.calls.startReview).toBe(1);
+    } finally {
+      harness.dispose();
+    }
+  });
+
+  it("renders the review overlay with entry, progress, and enabled actions when ready", () => {
+    const harness = setup(reviewState({ current: makeEntry() }));
+    try {
+      expect(harness.dom.reviewOverlay.hidden).toBe(false);
+      expect(harness.dom.reviewOverlay.getAttribute("role")).toBe("dialog");
+      expect(harness.dom.reviewOverlay.getAttribute("aria-modal")).toBe("true");
+      expect(harness.dom.reviewContent.querySelector(".review-entry .target-word")?.textContent).toBe("言葉");
+      expect(harness.dom.reviewContent.querySelector(".sentence")?.textContent).toContain("が好き。");
+      expect(harness.dom.reviewProgress.textContent).toBe("0 processed · 3 remaining");
+      for (const button of [harness.dom.reviewKnown, harness.dom.reviewMined, harness.dom.reviewSkip, harness.dom.reviewLater]) {
+        expect(button.disabled).toBe(false);
+      }
+    } finally {
+      harness.dispose();
+    }
+  });
+
+  it("keeps the normal list rendering untouched while the overlay is open", () => {
+    const harness = setup(reviewState({ current: makeEntry() }));
+    try {
+      expect(harness.dom.resultsList.querySelector(".mining-entry")).toBeNull();
+      expect(document.querySelectorAll("#reviewOverlay .mining-entry").length).toBe(1);
+    } finally {
+      harness.dispose();
+    }
+  });
+
+  it("moves focus into the panel on open and back to the review button on close", () => {
+    const harness = setup(reviewState({ current: makeEntry() }));
+    try {
+      expect(document.activeElement).toBe(harness.dom.reviewPanel);
+      harness.controller.publishState({
+        status: "ready",
+        dataset: {
+          id: "d1", name: "book.csv", sourceType: "file", sourceName: "book.csv",
+          headers: ["Word"], entryCount: 3, createdAt: "x", updatedAt: "x", schemaVersion: 1,
+        },
+        review: {
+          active: false, initialTotal: 0, processed: 0, remaining: 0,
+          current: null, status: "idle", errorMessage: null,
+        },
+      });
+      expect(document.activeElement).toBe(harness.dom.reviewButton);
+      expect(harness.dom.reviewOverlay.hidden).toBe(true);
+      expect(harness.dom.reviewContent.childElementCount).toBe(0);
+    } finally {
+      harness.dispose();
+    }
+  });
+
+  it("shows the completion copy and return button when nothing remains", () => {
+    const harness = setup(reviewState({
+      status: "complete", current: null, processed: 3, remaining: 0,
+    }));
+    try {
+      expect(harness.dom.reviewComplete.hidden).toBe(false);
+      expect(harness.dom.reviewComplete.textContent).toContain("No unreviewed candidates remain for the current filters.");
+      expect(harness.dom.reviewContent.hidden).toBe(true);
+      harness.dom.reviewReturn.dispatchEvent(new Event("click"));
+      expect(harness.controller.calls.stopReview).toBe(1);
+    } finally {
+      harness.dispose();
+    }
+  });
+
+  it("disables triage buttons unless a decision can be made", () => {
+    const loading = setup(reviewState({ status: "loading" }));
+    try {
+      for (const button of [loading.dom.reviewKnown, loading.dom.reviewMined]) {
+        expect(button.disabled).toBe(true);
+      }
+      loading.dom.reviewKnown.dispatchEvent(new Event("click"));
+      expect(loading.controller.calls.reviewDecision).toEqual([]);
+    } finally {
+      loading.dispose();
+    }
+  });
+
+  it("action buttons and keyboard shortcuts submit decisions", () => {
+    const harness = setup(reviewState({ current: makeEntry() }));
+    try {
+      harness.dom.reviewMined.dispatchEvent(new Event("click"));
+      expect(harness.controller.calls.reviewDecision).toEqual(["mined"]);
+
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "l", bubbles: true }));
+      expect(harness.controller.calls.reviewDecision).toEqual(["mined", "later"]);
+
+      harness.controller.calls.reviewDecision.length = 0;
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "K", bubbles: true }));
+      expect(harness.controller.calls.reviewDecision).toEqual(["known"]);
+    } finally {
+      harness.dispose();
+    }
+  });
+
+  it("escape exits review mode and list shortcuts stay suppressed while reviewing", () => {
+    const harness = setup(reviewState({ current: makeEntry() }));
+    try {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      expect(harness.controller.calls.stopReview).toBe(1);
+
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "n", bubbles: true }));
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+      expect(harness.controller.calls.updateQuery).toEqual([]);
+    } finally {
+      harness.dispose();
+    }
+  });
+
+  it("does not fire review shortcuts while typing in an input", () => {
+    const harness = setup(reviewState({ current: makeEntry() }));
+    try {
+      const input = document.createElement("input");
+      document.body.appendChild(input);
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "k", bubbles: true }));
+      expect(harness.controller.calls.reviewDecision).toEqual([]);
+    } finally {
+      harness.dispose();
+    }
+  });
+
+  it("review button is disabled without a dataset and while loading", () => {
+    const harness = setup(reviewState());
+    try {
+      expect(harness.dom.reviewButton.disabled).toBe(true);
+
+      harness.controller.publishState({ status: "loading", dataset: null });
+      expect(harness.dom.reviewButton.disabled).toBe(true);
+
+      harness.controller.publishState({
+        status: "ready",
+        review: {
+          active: false, initialTotal: 0, processed: 0, remaining: 0,
+          current: null, status: "idle", errorMessage: null,
+        },
+        dataset: {
+          id: "d1", name: "book.csv", sourceType: "file", sourceName: "book.csv",
+          headers: ["Word"], entryCount: 3, createdAt: "x", updatedAt: "x", schemaVersion: 1,
+        },
+      });
+      expect(harness.dom.reviewButton.disabled).toBe(false);
     } finally {
       harness.dispose();
     }

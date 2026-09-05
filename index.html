@@ -158,6 +158,7 @@
           <h2 id="resultsHeading">Mining entries</h2>
           <p id="resultStats" class="result-stats">Load a Jiten CSV to begin.</p>
         </div>
+        <button id="reviewButton" type="button" class="review-button" disabled>Review unreviewed</button>
         <div class="pager" aria-label="Top page navigation">
           <button id="topPrev" type="button" aria-label="Previous page" disabled>←</button>
           <span id="topPage" class="page-label">Page 0 / 0</span>
@@ -176,6 +177,28 @@
       </div>
       <p class="shortcut-note">Shortcuts: → / N next · ← / P previous · Home top · End bottom. Disabled while typing in a control.</p>
     </section>
+
+    <div id="reviewOverlay" class="review-overlay" role="dialog" aria-modal="true" aria-labelledby="reviewHeading" hidden>
+      <div id="reviewPanel" class="review-panel" tabindex="-1">
+        <div class="review-header">
+          <h2 id="reviewHeading">Review</h2>
+          <span id="reviewProgress" class="review-progress" aria-live="polite"></span>
+          <button id="reviewExit" type="button" class="review-exit">Exit review</button>
+        </div>
+        <div id="reviewContent" class="review-content" lang="ja"></div>
+        <div id="reviewComplete" class="review-complete" hidden>
+          <p>No unreviewed candidates remain for the current filters.</p>
+          <button id="reviewReturn" type="button" class="review-action">Return to list</button>
+        </div>
+        <div class="review-actions" role="group" aria-label="Review decision">
+          <button id="reviewKnown" type="button" class="review-action">Known (K)</button>
+          <button id="reviewMined" type="button" class="review-action">Mined (M)</button>
+          <button id="reviewSkip" type="button" class="review-action">Skip (S)</button>
+          <button id="reviewLater" type="button" class="review-action">Later (L)</button>
+        </div>
+        <p class="review-shortcut-note">Shortcuts: K known · M mined · S skip · L later · Esc exit.</p>
+      </div>
+    </div>
   </main>
 
   <script type="module" src="/src/main.ts"></script>

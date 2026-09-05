@@ -28,6 +28,19 @@ export interface DomMap {
   readonly resultsHeading: HTMLElement;
   readonly resultStats: HTMLElement;
   readonly resultsList: HTMLElement;
+  readonly reviewButton: HTMLButtonElement;
+  readonly reviewOverlay: HTMLElement;
+  readonly reviewPanel: HTMLElement;
+  readonly reviewHeading: HTMLElement;
+  readonly reviewProgress: HTMLElement;
+  readonly reviewContent: HTMLElement;
+  readonly reviewComplete: HTMLElement;
+  readonly reviewReturn: HTMLButtonElement;
+  readonly reviewExit: HTMLButtonElement;
+  readonly reviewKnown: HTMLButtonElement;
+  readonly reviewMined: HTMLButtonElement;
+  readonly reviewSkip: HTMLButtonElement;
+  readonly reviewLater: HTMLButtonElement;
   readonly stickyToolbar: HTMLElement;
   readonly stickyTitle: HTMLElement;
   readonly stickySort: HTMLSelectElement;
@@ -86,6 +99,19 @@ export function getDomMap(): DomMap {
     resultsHeading: byId<HTMLElement>("resultsHeading"),
     resultStats: byId<HTMLElement>("resultStats"),
     resultsList: byId<HTMLElement>("resultsList"),
+    reviewButton: byId<HTMLButtonElement>("reviewButton"),
+    reviewOverlay: byId<HTMLElement>("reviewOverlay"),
+    reviewPanel: byId<HTMLElement>("reviewPanel"),
+    reviewHeading: byId<HTMLElement>("reviewHeading"),
+    reviewProgress: byId<HTMLElement>("reviewProgress"),
+    reviewContent: byId<HTMLElement>("reviewContent"),
+    reviewComplete: byId<HTMLElement>("reviewComplete"),
+    reviewReturn: byId<HTMLButtonElement>("reviewReturn"),
+    reviewExit: byId<HTMLButtonElement>("reviewExit"),
+    reviewKnown: byId<HTMLButtonElement>("reviewKnown"),
+    reviewMined: byId<HTMLButtonElement>("reviewMined"),
+    reviewSkip: byId<HTMLButtonElement>("reviewSkip"),
+    reviewLater: byId<HTMLButtonElement>("reviewLater"),
     stickyToolbar: byId<HTMLElement>("stickyToolbar"),
     stickyTitle: byId<HTMLElement>("stickyTitle"),
     stickySort: byId<HTMLSelectElement>("stickySort"),
