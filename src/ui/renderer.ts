@@ -19,6 +19,14 @@ const DECISION_STATUSES: readonly WordDecisionStatus[] = ["known", "mined", "ski
 const EMPTY_LOAD_MESSAGE = "Load a Jiten CSV above. Everything stays in this browser tab.";
 const EMPTY_FILTER_MESSAGE = "No entries match the current filters.";
 const REVIEW_COMPLETE_MESSAGE = "No unreviewed candidates remain for the current filters.";
+const QUEUE_COMPLETE_MESSAGE = "Mining queue complete.";
+const QUEUE_ADD_LABEL = "+ Queue";
+const QUEUE_QUEUED_LABEL = "✓ Queued";
+
+export interface EntryRenderOptions {
+  queued?: boolean;
+  queueMode?: boolean;
+}
 
 function renderReviewSurface(dom: DomMap, state: Readonly<AppState>): void {
   const review = state.review;
@@ -156,6 +164,52 @@ function appendDecisionActions(article: HTMLElement, entry: EntryWithKnown): voi
   article.appendChild(actions);
 }
 
+function appendQueueToggle(article: HTMLElement, entry: EntryWithKnown, queued: boolean): void {
+  const actions = document.createElement("div");
+  actions.className = "entry-queue";
+  actions.setAttribute("role", "group");
+  actions.setAttribute("aria-label", `Mining queue for ${entry.word}`);
+
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "queue-toggle-button";
+  button.textContent = queued ? QUEUE_QUEUED_LABEL : QUEUE_ADD_LABEL;
+  button.dataset.word = entry.normalizedWord;
+  button.dataset.queueAction = "toggle";
+  button.setAttribute("aria-pressed", queued ? "true" : "false");
+  actions.appendChild(button);
+
+  article.appendChild(actions);
+}
+
+function appendQueueDecisionActions(article: HTMLElement, entry: EntryWithKnown): void {
+  const actions = document.createElement("div");
+  actions.className = "entry-decision entry-queue-actions";
+  actions.setAttribute("role", "group");
+  actions.setAttribute("aria-label", `Mining queue actions for ${entry.word}`);
+
+  for (const status of DECISION_STATUSES) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "decision-button";
+    button.textContent = DECISION_LABELS[status];
+    button.dataset.word = entry.normalizedWord;
+    button.dataset.decisionAction = status;
+    button.setAttribute("aria-pressed", entry.decision === status ? "true" : "false");
+    actions.appendChild(button);
+  }
+
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.className = "decision-button queue-remove";
+  remove.textContent = "Remove from queue";
+  remove.dataset.word = entry.normalizedWord;
+  remove.dataset.queueAction = "remove";
+  actions.appendChild(remove);
+
+  article.appendChild(actions);
+}
+
 function buildEntryHeader(entry: EntryWithKnown, view: ViewState, number: number | null): HTMLElement {
   const header = document.createElement("div");
   header.className = "entry-header";
@@ -206,11 +260,21 @@ function buildSentenceBlock(entry: EntryWithKnown, view: ViewState): HTMLElement
   return sentence;
 }
 
-export function renderEntryNode(entry: EntryWithKnown, number: number, view: ViewState): HTMLElement {
+export function renderEntryNode(
+  entry: EntryWithKnown,
+  number: number,
+  view: ViewState,
+  options: EntryRenderOptions = {},
+): HTMLElement {
   const article = document.createElement("article");
   article.className = "mining-entry";
   article.appendChild(buildEntryHeader(entry, view, number));
-  appendDecisionActions(article, entry);
+  if (options.queueMode === true) {
+    appendQueueDecisionActions(article, entry);
+  } else {
+    appendDecisionActions(article, entry);
+    appendQueueToggle(article, entry, options.queued === true);
+  }
   const sentence = buildSentenceBlock(entry, view);
   if (sentence !== null) article.appendChild(sentence);
   return article;
@@ -253,13 +317,17 @@ export function createRenderer(dom: DomMap): Renderer {
     if (items.length === 0) {
       const empty = document.createElement("div");
       empty.className = "empty-state";
-      empty.textContent = EMPTY_FILTER_MESSAGE;
+      empty.textContent = state.queue.mode === "queue" ? QUEUE_COMPLETE_MESSAGE : EMPTY_FILTER_MESSAGE;
       dom.resultsList.appendChild(empty);
       return;
     }
+    const queueMode = state.queue.mode === "queue";
+    const queued = new Set(state.queue.normalizedWords);
     const startIndex = state.result?.startIndex ?? 1;
     const fragment = document.createDocumentFragment();
-    items.forEach((entry, index) => fragment.appendChild(renderEntryNode(entry, startIndex + index, state.view)));
+    items.forEach((entry, index) => fragment.appendChild(
+      renderEntryNode(entry, startIndex + index, state.view, { queueMode, queued: queued.has(entry.normalizedWord) }),
+    ));
     dom.resultsList.appendChild(fragment);
   };
 
@@ -293,7 +361,13 @@ export function createRenderer(dom: DomMap): Renderer {
     dom.stickySort.value = state.query.sort;
     dom.pageSize.value = String(state.query.pageSize);
     dom.stickyPageSize.value = String(state.query.pageSize);
+    const queueCount = state.queue.normalizedWords.length;
+    dom.queueToggle.textContent = `Queue (${queueCount})`;
+    dom.queueToggle.disabled = hasData === false || queueCount === 0;
+    dom.queueToggle.setAttribute("aria-pressed", state.queue.mode === "queue" ? "true" : "false");
+    dom.clearQueue.disabled = queueCount === 0;
     document.body.classList.toggle("hl-pill", state.view.pillHighlight);
+    document.body.classList.toggle("queue-mode", state.queue.mode === "queue");
   };
 
   return {
@@ -329,6 +403,15 @@ export function createRenderer(dom: DomMap): Renderer {
       setPager(state.result);
       renderItems(state, hasData);
       renderReviewSurface(dom, state);
+
+      const queueMode = state.queue.mode === "queue";
+      dom.queueHeader.hidden = !queueMode;
+      if (queueMode) {
+        dom.queueHeading.textContent = `Mining Queue — ${state.queue.normalizedWords.length} words`;
+        dom.queueStats.textContent = state.queue.normalizedWords.length === 0
+          ? QUEUE_COMPLETE_MESSAGE
+          : "Work through each queued word, then exit to return to the full list.";
+      }
     },
   };
 }

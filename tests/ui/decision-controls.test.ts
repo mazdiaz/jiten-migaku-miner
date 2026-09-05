@@ -94,6 +94,12 @@ function seedDom(): DomMap {
   intoPanel("reviewMined", "button");
   intoPanel("reviewSkip", "button");
   intoPanel("reviewLater", "button");
+  add("queueToggle", "button");
+  add("queueHeader", "div");
+  add("queueHeading", "h2");
+  add("queueStats", "p");
+  add("exitQueue", "button");
+  add("clearQueue", "button");
   add("stickyToolbar", "div");
   add("stickyTitle", "div");
   add("stickyPrev", "button");

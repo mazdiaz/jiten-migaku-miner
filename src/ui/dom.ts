@@ -41,6 +41,12 @@ export interface DomMap {
   readonly reviewMined: HTMLButtonElement;
   readonly reviewSkip: HTMLButtonElement;
   readonly reviewLater: HTMLButtonElement;
+  readonly queueToggle: HTMLButtonElement;
+  readonly queueHeader: HTMLElement;
+  readonly queueHeading: HTMLElement;
+  readonly queueStats: HTMLElement;
+  readonly exitQueue: HTMLButtonElement;
+  readonly clearQueue: HTMLButtonElement;
   readonly stickyToolbar: HTMLElement;
   readonly stickyTitle: HTMLElement;
   readonly stickySort: HTMLSelectElement;
@@ -112,6 +118,12 @@ export function getDomMap(): DomMap {
     reviewMined: byId<HTMLButtonElement>("reviewMined"),
     reviewSkip: byId<HTMLButtonElement>("reviewSkip"),
     reviewLater: byId<HTMLButtonElement>("reviewLater"),
+    queueToggle: byId<HTMLButtonElement>("queueToggle"),
+    queueHeader: byId<HTMLElement>("queueHeader"),
+    queueHeading: byId<HTMLElement>("queueHeading"),
+    queueStats: byId<HTMLElement>("queueStats"),
+    exitQueue: byId<HTMLButtonElement>("exitQueue"),
+    clearQueue: byId<HTMLButtonElement>("clearQueue"),
     stickyToolbar: byId<HTMLElement>("stickyToolbar"),
     stickyTitle: byId<HTMLElement>("stickyTitle"),
     stickySort: byId<HTMLSelectElement>("stickySort"),
