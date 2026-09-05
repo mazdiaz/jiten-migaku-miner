@@ -1,4 +1,5 @@
 import type {
+  EntryWithKnown,
   QueryResult,
   QueryState,
   ViewState,
@@ -6,6 +7,16 @@ import type {
   WordDecisionStatus,
 } from "../domain/types";
 import type { DatasetMetadata } from "../storage/contracts";
+
+export interface ReviewState {
+  active: boolean;
+  initialTotal: number;
+  processed: number;
+  remaining: number;
+  current: EntryWithKnown | null;
+  status: "idle" | "loading" | "ready" | "complete" | "error";
+  errorMessage: string | null;
+}
 
 export interface AppState {
   dataset: DatasetMetadata | null;
@@ -19,6 +30,7 @@ export interface AppState {
   status: "empty" | "loading" | "ready" | "error";
   errorMessage: string | null;
   persistence: "indexeddb" | "memory";
+  review: ReviewState;
 }
 
 export interface FileSource {
@@ -39,6 +51,9 @@ export interface MinerController {
   updateViewport(start: number): void;
   changePage(delta: number): void;
   setWordDecision(normalizedWord: string, status: WordDecisionStatus | "unreviewed"): Promise<void>;
+  startReview(): Promise<void>;
+  stopReview(): void;
+  reviewDecision(status: WordDecisionStatus): Promise<void>;
   clearSavedData(): Promise<void>;
   init(): Promise<void>;
 }
@@ -62,6 +77,16 @@ export const DEFAULT_VIEW: ViewState = {
   showDefinitions: true,
 };
 
+export const EMPTY_REVIEW: ReviewState = {
+  active: false,
+  initialTotal: 0,
+  processed: 0,
+  remaining: 0,
+  current: null,
+  status: "idle",
+  errorMessage: null,
+};
+
 export function createInitialAppState(
   persistence: AppState["persistence"] = "indexeddb",
 ): AppState {
@@ -77,6 +102,7 @@ export function createInitialAppState(
     status: "empty",
     errorMessage: null,
     persistence,
+    review: { ...EMPTY_REVIEW },
   };
 }
 
@@ -96,6 +122,10 @@ function cloneResult(value: QueryResult | null): QueryResult | null {
   return value === null ? null : { ...value, items: [...value.items] };
 }
 
+function cloneReview(value: ReviewState): ReviewState {
+  return { ...value };
+}
+
 export function cloneAppState(value: AppState): AppState {
   return {
     ...value,
@@ -105,6 +135,7 @@ export function cloneAppState(value: AppState): AppState {
     query: cloneQuery(value.query),
     view: cloneView(value.view),
     result: cloneResult(value.result),
+    review: cloneReview(value.review),
   };
 }
 
@@ -112,6 +143,7 @@ export function snapshotAppState(value: AppState): Readonly<AppState> {
   const snapshot = cloneAppState(value);
   Object.freeze(snapshot.query);
   Object.freeze(snapshot.view);
+  Object.freeze(snapshot.review);
   if (snapshot.result !== null) Object.freeze(snapshot.result);
   Object.freeze(snapshot);
   return snapshot;

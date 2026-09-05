@@ -17,6 +17,7 @@ import {
   cloneAppState,
   snapshotAppState,
   DEFAULT_QUERY,
+  EMPTY_REVIEW,
   type AppState,
   type FileSource,
   type MinerController,
@@ -85,6 +86,7 @@ class MinerControllerImpl implements MinerController {
   private fallbackWarning: string | null = null;
   private persistentStore: AppStore | null = null;
   private importLock: Promise<unknown> = Promise.resolve();
+  private reviewBusy = false;
   private decisionLock: Promise<unknown> = Promise.resolve();
 
   constructor(options: MinerControllerOptions) {
@@ -315,11 +317,64 @@ class MinerControllerImpl implements MinerController {
       throw new Error("Word decision requires a non-empty normalized word");
     }
     const write = this.decisionLock.then(
-      () => this.applyWordDecision(normalized, status),
-      () => this.applyWordDecision(normalized, status),
+      () => this.applyWordDecision(normalized, status).catch((error: unknown) => {
+        this.setState({ errorMessage: `Word decision could not be saved: ${errorMessage(error)}` });
+      }),
+      () => this.applyWordDecision(normalized, status).catch((error: unknown) => {
+        this.setState({ errorMessage: `Word decision could not be saved: ${errorMessage(error)}` });
+      }),
     );
     this.decisionLock = write.then(() => undefined, () => undefined);
     await write;
+  }
+
+  async startReview(): Promise<void> {
+    if (this.state.review.active || this.state.dataset === null) return;
+    this.state.review = { ...EMPTY_REVIEW, active: true, status: "loading" };
+    this.publish();
+    await this.runReviewQuery({ captureInitial: true });
+  }
+
+  stopReview(): void {
+    if (!this.state.review.active) return;
+    this.state.review = { ...EMPTY_REVIEW };
+    this.publish();
+  }
+
+  async reviewDecision(status: WordDecisionStatus): Promise<void> {
+    const review = this.state.review;
+    if (!review.active || review.status !== "ready" || review.current === null || this.reviewBusy) return;
+    const word = review.current.normalizedWord;
+    this.reviewBusy = true;
+    this.state.review = { ...review, status: "loading", errorMessage: null };
+    this.publish();
+
+    const write = this.decisionLock.then(
+      () => this.applyWordDecision(word, status),
+      () => this.applyWordDecision(word, status),
+    );
+    this.decisionLock = write.then(() => undefined, () => undefined);
+    try {
+      await write;
+      if (!this.state.review.active) return;
+      this.state.review = {
+        ...this.state.review,
+        processed: this.state.review.processed + 1,
+        status: "loading",
+      };
+      this.publish();
+      await this.runReviewQuery();
+    } catch (error) {
+      if (!this.state.review.active) return;
+      this.state.review = {
+        ...this.state.review,
+        status: this.state.review.current === null ? "complete" : "ready",
+        errorMessage: `Word decision could not be saved: ${errorMessage(error)}`,
+      };
+      this.publish();
+    } finally {
+      this.reviewBusy = false;
+    }
   }
 
   async clearSavedData(): Promise<void> {
@@ -520,21 +575,59 @@ class MinerControllerImpl implements MinerController {
     return [...this.state.wordDecisions.values()].map((decision) => [decision.normalizedWord, decision.status]);
   }
 
-  private async applyWordDecision(normalizedWord: string, status: WordDecisionStatus | "unreviewed"): Promise<void> {
+  private async runReviewQuery(options: { captureInitial?: boolean } = {}): Promise<void> {
+    const dataset = this.state.dataset;
+    if (dataset === null || !this.state.review.active) return;
+    // Always ask for page 1: after a decision the current entry leaves the
+    // unreviewed set, so the first remaining candidate shifts into page 1.
+    const reviewQuery: QueryState = {
+      ...this.state.query,
+      hideKnown: true,
+      decision: "unreviewed",
+      page: 1,
+      pageSize: 1,
+    };
     try {
-      if (status === "unreviewed") {
-        await this.storageOperation((store) => store.wordDecisions.remove(normalizedWord));
-        this.state.wordDecisions.delete(normalizedWord);
-      } else {
-        const decision: WordDecision = { normalizedWord, status, updatedAt: this.now() };
-        await this.storageOperation((store) => store.wordDecisions.set(decision));
-        this.state.wordDecisions.set(normalizedWord, decision);
-      }
+      const result = await this.worker.query({
+        datasetId: dataset.id,
+        knownWords: [...this.state.knownWords],
+        decisions: this.decisionTuples(),
+        query: reviewQuery,
+        queryChannel: "review",
+      });
+      if (!this.state.review.active) return;
+      const current = result.items[0] ?? null;
+      this.state.review = {
+        ...this.state.review,
+        initialTotal: options.captureInitial ? result.totalEntries : this.state.review.initialTotal,
+        remaining: result.totalEntries,
+        current,
+        status: current === null ? "complete" : "ready",
+        errorMessage: null,
+      };
       this.publish();
-      await this.runQuery();
     } catch (error) {
-      this.setState({ errorMessage: `Word decision could not be saved: ${errorMessage(error)}` });
+      if (!this.state.review.active) return;
+      this.state.review = {
+        ...this.state.review,
+        status: "error",
+        errorMessage: errorMessage(error),
+      };
+      this.publish();
     }
+  }
+
+  private async applyWordDecision(normalizedWord: string, status: WordDecisionStatus | "unreviewed"): Promise<void> {
+    if (status === "unreviewed") {
+      await this.storageOperation((store) => store.wordDecisions.remove(normalizedWord));
+      this.state.wordDecisions.delete(normalizedWord);
+    } else {
+      const decision: WordDecision = { normalizedWord, status, updatedAt: this.now() };
+      await this.storageOperation((store) => store.wordDecisions.set(decision));
+      this.state.wordDecisions.set(normalizedWord, decision);
+    }
+    this.publish();
+    await this.runQuery();
   }
 
   private async loadAndQuery(datasetId: string, expectedEntryCount: number): Promise<void> {

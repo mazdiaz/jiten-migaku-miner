@@ -32,7 +32,7 @@ export type JitenImportChunk = Extract<ImportChunkResponse, { kind: "jiten" }>;
 export type KnownImportChunk = Extract<ImportChunkResponse, { kind: "known" }>;
 export type JitenImportComplete = Extract<ImportCompleteResponse, { kind: "jiten" }>;
 export type KnownImportComplete = Extract<ImportCompleteResponse, { kind: "known" }>;
-export type WorkerQueryChannel = "user" | "candidate";
+export type WorkerQueryChannel = "user" | "candidate" | "review";
 
 export interface WorkerQueryInput {
   datasetId: string;

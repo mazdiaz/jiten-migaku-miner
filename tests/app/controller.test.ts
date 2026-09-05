@@ -1074,6 +1074,217 @@ describe("MinerController word decisions", () => {
   });
 });
 
+describe("MinerController review mode", () => {
+  afterEach(() => {
+    delete (globalThis as { indexedDB?: IDBFactory }).indexedDB;
+  });
+
+  function reviewPool(): Entry[] {
+    return [
+      { ...entry("a", "A", 0), occurrences: 3 },
+      { ...entry("b", "B", 1), occurrences: 2 },
+      { ...entry("c", "C", 2), occurrences: 1 },
+    ];
+  }
+
+  function decorated(value: Entry): QueryResult["items"][number] {
+    return {
+      ...value,
+      known: false,
+      decision: "unreviewed",
+      knownByMigaku: false,
+      knownByDecision: false,
+    };
+  }
+
+  function installPool(worker: FakeWorkerClient, pool: Entry[]): void {
+    worker.queryHandler = async (request) => {
+      const decided = new Set((request.decisions ?? []).map(([word]) => word));
+      const remaining = pool.filter((value) => !decided.has(value.normalizedWord));
+      const numericSize = request.query.pageSize === "all" ? Math.max(1, remaining.length) : Number(request.query.pageSize);
+      const page = Math.max(1, request.query.page);
+      const items = remaining
+        .slice((page - 1) * numericSize, page * numericSize)
+        .map(decorated);
+      return {
+        ...result(items),
+        totalEntries: remaining.length,
+        totalPages: Math.max(1, Math.ceil(remaining.length / numericSize)),
+      };
+    };
+  }
+
+  function setup() {
+    const store = createMemoryAppStore();
+    const worker = new FakeWorkerClient();
+    const controller = createMinerController(decisionOptions(store, worker));
+    const states: Readonly<AppState>[] = [];
+    controller.subscribe((state) => states.push(state));
+    return { store, worker, controller, states };
+  }
+
+  it("startReview queries unreviewed-only with page size 1 and leaves normal query state untouched", async () => {
+    const { store, worker, controller, states } = setup();
+    await seedActive(store);
+    await store.preferences.save({ query: { ...query, search: "猫", sort: "occ-asc", page: 3, hideKanaOnly: true, decision: "mined" }, view, page: 3 });
+    installPool(worker, reviewPool());
+    await controller.init();
+    const before = states.at(-1)!;
+
+    await controller.startReview();
+
+    const final = states.at(-1)!;
+    expect(final.review.active).toBe(true);
+    expect(final.review.status).toBe("ready");
+    expect(final.review.current?.normalizedWord).toBe("A");
+    expect(final.review.initialTotal).toBe(3);
+    expect(final.review.remaining).toBe(3);
+    expect(final.query).toEqual(before.query);
+    expect(final.page).toBe(before.page);
+
+    const reviewCall = worker.queryCalls.find((call) => call.queryChannel === "review");
+    expect(reviewCall).toBeDefined();
+    expect(reviewCall?.query.decision).toBe("unreviewed");
+    expect(reviewCall?.query.hideKnown).toBe(true);
+    expect(reviewCall?.query.pageSize).toBe(1);
+    expect(reviewCall?.query.page).toBe(1);
+    expect(reviewCall?.query.search).toBe("猫");
+    expect(reviewCall?.query.sort).toBe("occ-asc");
+    expect(reviewCall?.query.hideKanaOnly).toBe(true);
+  });
+
+  it("advances through decisions and reaches complete without skipping entries", async () => {
+    const { store, worker, controller, states } = setup();
+    await seedActive(store);
+    installPool(worker, reviewPool());
+    await controller.init();
+
+    await controller.startReview();
+    expect(states.at(-1)!.review.current?.normalizedWord).toBe("A");
+
+    await controller.reviewDecision("mined");
+    expect(states.at(-1)!.review.current?.normalizedWord).toBe("B");
+    expect(states.at(-1)!.review.processed).toBe(1);
+    expect(states.at(-1)!.review.remaining).toBe(2);
+
+    await controller.reviewDecision("later");
+    expect(states.at(-1)!.review.current?.normalizedWord).toBe("C");
+    expect(states.at(-1)!.review.processed).toBe(2);
+
+    await controller.reviewDecision("known");
+    const final = states.at(-1)!.review;
+    expect(final.status).toBe("complete");
+    expect(final.current).toBeNull();
+    expect(final.processed).toBe(3);
+    expect(final.remaining).toBe(0);
+
+    // Every review query asked for page 1 so the shifted queue is never skipped.
+    const reviewCalls = worker.queryCalls.filter((call) => call.queryChannel === "review");
+    expect(reviewCalls.length).toBe(4);
+    for (const call of reviewCalls) expect(call.query.page).toBe(1);
+    expect(reviewCalls[1]?.decisions).toEqual([["A", "mined"]]);
+    expect(reviewCalls[2]?.decisions).toEqual([["A", "mined"], ["B", "later"]]);
+    expect(reviewCalls[3]?.decisions).toEqual([["A", "mined"], ["B", "later"], ["C", "known"]]);
+  });
+
+  it("keeps mined separate from known while reviewing", async () => {
+    const { store, worker, controller, states } = setup();
+    await seedActive(store);
+    installPool(worker, reviewPool());
+    await controller.init();
+    await controller.startReview();
+
+    await controller.reviewDecision("mined");
+
+    expect(await store.wordDecisions.get("A")).toMatchObject({ status: "mined" });
+    expect(states.at(-1)!.knownWords.size).toBe(0);
+    expect(states.at(-1)!.wordDecisions.get("A")).toMatchObject({ status: "mined" });
+  });
+
+  it("keeps the current entry and surfaces an error when the decision write fails", async () => {
+    const { store, worker, controller, states } = setup();
+    await seedActive(store);
+    installPool(worker, reviewPool());
+    await controller.init();
+    await controller.startReview();
+    expect(states.at(-1)!.review.current?.normalizedWord).toBe("A");
+
+    store.wordDecisions.set = async () => {
+      throw new Error("decision write failed");
+    };
+    await controller.reviewDecision("mined");
+
+    const review = states.at(-1)!.review;
+    expect(review.status).toBe("ready");
+    expect(review.current?.normalizedWord).toBe("A");
+    expect(review.processed).toBe(0);
+    expect(review.errorMessage).toContain("decision write failed");
+    const reviewCalls = worker.queryCalls.filter((call) => call.queryChannel === "review");
+    expect(reviewCalls.length).toBe(1);
+  });
+
+  it("ignores a rapid duplicate decision while one is in flight", async () => {
+    const { store, worker, controller, states } = setup();
+    await seedActive(store);
+    installPool(worker, reviewPool());
+    await controller.init();
+    await controller.startReview();
+
+    let releaseReviewQuery: (() => void) | null = null;
+    const gate = new Promise<void>((resolve) => {
+      releaseReviewQuery = resolve;
+    });
+    const originalHandler = worker.queryHandler;
+    worker.queryHandler = async (request) => {
+      const outcome = await originalHandler(request);
+      if (request.queryChannel === "review" && (request.decisions ?? []).length > 0) await gate;
+      return outcome;
+    };
+
+    const first = controller.reviewDecision("mined");
+    const second = controller.reviewDecision("later");
+    releaseReviewQuery?.();
+    await Promise.all([first, second]);
+
+    const review = states.at(-1)!.review;
+    expect(await store.wordDecisions.get("A")).toMatchObject({ status: "mined" });
+    expect(review.current?.normalizedWord).toBe("B");
+    expect(review.processed).toBe(1);
+  });
+
+  it("stopReview exits and leaves durable decisions in place", async () => {
+    const { store, worker, controller, states } = setup();
+    await seedActive(store);
+    installPool(worker, reviewPool());
+    await controller.init();
+    await controller.startReview();
+    await controller.reviewDecision("mined");
+
+    controller.stopReview();
+
+    const final = states.at(-1)!;
+    expect(final.review.active).toBe(false);
+    expect(final.review.status).toBe("idle");
+    expect(await store.wordDecisions.get("A")).toMatchObject({ status: "mined" });
+    expect(final.query.decision).toBe("all");
+  });
+
+  it("does not advance when review is not ready or already busy", async () => {
+    const { store, worker, controller, states } = setup();
+    await seedActive(store);
+    installPool(worker, reviewPool());
+    await controller.init();
+
+    await controller.reviewDecision("known");
+    expect(states.at(-1)!.review.active).toBe(false);
+
+    await controller.startReview();
+    const reviewCallsBefore = worker.queryCalls.filter((call) => call.queryChannel === "review").length;
+    await controller.startReview();
+    expect(worker.queryCalls.filter((call) => call.queryChannel === "review").length).toBe(reviewCallsBefore);
+  });
+});
+
 describe("source adapters", () => {
   it("wraps browser File text reads", async () => {
     const file = { name: "media.csv", text: async () => "Word\n猫" } as File;
