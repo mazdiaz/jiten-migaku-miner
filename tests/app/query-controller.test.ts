@@ -53,6 +53,15 @@ function makeState(overrides: Partial<AppState> = {}): AppState {
     status: "empty",
     errorMessage: null,
     persistence: "memory",
+    review: {
+      active: false,
+      initialTotal: 0,
+      processed: 0,
+      remaining: 0,
+      current: null,
+      status: "idle",
+      errorMessage: null,
+    },
     ...overrides,
   };
 }
