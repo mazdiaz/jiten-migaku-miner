@@ -1,7 +1,7 @@
 import { parseJitenCsv } from "../domain/import";
 import { isKanaOnly, normalizeText, parseKnownWords, sentencePlain } from "../domain/text";
 import { paginateEntries } from "../domain/query";
-import type { Entry, EntryWithKnown, QueryState } from "../domain/types";
+import type { Entry, EntryWithKnown, QueryState, WordDecisionStatus } from "../domain/types";
 import {
   WORKER_IMPORT_CHUNK_SIZE,
   WORKER_PROTOCOL_VERSION,
@@ -31,7 +31,8 @@ interface SearchFields {
 interface WindowCache {
   signature: string;
   orderedIndexes: number[];
-  knownByIndex: Map<number, boolean>;
+  knownByMigakuByIndex: Map<number, boolean>;
+  decisionByIndex: Map<number, WordDecisionStatus | "unreviewed">;
   knownCount: number;
 }
 
@@ -100,10 +101,16 @@ function yieldsToWorker(): Promise<void> {
   });
 }
 
-function windowCacheSignature(request: QueryRequest, knownWords: ReadonlySet<string>): string {
+function windowCacheSignature(
+  request: QueryRequest,
+  knownWords: ReadonlySet<string>,
+  decisions: ReadonlyMap<string, WordDecisionStatus>,
+): string {
   return JSON.stringify({
     datasetId: request.datasetId,
     knownWords: [...knownWords].sort(),
+    decisions: [...decisions].sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0)),
+    decision: request.query.decision,
     search: request.query.search,
     hideKnown: request.query.hideKnown,
     hideKanaOnly: request.query.hideKanaOnly,
@@ -275,28 +282,45 @@ export class WorkerEngine {
       }
 
       const knownWords = new Set(request.knownWords);
+      const decisions = new Map(request.decisions);
       const cacheable = request.query.pageSize === "all";
-      const signature = cacheable ? windowCacheSignature(request, knownWords) : "";
+      const signature = cacheable ? windowCacheSignature(request, knownWords, decisions) : "";
       const cache = cacheable ? this.windowCache : null;
 
       let orderedIndexes: number[];
-      let knownByIndex: Map<number, boolean>;
+      let knownByMigakuByIndex: Map<number, boolean>;
+      let decisionByIndex: Map<number, WordDecisionStatus | "unreviewed">;
       let knownCount: number;
 
       if (cache !== null && cache.signature === signature) {
         orderedIndexes = cache.orderedIndexes;
-        knownByIndex = cache.knownByIndex;
+        knownByMigakuByIndex = cache.knownByMigakuByIndex;
+        decisionByIndex = cache.decisionByIndex;
         knownCount = cache.knownCount;
       } else {
-        const scan = await this.scanDataset(request, dataset, knownWords);
+        const scan = await this.scanDataset(request, dataset, knownWords, decisions);
         if (scan === null || this.isCancelled(request.requestId)) return;
         orderedIndexes = scan.orderedIndexes;
-        knownByIndex = scan.knownByIndex;
+        knownByMigakuByIndex = scan.knownByMigakuByIndex;
+        decisionByIndex = scan.decisionByIndex;
         knownCount = scan.knownCount;
         if (cacheable) {
-          this.windowCache = { signature, orderedIndexes, knownByIndex, knownCount };
+          this.windowCache = { signature, orderedIndexes, knownByMigakuByIndex, decisionByIndex, knownCount };
         }
       }
+
+      const entryWithMetadata = (entryIndex: number, value: Entry): EntryWithKnown => {
+        const knownByMigaku = knownByMigakuByIndex.get(entryIndex) === true;
+        const decision = decisionByIndex.get(entryIndex) ?? "unreviewed";
+        const knownByDecision = decision === "known";
+        return {
+          ...value,
+          known: knownByMigaku || knownByDecision,
+          knownByMigaku,
+          knownByDecision,
+          decision,
+        };
+      };
 
       if (request.window !== undefined) {
         const start = Math.min(orderedIndexes.length, Math.max(0, Math.floor(request.window.start)));
@@ -306,10 +330,7 @@ export class WorkerEngine {
           const entryIndex = orderedIndexes[offset];
           if (entryIndex === undefined) continue;
           const value = dataset.entries[entryIndex];
-          if (value !== undefined) {
-            const known = knownByIndex.get(entryIndex) === true;
-            items.push({ ...value, known, knownByMigaku: known, knownByDecision: false, decision: "unreviewed" });
-          }
+          if (value !== undefined) items.push(entryWithMetadata(entryIndex, value));
         }
         if (this.isCancelled(request.requestId)) return;
 
@@ -338,10 +359,7 @@ export class WorkerEngine {
         const entryIndex = orderedIndexes[offset];
         if (entryIndex === undefined) continue;
         const value = dataset.entries[entryIndex];
-        if (value !== undefined) {
-          const known = knownByIndex.get(entryIndex) === true;
-          ordered.push({ ...value, known, knownByMigaku: known, knownByDecision: false, decision: "unreviewed" });
-        }
+        if (value !== undefined) ordered.push(entryWithMetadata(entryIndex, value));
         if ((offset + 1) % WORKER_IMPORT_CHUNK_SIZE === 0 && await this.chunkFinished(request.requestId)) return;
       }
       if (await this.chunkFinished(request.requestId)) return;
@@ -369,8 +387,15 @@ export class WorkerEngine {
     request: QueryRequest,
     dataset: DatasetState,
     knownWords: ReadonlySet<string>,
-  ): Promise<{ orderedIndexes: number[]; knownByIndex: Map<number, boolean>; knownCount: number } | null> {
-    const knownByIndex = new Map<number, boolean>();
+    decisions: ReadonlyMap<string, WordDecisionStatus>,
+  ): Promise<{
+    orderedIndexes: number[];
+    knownByMigakuByIndex: Map<number, boolean>;
+    decisionByIndex: Map<number, WordDecisionStatus | "unreviewed">;
+    knownCount: number;
+  } | null> {
+    const knownByMigakuByIndex = new Map<number, boolean>();
+    const decisionByIndex = new Map<number, WordDecisionStatus | "unreviewed">();
     const matching = new Set<number>();
     const search = normalizeText(request.query.search).toLocaleLowerCase();
     const minimumOccurrences = Number.isFinite(request.query.minOccurrences)
@@ -383,8 +408,12 @@ export class WorkerEngine {
       const fields = dataset.searchFields[index];
       if (value === undefined || fields === undefined) continue;
 
-      const known = knownWords.has(value.normalizedWord);
-      knownByIndex.set(index, known);
+      const knownByMigaku = knownWords.has(value.normalizedWord);
+      const decision = decisions.get(value.normalizedWord) ?? "unreviewed";
+      const knownByDecision = decision === "known";
+      const known = knownByMigaku || knownByDecision;
+      knownByMigakuByIndex.set(index, knownByMigaku);
+      decisionByIndex.set(index, decision);
       if (known) knownCount += 1;
 
       const searchMatches =
@@ -398,7 +427,8 @@ export class WorkerEngine {
         !(request.query.hideKanaOnly && isKanaOnly(value.normalizedWord)) &&
         !(request.query.sentence === "has" && !value.hasSentence) &&
         !(request.query.sentence === "none" && value.hasSentence) &&
-        occurrenceCount(value) >= minimumOccurrences;
+        occurrenceCount(value) >= minimumOccurrences &&
+        !(request.query.decision !== "all" && decision !== request.query.decision);
 
       if (passes) matching.add(index);
       if ((index + 1) % WORKER_IMPORT_CHUNK_SIZE === 0 && await this.chunkFinished(request.requestId)) return null;
@@ -414,7 +444,7 @@ export class WorkerEngine {
     }
     if (await this.chunkFinished(request.requestId)) return null;
 
-    return { orderedIndexes, knownByIndex, knownCount };
+    return { orderedIndexes, knownByMigakuByIndex, decisionByIndex, knownCount };
   }
 
   cancel(requestId: string): void {
@@ -468,3 +498,4 @@ export class WorkerEngine {
     return !this.isCancelled(requestId);
   }
 }
+

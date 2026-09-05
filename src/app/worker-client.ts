@@ -351,6 +351,8 @@ class BrowserWorkerClient implements WorkerClient {
       requestId,
       datasetId: input.datasetId,
       knownWords: [...input.knownWords],
+      // Task 5 wires real decision state here; protocol requires the field now.
+      decisions: [],
       query: { ...input.query },
     };
     if (input.window !== undefined) request.window = input.window;

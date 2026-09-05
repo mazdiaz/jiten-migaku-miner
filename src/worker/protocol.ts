@@ -1,7 +1,16 @@
-import type { Entry, QueryResult, QueryState, QueryWindow } from "../domain/types";
+import type {
+  Entry,
+  QueryResult,
+  QueryState,
+  QueryWindow,
+  WordDecisionFilter,
+  WordDecisionStatus,
+} from "../domain/types";
 
 export const WORKER_PROTOCOL_VERSION = 1 as const;
 export const WORKER_IMPORT_CHUNK_SIZE = 2_000 as const;
+
+const DECISION_STATUSES: readonly WordDecisionStatus[] = ["known", "mined", "skip", "later"];
 
 export type WorkerRequest =
   | { protocolVersion: 1; type: "import-jiten"; requestId: string; name: string; text: string }
@@ -22,6 +31,7 @@ export type WorkerRequest =
       requestId: string;
       datasetId: string;
       knownWords: string[];
+      decisions: Array<[string, WordDecisionStatus]>;
       query: QueryState;
       window?: QueryWindow;
     }
@@ -226,6 +236,14 @@ function validateQuery(value: unknown): QueryState {
     throw invalidMessage("query.sort is invalid");
   }
 
+  const decision = value.decision;
+  if (
+    typeof decision !== "string" ||
+    (decision !== "all" && decision !== "unreviewed" && !DECISION_STATUSES.includes(decision as WordDecisionStatus))
+  ) {
+    throw invalidMessage("query.decision is invalid");
+  }
+
   return {
     search: stringValue(value, "search"),
     hideKnown: boolean(value, "hideKnown"),
@@ -235,8 +253,27 @@ function validateQuery(value: unknown): QueryState {
     sort,
     pageSize,
     page: positiveInteger(value, "page"),
-    decision: "all",
+    decision: decision as WordDecisionFilter,
   };
+}
+
+function validateDecisions(value: unknown): Array<[string, WordDecisionStatus]> {
+  if (!Array.isArray(value)) throw invalidMessage("decisions must be an array");
+
+  return value.map((item, index) => {
+    if (!Array.isArray(item) || item.length !== 2) {
+      throw invalidMessage(`decisions[${index}] must be a [normalizedWord, status] pair`);
+    }
+
+    const word = item[0];
+    const status = item[1];
+    if (typeof word !== "string") throw invalidMessage(`decisions[${index}][0] must be a string`);
+    if (typeof status !== "string" || !DECISION_STATUSES.includes(status as WordDecisionStatus)) {
+      throw invalidMessage(`decisions[${index}][1] must be one of: ${DECISION_STATUSES.join(", ")}`);
+    }
+
+    return [word, status] as [string, WordDecisionStatus];
+  });
 }
 
 function validateWindow(value: unknown): QueryWindow {
@@ -317,6 +354,7 @@ export function parseWorkerRequest(value: unknown): WorkerRequest {
       requestId,
       datasetId: requiredString(value, "datasetId"),
       knownWords: validateKnownWords(value.knownWords),
+      decisions: validateDecisions(value.decisions),
       query: validateQuery(value.query),
     };
     if (value.window !== undefined) request.window = validateWindow(value.window);

@@ -17,6 +17,7 @@ const validQueryRequest: WorkerRequest = {
   requestId: "query-1",
   datasetId: "dataset-1",
   knownWords: [],
+  decisions: [],
   query: {
     search: "",
     hideKnown: false,
@@ -55,6 +56,59 @@ describe("worker protocol", () => {
   it("accepts valid discriminated requests without losing optional window data", () => {
     expect(parseWorkerRequest(validQueryRequest)).toEqual(validQueryRequest);
     expect(isWorkerRequest(validQueryRequest)).toBe(true);
+  });
+
+  it("round-trips decisions through query requests", () => {
+    const request: WorkerRequest = {
+      ...validQueryRequest,
+      decisions: [["猫", "known"], ["犬", "mined"], ["鳥", "skip"], ["魚", "later"]],
+    };
+
+    expect(parseWorkerRequest(request)).toEqual(request);
+    expect(isWorkerRequest(request)).toBe(true);
+    expect(parseWorkerRequest(request)).not.toBe(request);
+  });
+
+  it("accepts an empty decisions array and every decision status", () => {
+    const statuses = ["known", "mined", "skip", "later"] as const;
+    for (const status of statuses) {
+      const request: WorkerRequest = { ...validQueryRequest, decisions: [[`word-${status}`, status]] };
+      expect(parseWorkerRequest(request)).toEqual(request);
+    }
+  });
+
+  it("rejects invalid decisions payloads on query requests", () => {
+    const malformedRequests = [
+      { ...validQueryRequest, decisions: "known" },
+      { ...validQueryRequest, decisions: ["猫"] },
+      { ...validQueryRequest, decisions: [["猫"]] },
+      { ...validQueryRequest, decisions: [["猫", "known", "extra"]] },
+      { ...validQueryRequest, decisions: [[42, "known"]] },
+      { ...validQueryRequest, decisions: [["猫", 1]] },
+      { ...validQueryRequest, decisions: [["猫", "unreviewed"]] },
+      { ...validQueryRequest, decisions: [["猫", "unknown-status"]] },
+    ];
+
+    for (const request of malformedRequests) {
+      expect(() => parseWorkerRequest(request), JSON.stringify(request)).toThrow(WorkerProtocolError);
+      expect(() => parseWorkerRequest(request)).toThrowError(
+        expect.objectContaining({ code: "invalid-message" }),
+      );
+    }
+  });
+
+  it("validates the query decision filter", () => {
+    for (const decision of ["all", "unreviewed", "known", "mined", "skip", "later"] as const) {
+      const request = { ...validQueryRequest, query: { ...validQueryRequest.query, decision } };
+      expect(parseWorkerRequest(request)).toMatchObject({ query: { decision } });
+    }
+
+    for (const decision of ["ALL", "unknown", "", null, 42]) {
+      const request = { ...validQueryRequest, query: { ...validQueryRequest.query, decision } };
+      expect(() => parseWorkerRequest(request), JSON.stringify(decision)).toThrow(
+        expect.objectContaining({ code: "invalid-message" }),
+      );
+    }
   });
 
   it("rejects non-integer pages and non-positive numeric page sizes", () => {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Entry, QueryState } from "../../src/domain/types";
+import { queryEntries } from "../../src/domain/query";
 import type { WorkerResponse, QueryRequest } from "../../src/worker/protocol";
 import { WorkerEngine } from "../../src/worker/worker-engine";
 
@@ -39,6 +40,7 @@ function queryRequest(overrides: Partial<QueryRequest> = {}): QueryRequest {
     requestId: "query-1",
     datasetId: "dataset-1",
     knownWords: [],
+    decisions: [],
     query: queryState(),
     ...overrides,
   };
@@ -349,5 +351,239 @@ describe("WorkerEngine", () => {
     const descendingResult = descending[0]?.type === "query-result" ? descending[0].result : null;
     expect(originalResult?.items.map((item) => item.id)).toEqual(["entry-0", "entry-1", "entry-2"]);
     expect(descendingResult?.items.map((item) => item.id)).toEqual(["entry-5", "entry-4", "entry-3"]);
+  });
+
+  it("filters by decision across the full dataset before pagination", async () => {
+    const engine = new WorkerEngine();
+    const source = Array.from({ length: 10 }, (_, index) => entry(index));
+    engine.loadStart("dataset-1");
+    engine.loadChunk("dataset-1", 0, source);
+    engine.loadComplete("dataset-1");
+
+    // words 0, 4, 5 are mined; word 2 locally known; word 7 skipped
+    const decisions: QueryRequest["decisions"] = [
+      ["word-0", "mined"],
+      ["word-4", "mined"],
+      ["word-5", "mined"],
+      ["word-2", "known"],
+      ["word-7", "skip"],
+    ];
+
+    const minedPage: WorkerResponse[] = [];
+    await engine.query(
+      queryRequest({
+        requestId: "mined-page",
+        decisions,
+        query: queryState({ decision: "mined", pageSize: 2, page: 1 }),
+      }),
+      (response) => minedPage.push(response),
+    );
+    const minedPageResult = minedPage[0]?.type === "query-result" ? minedPage[0].result : null;
+    expect(minedPageResult?.items.map((item) => item.id)).toEqual(["entry-0", "entry-4"]);
+    expect(minedPageResult?.totalEntries).toBe(3);
+    expect(minedPageResult?.totalPages).toBe(2);
+    expect(minedPageResult?.knownCount).toBe(1);
+
+    const minedPage2: WorkerResponse[] = [];
+    await engine.query(
+      queryRequest({
+        requestId: "mined-page-2",
+        decisions,
+        query: queryState({ decision: "mined", pageSize: 2, page: 2 }),
+      }),
+      (response) => minedPage2.push(response),
+    );
+    const minedPage2Result = minedPage2[0]?.type === "query-result" ? minedPage2[0].result : null;
+    expect(minedPage2Result?.items.map((item) => item.id)).toEqual(["entry-5"]);
+    expect(minedPage2Result?.totalEntries).toBe(3);
+
+    const knownOnly: WorkerResponse[] = [];
+    await engine.query(
+      queryRequest({
+        requestId: "known-only",
+        decisions,
+        query: queryState({ decision: "known", pageSize: 50, page: 1 }),
+      }),
+      (response) => knownOnly.push(response),
+    );
+    const knownOnlyResult = knownOnly[0]?.type === "query-result" ? knownOnly[0].result : null;
+    expect(knownOnlyResult?.items.map((item) => item.id)).toEqual(["entry-2"]);
+
+    const unreviewed: WorkerResponse[] = [];
+    await engine.query(
+      queryRequest({
+        requestId: "unreviewed",
+        decisions,
+        query: queryState({ decision: "unreviewed", pageSize: 50, page: 1 }),
+      }),
+      (response) => unreviewed.push(response),
+    );
+    const unreviewedResult = unreviewed[0]?.type === "query-result" ? unreviewed[0].result : null;
+    expect(unreviewedResult?.items.map((item) => item.id)).toEqual([
+      "entry-1",
+      "entry-3",
+      "entry-6",
+      "entry-8",
+      "entry-9",
+    ]);
+
+    // decision="known" counts as known; mined/skip do not; hideKnown removes it
+    const hidden: WorkerResponse[] = [];
+    await engine.query(
+      queryRequest({
+        requestId: "hidden",
+        decisions,
+        query: queryState({ hideKnown: true, pageSize: 50, page: 1 }),
+      }),
+      (response) => hidden.push(response),
+    );
+    const hiddenResult = hidden[0]?.type === "query-result" ? hidden[0].result : null;
+    expect(hiddenResult?.items.map((item) => item.id)).not.toContain("entry-2");
+    expect(hiddenResult?.knownCount).toBe(1);
+  });
+
+  it("emits decision metadata on paged items matching the product rules", async () => {
+    const engine = new WorkerEngine();
+    const source = [
+      entry(0, "局所"), // local known only
+      entry(1, "輸入"), // Migaku known only
+      entry(2, "重複"), // Migaku known AND mined (rule 7)
+      entry(3, "後回し"), // later
+      entry(4, "除外"), // skip
+      entry(5, "未決"), // unreviewed
+    ];
+    engine.loadStart("dataset-1");
+    engine.loadChunk("dataset-1", 0, source);
+    engine.loadComplete("dataset-1");
+
+    const responses: WorkerResponse[] = [];
+    await engine.query(
+      queryRequest({
+        requestId: "meta",
+        knownWords: ["輸入", "重複"],
+        decisions: [
+          ["局所", "known"],
+          ["重複", "mined"],
+          ["後回し", "later"],
+          ["除外", "skip"],
+        ],
+        query: queryState({ pageSize: 50, page: 1 }),
+      }),
+      (response) => responses.push(response),
+    );
+    const result = responses[0]?.type === "query-result" ? responses[0].result : null;
+    expect(result?.items.map((item) => [item.id, item.known, item.knownByMigaku, item.knownByDecision, item.decision])).toEqual([
+      ["entry-0", true, false, true, "known"],
+      ["entry-1", true, true, false, "unreviewed"],
+      ["entry-2", true, true, false, "mined"],
+      ["entry-3", false, false, false, "later"],
+      ["entry-4", false, false, false, "skip"],
+      ["entry-5", false, false, false, "unreviewed"],
+    ]);
+    expect(result?.knownCount).toBe(3);
+  });
+
+  it("invalidates the window cache when decisions change", async () => {
+    const engine = new WorkerEngine();
+    engine.loadStart("dataset-1");
+    engine.loadChunk("dataset-1", 0, [entry(0, "古い"), entry(1, "新しい")]);
+    engine.loadComplete("dataset-1");
+
+    const withOldKnown: WorkerResponse[] = [];
+    await engine.query(
+      queryRequest({
+        requestId: "d1",
+        decisions: [["古い", "known"]],
+        query: queryState({ pageSize: "all", decision: "known" }),
+        window: { start: 0, size: 10 },
+      }),
+      (response) => withOldKnown.push(response),
+    );
+    const withNewKnown: WorkerResponse[] = [];
+    await engine.query(
+      queryRequest({
+        requestId: "d2",
+        decisions: [["新しい", "known"]],
+        query: queryState({ pageSize: "all", decision: "known" }),
+        window: { start: 0, size: 10 },
+      }),
+      (response) => withNewKnown.push(response),
+    );
+
+    const first = withOldKnown[0]?.type === "query-result" ? withOldKnown[0].result : null;
+    const second = withNewKnown[0]?.type === "query-result" ? withNewKnown[0].result : null;
+    expect(first?.items.map((item) => item.id)).toEqual(["entry-0"]);
+    expect(first?.totalEntries).toBe(1);
+    expect(second?.items.map((item) => item.id)).toEqual(["entry-1"]);
+    expect(second?.totalEntries).toBe(1);
+  });
+
+  it("returns bounded windows when decisions filter the dataset", async () => {
+    const engine = new WorkerEngine();
+    const source = Array.from({ length: 10 }, (_, index) => entry(index));
+    engine.loadStart("dataset-1");
+    engine.loadChunk("dataset-1", 0, source);
+    engine.loadComplete("dataset-1");
+
+    const responses: WorkerResponse[] = [];
+    await engine.query(
+      queryRequest({
+        requestId: "windowed-mined",
+        decisions: [["word-0", "mined"], ["word-4", "mined"], ["word-5", "mined"]],
+        query: queryState({ pageSize: "all", decision: "mined" }),
+        window: { start: 1, size: 2 },
+      }),
+      (response) => responses.push(response),
+    );
+    const result = responses[0]?.type === "query-result" ? responses[0].result : null;
+    expect(result?.windowed).toBe(true);
+    expect(result?.items.map((item) => item.id)).toEqual(["entry-4", "entry-5"]);
+    expect(result?.totalEntries).toBe(3);
+    expect(result?.startIndex).toBe(2);
+    expect(result?.endIndex).toBe(3);
+  });
+
+  it("matches the domain query pipeline semantics for decision queries", async () => {
+    const engine = new WorkerEngine();
+    const source = Array.from({ length: 10 }, (_, index) => entry(index, `word-${index}`, 10 - index));
+    engine.loadStart("dataset-1");
+    engine.loadChunk("dataset-1", 0, source);
+    engine.loadComplete("dataset-1");
+
+    const knownWords = ["word-3", "word-6"];
+    const decisions: QueryRequest["decisions"] = [
+      ["word-0", "mined"],
+      ["word-4", "mined"],
+      ["word-5", "known"],
+      ["word-6", "mined"],
+    ];
+    const query = queryState({
+      hideKnown: false,
+      hideKanaOnly: true,
+      decision: "mined",
+      sort: "occ-desc",
+      pageSize: 2,
+      page: 2,
+    });
+
+    const responses: WorkerResponse[] = [];
+    await engine.query(
+      queryRequest({ requestId: "parity", knownWords, decisions, query }),
+      (response) => responses.push(response),
+    );
+    const engineResult = responses[0]?.type === "query-result" ? responses[0].result : null;
+
+    const domainDecisions = new Map(
+      decisions.map(([normalizedWord, status]) => [normalizedWord, { normalizedWord, status, updatedAt: "2026-09-05T00:00:00.000Z" }]),
+    );
+    const domainResult = queryEntries(source, new Set(knownWords), query, undefined, domainDecisions);
+
+    expect(engineResult?.items.map((item) => item.id)).toEqual(domainResult.items.map((item) => item.id));
+    expect(engineResult?.totalEntries).toBe(domainResult.totalEntries);
+    expect(engineResult?.totalPages).toBe(domainResult.totalPages);
+    expect(engineResult?.page).toBe(domainResult.page);
+    expect(engineResult?.knownCount).toBe(domainResult.knownCount);
+    expect(engineResult?.startIndex).toBe(domainResult.startIndex);
+    expect(engineResult?.endIndex).toBe(domainResult.endIndex);
   });
 });
