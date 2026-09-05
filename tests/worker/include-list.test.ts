@@ -53,11 +53,12 @@ async function loadDataset(engine: WorkerEngine, entries: Entry[]): Promise<void
 }
 
 async function queryOnce(engine: WorkerEngine, request: QueryRequest): Promise<WorkerResponse> {
-  let response: WorkerResponse | null = null;
+  let response: WorkerResponse | undefined;
   await engine.query(request, (sent) => {
     response = sent;
   });
-  return response as WorkerResponse;
+  if (response === undefined) throw new Error("worker produced no response");
+  return response;
 }
 
 const FOUR_ENTRIES: Entry[] = [
