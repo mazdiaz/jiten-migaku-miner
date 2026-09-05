@@ -372,6 +372,49 @@ describe("IndexedDbAppStore", () => {
     expect(await reopened.preferences.load()).toEqual({ query, view, page: 2 });
   });
 
+  it("replaceAll removes old decisions and inserts the new set", async () => {
+    const store = createIndexedDbAppStore(databaseName);
+
+    await store.wordDecisions.set(decision("古い", "known", "2026-09-01T00:00:00.000Z"));
+    await store.wordDecisions.set(decision("消える", "skip", "2026-09-02T00:00:00.000Z"));
+
+    await store.wordDecisions.replaceAll([
+      decision("新しい", "mined", "2026-09-05T00:00:00.000Z"),
+      decision("透過", "later", "2026-09-05T01:00:00.000Z"),
+    ]);
+
+    expect(await store.wordDecisions.list()).toEqual([
+      decision("新しい", "mined", "2026-09-05T00:00:00.000Z"),
+      decision("透過", "later", "2026-09-05T01:00:00.000Z"),
+    ]);
+    expect(await store.wordDecisions.get("古い")).toBeNull();
+    expect(await store.wordDecisions.get("消える")).toBeNull();
+  });
+
+  it("replaceAll with an empty array clears all decisions", async () => {
+    const store = createIndexedDbAppStore(databaseName);
+
+    await store.wordDecisions.set(decision("透過", "known", "2026-09-05T00:00:00.000Z"));
+    await store.wordDecisions.replaceAll([]);
+
+    expect(await store.wordDecisions.list()).toEqual([]);
+  });
+
+  it("replaceAll leaves existing decisions untouched when the replacement has duplicates", async () => {
+    const store = createIndexedDbAppStore(databaseName);
+    const original = decision("透過", "known", "2026-09-05T00:00:00.000Z");
+    await store.wordDecisions.set(original);
+
+    await expect(
+      store.wordDecisions.replaceAll([
+        decision("新しい", "mined", "2026-09-05T00:00:00.000Z"),
+        decision("新しい", "skip", "2026-09-05T01:00:00.000Z"),
+      ]),
+    ).rejects.toThrow("Duplicate word decision");
+
+    expect(await store.wordDecisions.list()).toEqual([original]);
+  });
+
   it("does not leave partial data or replace active data when staging fails", async () => {
     const store = createIndexedDbAppStore(databaseName);
     const previous = metadata("previous");

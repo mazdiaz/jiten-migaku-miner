@@ -225,6 +225,18 @@ class MemoryWordDecisionStore implements WordDecisionStore {
     this.decisions.delete(normalizedWord);
   }
 
+  async replaceAll(decisions: readonly WordDecision[]): Promise<void> {
+    const next = new Map<string, WordDecision>();
+    for (const decision of decisions) {
+      if (next.has(decision.normalizedWord)) {
+        throw new Error(`Duplicate word decision: ${decision.normalizedWord}`);
+      }
+      next.set(decision.normalizedWord, cloneDecision(decision));
+    }
+    this.decisions.clear();
+    for (const [key, value] of next) this.decisions.set(key, value);
+  }
+
   clear(): void {
     this.decisions.clear();
   }

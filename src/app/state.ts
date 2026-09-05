@@ -66,6 +66,8 @@ export interface MinerController {
   clearQueue(): void;
   startQueueMode(): Promise<void>;
   stopQueueMode(): void;
+  exportBackup(): Promise<string>;
+  restoreBackup(text: string): Promise<void>;
   clearSavedData(): Promise<void>;
   init(): Promise<void>;
 }
