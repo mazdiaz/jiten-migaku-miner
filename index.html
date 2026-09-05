@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Jiten → Migaku Miner</title>
+</head>
+<body>
+  <main class="app-shell">
+    <header class="hero">
+      <p class="eyebrow">Local · Offline · Migaku-friendly</p>
+      <h1>JITEN → MIGAKU MINER</h1>
+      <p class="hero-copy">Drop one Jiten vocabulary export, optionally load your Migaku known-word list, then mine cleanly isolated targets and sentences.</p>
+    </header>
+
+    <section class="panel import-panel" aria-label="Import files">
+      <div class="import-grid">
+        <div id="jitenDropzone" class="dropzone" tabindex="0">
+          <div class="dropzone-title">Jiten CSV</div>
+          <p class="dropzone-copy">Drop one media vocabulary CSV here.</p>
+          <label class="file-picker" for="jitenInput">Choose CSV</label>
+          <input id="jitenInput" type="file" accept=".csv,text/csv">
+          <div id="jitenStatus" class="file-status">No CSV loaded</div>
+        </div>
+        <div id="knownDropzone" class="dropzone" tabindex="0">
+          <div class="dropzone-title">Migaku Known Words</div>
+          <p class="dropzone-copy">Optional plain-text export, one entry per line.</p>
+          <label class="file-picker" for="knownInput">Choose TXT</label>
+          <input id="knownInput" type="file" accept=".txt,text/plain">
+          <div id="knownStatus" class="file-status optional">Optional · no list loaded</div>
+        </div>
+      </div>
+      <div class="clear-row">
+        <button id="clearData" type="button" class="clear-button">Clear saved data…</button>
+        <span class="clear-note">Removes imported datasets, known words, and preferences stored in this browser.</span>
+      </div>
+      <div id="errorBox" class="error-box" role="alert" hidden></div>
+    </section>
+
+    <section class="panel filters-panel" aria-label="Mining filters">
+      <fieldset id="filtersFieldset" class="filters-fieldset" disabled>
+        <div class="filter-grid">
+          <label class="control">
+            <span>Search target</span>
+             <input id="searchInput" type="search" placeholder="Word or sentence, e.g. 気になる / プール" autocomplete="off">
+          </label>
+          <label class="control">
+            <span>Sort</span>
+            <select id="sortSelect">
+              <option value="occ-desc" selected>Media occurrences ↓</option>
+              <option value="occ-asc">Media occurrences ↑</option>
+              <option value="original">Original Jiten CSV order</option>
+            </select>
+          </label>
+          <label class="control">
+            <span>Example sentence</span>
+            <select id="sentenceFilter">
+              <option value="any" selected>Any</option>
+              <option value="has">Has sentence</option>
+              <option value="none">No sentence</option>
+            </select>
+          </label>
+          <label class="control">
+            <span>Min occurrences</span>
+            <input id="minOccurrences" type="number" min="0" step="1" value="1" inputmode="numeric">
+          </label>
+        </div>
+        <div class="filter-row-2">
+          <label class="check-control"><input id="hideKnown" type="checkbox" disabled> Hide Migaku-known words</label>
+          <label class="check-control"><input id="hideKanaOnly" type="checkbox"> Hide kana-only words</label>
+           <label class="check-control" title="Turn off when Migaku's own furigana is enabled to avoid double readings"><input id="showFurigana" type="checkbox"> Furigana on target</label>
+           <label class="check-control"><input id="pillHighlight" type="checkbox"> Pill highlight</label>
+           <label class="check-control" title="Off = sentences left completely untouched for Migaku"><input id="showHighlight" type="checkbox"> Highlight target</label>
+           <label class="check-control"><input id="showDefinitions" type="checkbox" checked> Definitions</label>
+          <span class="filter-spacer"></span>
+          <label class="control" style="grid-template-columns:auto auto;align-items:center;gap:8px;">
+            <span>Per page</span>
+            <select id="pageSize" style="width:90px;">
+              <option value="25">25</option>
+              <option value="50" selected>50</option>
+              <option value="100">100</option>
+              <option value="all">All</option>
+            </select>
+          </label>
+        </div>
+      </fieldset>
+    </section>
+
+    <section id="results" class="results-section" aria-live="polite" aria-label="Mining results">
+      <div id="stickyToolbar" class="sticky-toolbar" hidden>
+        <div class="sticky-row-1">
+          <div id="stickyTitle" class="sticky-title">Jiten media</div>
+          <input id="stickySearch" class="sticky-search" type="search" placeholder="Search target…" autocomplete="off">
+          <div class="pager" aria-label="Sticky page navigation">
+            <button id="stickyPrev" type="button" aria-label="Previous page">←</button>
+            <span id="stickyPage" class="page-label">Page 0 / 0</span>
+            <button id="stickyNext" type="button" aria-label="Next page">→</button>
+          </div>
+        </div>
+        <div class="sticky-row-2">
+          <label class="control"><span>Sort</span>
+            <select id="stickySort">
+              <option value="occ-desc">Occ ↓</option>
+              <option value="occ-asc">Occ ↑</option>
+              <option value="original">Original</option>
+            </select>
+          </label>
+          <label class="control"><span>Sentence</span>
+            <select id="stickySentence">
+              <option value="any">Any</option>
+              <option value="has">Has</option>
+              <option value="none">None</option>
+            </select>
+          </label>
+          <label class="control"><span>Min occ</span>
+            <input id="stickyMin" type="number" min="0" step="1" inputmode="numeric">
+          </label>
+          <label class="check-control"><input id="stickyHideKnown" type="checkbox"> Known</label>
+          <label class="check-control"><input id="stickyHideKana" type="checkbox"> Kana-only</label>
+          <label class="check-control"><input id="stickyFurigana" type="checkbox"> Furigana</label>
+          <label class="check-control"><input id="stickyPill" type="checkbox"> Pill</label>
+          <label class="check-control"><input id="stickyHl" type="checkbox"> Highlight</label>
+          <label class="check-control"><input id="stickyDefs" type="checkbox"> Defs</label>
+          <label class="control"><span>Per page</span>
+            <select id="stickyPageSize">
+              <option value="25">25</option>
+              <option value="50">50</option>
+              <option value="100">100</option>
+              <option value="all">All</option>
+            </select>
+          </label>
+        </div>
+      </div>
+
+      <div class="results-head">
+        <div>
+          <h2 id="resultsHeading">Mining entries</h2>
+          <p id="resultStats" class="result-stats">Load a Jiten CSV to begin.</p>
+        </div>
+        <div class="pager" aria-label="Top page navigation">
+          <button id="topPrev" type="button" aria-label="Previous page" disabled>←</button>
+          <span id="topPage" class="page-label">Page 0 / 0</span>
+          <button id="topNext" type="button" aria-label="Next page" disabled>→</button>
+        </div>
+      </div>
+
+      <div id="resultsList" class="results-list">
+        <div class="empty-state">Load a Jiten CSV above. Everything stays in this browser tab.</div>
+      </div>
+
+      <div class="pager bottom-pager" aria-label="Bottom page navigation">
+        <button id="bottomPrev" type="button" aria-label="Previous page" disabled>←</button>
+        <span id="bottomPage" class="page-label">Page 0 / 0</span>
+        <button id="bottomNext" type="button" aria-label="Next page" disabled>→</button>
+      </div>
+      <p class="shortcut-note">Shortcuts: → / N next · ← / P previous · Home top · End bottom. Disabled while typing in a control.</p>
+    </section>
+  </main>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
