@@ -506,9 +506,11 @@ class IndexedDbDatasetStore implements DatasetStore {
       if (!lastRecord) {
         break;
       }
-      range = IDBKeyRange.lowerBound(
+      range = IDBKeyRange.bound(
         [datasetId, lastRecord.chunkIndex],
+        [datasetId, Number.MAX_SAFE_INTEGER],
         true,
+        false,
       );
     }
 

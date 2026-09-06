@@ -463,3 +463,33 @@ describe("IndexedDbAppStore", () => {
     expect(await store.datasets.getActive()).toEqual(previous);
   });
 });
+
+describe("readChunks dataset bounds", () => {
+  afterEach(async () => {
+    await deleteDatabase(databaseName);
+  });
+
+  it("never reads another dataset's chunks after the first pagination batch", async () => {
+    const store = createIndexedDbAppStore(databaseName);
+    const datasetId = `${databaseName}-pagination-a`;
+    const otherId = `${databaseName}-pagination-b`;
+
+    // 40 single-entry chunk records > READ_BATCH_SIZE (32) forces pagination.
+    const firstChunks = Array.from({ length: 40 }, (_, index) => [
+      entry(`${datasetId}-entry-${index}`, index),
+    ]);
+    await store.datasets.stage({ ...metadata(datasetId), entryCount: 40 }, chunks(firstChunks));
+
+    const otherChunks = Array.from({ length: 5 }, (_, index) => [
+      entry(`${otherId}-entry-${index}`, index),
+    ]);
+    await store.datasets.stage({ ...metadata(otherId), entryCount: 5 }, chunks(otherChunks));
+
+    const read = await collectChunks(store.datasets.readChunks(datasetId, 1));
+    const words = read.flat().map((value) => value.id);
+    expect(words).toHaveLength(40);
+    for (const id of words) {
+      expect(id.startsWith(`${datasetId}-entry-`)).toBe(true);
+    }
+  });
+});
