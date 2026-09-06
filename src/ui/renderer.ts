@@ -18,7 +18,7 @@ const DECISION_LABELS: Record<WordDecisionStatus, string> = {
 
 const DECISION_STATUSES: readonly WordDecisionStatus[] = ["known", "mined", "skip", "later"];
 
-const EMPTY_LOAD_MESSAGE = "Load a Jiten CSV above. Everything stays in this browser tab.";
+const EMPTY_LOAD_MESSAGE = "Load a Jiten CSV above.";
 const EMPTY_FILTER_MESSAGE = "No entries match the current filters.";
 const REVIEW_COMPLETE_MESSAGE = "No unreviewed candidates remain for the current filters.";
 const QUEUE_COMPLETE_MESSAGE = "Mining queue complete.";

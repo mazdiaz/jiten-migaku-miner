@@ -108,7 +108,7 @@ test.describe("persistent word decisions", () => {
 
     await page.locator("#clearData").click();
     await expect(page.locator("#resultsList .empty-state")).toContainText(
-      "Load a Jiten CSV above. Everything stays in this browser tab.",
+      "Load a Jiten CSV above.",
     );
 
     await page.reload();

@@ -32,10 +32,37 @@ test.describe("canonical miner", () => {
     await expect(page.locator("#advancedToggle")).toBeDisabled();
     await expect(page.locator("#advancedPanel")).toBeHidden();
     await expect(page.locator("#resultsList .empty-state")).toContainText(
-      "Load a Jiten CSV above. Everything stays in this browser tab.",
+      "Load a Jiten CSV above.",
     );
     await expect(page.locator("#resultStats")).toHaveText("Load a Jiten CSV to begin.");
     await expect(page.locator("#stickyToolbar")).toBeHidden();
+  });
+
+  test("shows clear labels, scope hints, and honest persistence copy", async ({ page }) => {
+    await page.goto("/");
+
+    const dataArea = page.locator("fieldset.data-area");
+    await expect(dataArea.locator("legend")).toHaveText("Data");
+    await expect(dataArea.locator("#clearData")).toBeVisible();
+    await expect(dataArea.locator("#exportBackup")).toBeVisible();
+    await expect(dataArea.locator("#restoreBackup")).toBeVisible();
+    await expect(dataArea).toContainText("Saved locally in this browser.");
+    await expect(dataArea).toContainText("not Jiten datasets or the session queue.");
+    await expect(dataArea).toContainText("Keep your original CSV files");
+
+    await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
+    await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
+    await openFilters(page);
+
+    const hideKnownLabel = page.locator("label:has(#hideKnown)");
+    await expect(hideKnownLabel).toHaveText("Hide Known");
+    await expect(hideKnownLabel).toHaveAttribute("title", /marked Known/);
+    await expect(page.locator("label:has(#showDefinitions)")).toHaveText("Definitions");
+
+    const displayGroup = page.locator("#advancedPanel .adv-group").filter({
+      has: page.locator("legend", { hasText: "Display" }),
+    });
+    await expect(displayGroup.locator(".adv-note")).toContainText("Pill");
   });
 
   test("imports the fixture, numbers entries, and shows stats", async ({ page }) => {
@@ -301,7 +328,7 @@ test.describe("canonical miner", () => {
     await page.locator("#clearData").click();
 
     await expect(page.locator("#resultsList .empty-state")).toContainText(
-      "Load a Jiten CSV above. Everything stays in this browser tab.",
+      "Load a Jiten CSV above.",
     );
     await expect(page.locator("#resultStats")).toHaveText("Load a Jiten CSV to begin.");
     await expect(page.locator("#jitenStatus")).toHaveText("No CSV loaded");

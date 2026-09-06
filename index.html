@@ -37,16 +37,20 @@
           <div id="knownStatus" class="file-status optional">Optional · no list loaded</div>
         </div>
       </div>
-      <div class="clear-row">
-        <button id="clearData" type="button" class="clear-button">Clear saved data…</button>
-        <span class="clear-note">Removes imported datasets, known words, and preferences stored in this browser.</span>
-      </div>
-      <div class="portability-row" aria-label="Data portability">
-        <button id="exportBackup" type="button" class="clear-button">Export backup</button>
-        <button id="restoreBackup" type="button" class="clear-button">Restore backup…</button>
-        <input id="restoreBackupInput" type="file" accept=".json,application/json" hidden>
-        <span id="backupStatus" class="clear-note" aria-live="polite"></span>
-      </div>
+      <fieldset class="data-area">
+        <legend>Data</legend>
+        <div class="clear-row">
+          <button id="clearData" type="button" class="clear-button">Clear saved data…</button>
+          <span class="clear-note">Removes imported datasets, known words, and preferences stored in this browser.</span>
+        </div>
+        <div class="portability-row" aria-label="Data portability">
+          <button id="exportBackup" type="button" class="clear-button">Export backup</button>
+          <button id="restoreBackup" type="button" class="clear-button">Restore backup…</button>
+          <input id="restoreBackupInput" type="file" accept=".json,application/json" hidden>
+          <span id="backupStatus" class="clear-note" aria-live="polite"></span>
+        </div>
+        <p class="data-note">Saved locally in this browser. Backups contain your known-word list, decisions, and preferences — not Jiten datasets or the session queue. Keep your original CSV files — they are not included in any export.</p>
+      </fieldset>
       <div id="errorBox" class="error-box" role="alert" hidden></div>
     </section>
 
@@ -98,7 +102,7 @@
                 <span>Min occurrences</span>
                 <input id="minOccurrences" type="number" min="0" step="1" value="1" inputmode="numeric">
               </label>
-              <label class="check-control queue-hidden"><input id="hideKnown" type="checkbox" disabled> Hide Migaku-known words</label>
+              <label class="check-control queue-hidden" title="Hides words on your Migaku known list AND words you marked Known here"><input id="hideKnown" type="checkbox" disabled> Hide Known</label>
               <label class="check-control queue-hidden"><input id="hideKanaOnly" type="checkbox"> Hide kana-only words</label>
             </div>
           </fieldset>
@@ -119,6 +123,7 @@
                 </select>
               </label>
             </div>
+            <p class="adv-note">Highlight marks the mining target inside example sentences; Pill restyles it as a soft outline.</p>
           </fieldset>
         </div>
       </div>
@@ -143,7 +148,7 @@
       </div>
 
       <div id="resultsList" class="results-list">
-        <div class="empty-state">Load a Jiten CSV above. Everything stays in this browser tab.</div>
+        <div class="empty-state">Load a Jiten CSV above.</div>
       </div>
 
       <div class="pager bottom-pager queue-hidden" aria-label="Bottom page navigation">

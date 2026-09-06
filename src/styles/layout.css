@@ -133,6 +133,26 @@ input[type="file"] {
 
 .clear-note { color: var(--subtle); font-size: 0.82rem; }
 
+.data-area {
+  margin: 16px 0 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.data-area legend {
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.data-area .clear-row { margin-top: 0; }
+
+.data-note { margin: 10px 0 0; color: var(--subtle); font-size: 0.82rem; }
+
 .portability-row {
   display: flex;
   flex-wrap: wrap;
@@ -313,6 +333,8 @@ input:focus, select:focus, button:focus-visible {
 .adv-controls .control > span {
   font-size: 0.72rem;
 }
+
+.adv-note { margin: 8px 0 0; color: var(--subtle); font-size: 0.8rem; }
 
 .sticky-title {
   min-width: 0;
