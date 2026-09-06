@@ -329,6 +329,79 @@ describe("worker client", () => {
     expect(returnInvoked).toBe(true);
   });
 
+  function countingSource(chunks: number, returns: { count: number }): AsyncIterable<readonly Entry[]> {
+    return {
+      [Symbol.asyncIterator]: () => {
+        let produced = 0;
+        return {
+          async next(): Promise<IteratorResult<readonly Entry[]>> {
+            if (produced >= chunks) return { done: true, value: undefined };
+            produced += 1;
+            return { done: false, value: [] };
+          },
+          async return(): Promise<IteratorResult<readonly Entry[]>> {
+            returns.count += 1;
+            return { done: true, value: undefined };
+          },
+        };
+      },
+    };
+  }
+
+  it("closes the source iterator exactly once on normal completion", async () => {
+    const worker = new FakeWorker();
+    const client = createWorkerClient(() => worker);
+    const returns = { count: 0 };
+    worker.postHook = (message) => {
+      if (message.type === "load-complete") {
+        worker.emit({
+          protocolVersion: 1,
+          type: "load-complete",
+          requestId: message.requestId,
+          datasetId: message.datasetId,
+          entryCount: 0,
+        });
+      }
+    };
+
+    await client.loadDataset("dataset-1", countingSource(2, returns));
+
+    expect(returns.count).toBe(1);
+  });
+
+  it("closes the source iterator exactly once when a mid-load error rejects the pending load", async () => {
+    const worker = new FakeWorker();
+    const client = createWorkerClient(() => worker);
+    const returns = { count: 0 };
+
+    const loading = client.loadDataset("dataset-1", countingSource(3, returns));
+    const loadStart = worker.messages.find((message) => message.type === "load-start");
+    if (loadStart?.type !== "load-start") throw new Error("missing load-start request");
+    worker.emit({
+      protocolVersion: 1,
+      type: "error",
+      requestId: loadStart.requestId,
+      code: "invalid-chunk",
+      message: "load failed",
+    });
+
+    await expect(loading).rejects.toThrow("load failed");
+    expect(returns.count).toBe(1);
+  });
+
+  it("closes the source iterator exactly once when posting fails mid-load", async () => {
+    const worker = new FakeWorker();
+    const client = createWorkerClient(() => worker);
+    const returns = { count: 0 };
+    worker.postHook = (message) => {
+      if (message.type === "load-chunk") throw new Error("postMessage failed");
+    };
+
+    await expect(client.loadDataset("dataset-1", countingSource(3, returns))).rejects.toThrow("postMessage failed");
+
+    expect(returns.count).toBe(1);
+  });
+
   it("rejects malformed load acknowledgements instead of leaving load pending", async () => {
     const worker = new FakeWorker();
     const client = createWorkerClient(() => worker);

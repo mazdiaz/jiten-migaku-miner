@@ -261,3 +261,53 @@ describe("virtual list scroll anchoring", () => {
     list.destroy();
   });
 });
+
+describe("virtual list viewport resize", () => {
+  function viewportRect(top: number, height: number): DOMRect {
+    return {
+      top,
+      bottom: top + height,
+      left: 0,
+      right: 0,
+      height,
+      width: 800,
+      x: 0,
+      y: top,
+      toJSON: () => ({}),
+    } as DOMRect;
+  }
+
+  // GUARD test (audit phase 6 "resize" box): the scroll handler derives the
+  // desired window start from the content offset (rect.top) only, so a taller
+  // viewport at an unchanged offset must not churn onRequestWindow or grow the
+  // mounted set. The invariant already holds in the offset-based math; this
+  // pins it against regressions (e.g. a rewrite that folds rect.height into
+  // the desired-start computation).
+  it("keeps the window start and node cap when the viewport grows at the same content offset", () => {
+    const root = document.createElement("div");
+    const requested: number[] = [];
+    const list = createVirtualList(root, itemNode, {
+      onRequestWindow: (start) => requested.push(start),
+    });
+
+    list.setTotal(100_000);
+    list.setWindow(5_000, entries(100));
+    const mountedBefore = root.querySelectorAll(".vl-item").length;
+
+    // Pre-resize baseline: 800px viewport whose content offset keeps the
+    // desired start exactly at the mounted window start (5_000).
+    root.getBoundingClientRect = () => viewportRect(-(5_010 * 96), 800);
+    window.dispatchEvent(new Event("scroll"));
+    expect(requested).toEqual([]);
+
+    // Resize: viewport doubles in height at the identical content offset.
+    root.getBoundingClientRect = () => viewportRect(-(5_010 * 96), 1_600);
+    window.dispatchEvent(new Event("scroll"));
+
+    expect(requested).toEqual([]);
+    const mounted = root.querySelectorAll(".vl-item");
+    expect(mounted.length).toBe(mountedBefore);
+    expect(mounted.length).toBeLessThanOrEqual(120);
+    list.destroy();
+  });
+});

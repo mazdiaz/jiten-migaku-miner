@@ -315,7 +315,10 @@ class BrowserWorkerClient implements WorkerClient {
     const rejectionSignal = rejectionGate.then(() => ({ loadRejected: true } as const));
     const ignore = (): void => {};
     const iterator = chunks[Symbol.asyncIterator]();
+    let sourceClosed = false;
     const closeSource = (): void => {
+      if (sourceClosed) return;
+      sourceClosed = true;
       const completion = iterator.return?.();
       completion?.then(ignore, ignore);
     };
@@ -356,8 +359,12 @@ class BrowserWorkerClient implements WorkerClient {
         chunkIndex += 1;
       }
 
+      // Every loop exit (done, rejection race, throw below) funnels through
+      // here or the catch; the boolean guard keeps closeSource a single
+      // iterator.return() invocation per load, matching old for-await
+      // abrupt-completion semantics.
+      closeSource();
       if (rejected) {
-        closeSource();
         throw rejectionReason;
       }
 
@@ -368,6 +375,7 @@ class BrowserWorkerClient implements WorkerClient {
         datasetId,
       });
     } catch (error) {
+      closeSource();
       this.rejectPending(requestId, error);
       this.postCancel(requestId);
     }

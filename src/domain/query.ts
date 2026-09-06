@@ -103,19 +103,36 @@ function windowBounds(totalEntries: number, window: QueryWindow): { start: numbe
 
 export type PaginatedEntries<T> = Omit<QueryResult, "items"> & { items: T[] };
 
+export interface PaginateEntriesOptions {
+  /**
+   * Skip the per-item `known` tally. Index-list callers (the worker passes
+   * raw entry indexes) always override `knownCount` from their own scan, so
+   * the decorated count is dead work for them. Defaults to true so existing
+   * EntryWithKnown callers keep the computed `knownCount`.
+   */
+  countKnown?: boolean;
+}
+
 export function paginateEntries<T>(
   entries: readonly T[],
   page: number,
   pageSize: PageSize,
   window?: QueryWindow,
+  options?: PaginateEntriesOptions,
 ): PaginatedEntries<T> {
-  const source = Array.from(entries);
+  const countKnown = options?.countKnown !== false;
+  // Array inputs are never mutated below and every returned items array is a
+  // fresh slice, so arrays can be used directly instead of being copied.
+  const source = Array.isArray(entries) ? entries : Array.from(entries);
   const totalEntries = source.length;
   if (totalEntries === 0) return emptyResult<T>(pageSize, pageSize === "all" && window !== undefined);
 
   // Item-type-agnostic so callers may paginate raw index lists; the worker
-  // passes entry indexes and overrides knownCount from its own scan.
-  const knownCount = source.reduce((count, entry) => count + ((entry as EntryWithKnown).known ? 1 : 0), 0);
+  // passes entry indexes with countKnown disabled and overrides knownCount
+  // from its own scan.
+  const knownCount = countKnown
+    ? source.reduce((count, entry) => count + ((entry as EntryWithKnown).known ? 1 : 0), 0)
+    : 0;
   if (pageSize === "all") {
     if (window !== undefined) {
       const bounds = windowBounds(totalEntries, window);

@@ -234,6 +234,19 @@ describe("paginateEntries", () => {
       windowed: false,
     });
   });
+
+  it("skips the known tally for raw index lists when countKnown is disabled", () => {
+    const result = paginateEntries([7, 8, 9, 10, 11], 1, 2, undefined, { countKnown: false });
+
+    expect(result).toMatchObject({
+      items: [7, 8],
+      page: 1,
+      totalPages: 3,
+      totalEntries: 5,
+      knownCount: 0,
+      windowed: false,
+    });
+  });
 });
 
 describe("queryEntries", () => {

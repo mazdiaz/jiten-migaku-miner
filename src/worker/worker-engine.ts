@@ -374,8 +374,16 @@ export class WorkerEngine {
 
       // Domain pagination over the ordered index list yields the exact page
       // slice plus every aggregate (page/totalPages/totalEntries/bounds),
-      // so only the requested slice gets decorated below.
-      const pagination = paginateEntries(orderedIndexes, request.query.page, request.query.pageSize);
+      // so only the requested slice gets decorated below. countKnown stays
+      // disabled: indexes carry no `known` flag and the scan's knownCount
+      // overrides the placeholder below.
+      const pagination = paginateEntries(
+        orderedIndexes,
+        request.query.page,
+        request.query.pageSize,
+        undefined,
+        { countKnown: false },
+      );
       const items: EntryWithKnown[] = [];
       for (let offset = 0; offset < pagination.items.length; offset += 1) {
         const entryIndex = pagination.items[offset];
