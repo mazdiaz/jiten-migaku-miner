@@ -152,12 +152,7 @@ function appendBadges(header: HTMLElement, entry: EntryWithKnown): void {
   if (badges.childNodes.length > 0) header.appendChild(badges);
 }
 
-function appendDecisionActions(article: HTMLElement, entry: EntryWithKnown): void {
-  const actions = document.createElement("div");
-  actions.className = "entry-decision";
-  actions.setAttribute("role", "group");
-  actions.setAttribute("aria-label", `Decision for ${entry.word}`);
-
+function appendDecisionButtons(actions: HTMLElement, entry: EntryWithKnown): void {
   for (const status of DECISION_STATUSES) {
     const button = document.createElement("button");
     button.type = "button";
@@ -168,61 +163,49 @@ function appendDecisionActions(article: HTMLElement, entry: EntryWithKnown): voi
     button.setAttribute("aria-pressed", entry.decision === status ? "true" : "false");
     actions.appendChild(button);
   }
-
-  const reset = document.createElement("button");
-  reset.type = "button";
-  reset.className = "decision-button decision-reset";
-  reset.textContent = "Reset";
-  reset.dataset.word = entry.normalizedWord;
-  reset.dataset.decisionAction = "unreviewed";
-  reset.disabled = entry.decision === "unreviewed";
-  actions.appendChild(reset);
-
-  article.appendChild(actions);
 }
 
-function appendQueueToggle(article: HTMLElement, entry: EntryWithKnown, queued: boolean): void {
+// Single merged actions row at the end of each entry. Button DOM (classes,
+// data-word / data-decision-action / data-queue-action, aria-pressed) is
+// identical to the pre-merge rows: controls.ts click delegation and the
+// focus-restoration tiers select on those attributes.
+function appendEntryActions(article: HTMLElement, entry: EntryWithKnown, options: EntryRenderOptions): void {
   const actions = document.createElement("div");
-  actions.className = "entry-queue";
-  actions.setAttribute("role", "group");
-  actions.setAttribute("aria-label", `Mining queue for ${entry.word}`);
+  actions.className = options.queueMode === true
+    ? "entry-actions entry-queue-actions"
+    : "entry-actions";
+  actions.setAttribute("role", "toolbar");
+  actions.setAttribute("aria-label", `Actions for ${entry.word}`);
 
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "queue-toggle-button";
-  button.textContent = queued ? QUEUE_QUEUED_LABEL : QUEUE_ADD_LABEL;
-  button.dataset.word = entry.normalizedWord;
-  button.dataset.queueAction = "toggle";
-  button.setAttribute("aria-pressed", queued ? "true" : "false");
-  actions.appendChild(button);
+  appendDecisionButtons(actions, entry);
 
-  article.appendChild(actions);
-}
+  if (options.queueMode === true) {
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "decision-button queue-remove";
+    remove.textContent = "Remove from queue";
+    remove.dataset.word = entry.normalizedWord;
+    remove.dataset.queueAction = "remove";
+    actions.appendChild(remove);
+  } else {
+    const reset = document.createElement("button");
+    reset.type = "button";
+    reset.className = "decision-button decision-reset";
+    reset.textContent = "Reset";
+    reset.dataset.word = entry.normalizedWord;
+    reset.dataset.decisionAction = "unreviewed";
+    reset.disabled = entry.decision === "unreviewed";
+    actions.appendChild(reset);
 
-function appendQueueDecisionActions(article: HTMLElement, entry: EntryWithKnown): void {
-  const actions = document.createElement("div");
-  actions.className = "entry-decision entry-queue-actions";
-  actions.setAttribute("role", "group");
-  actions.setAttribute("aria-label", `Mining queue actions for ${entry.word}`);
-
-  for (const status of DECISION_STATUSES) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "decision-button";
-    button.textContent = DECISION_LABELS[status];
-    button.dataset.word = entry.normalizedWord;
-    button.dataset.decisionAction = status;
-    button.setAttribute("aria-pressed", entry.decision === status ? "true" : "false");
-    actions.appendChild(button);
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "queue-toggle-button";
+    toggle.textContent = options.queued === true ? QUEUE_QUEUED_LABEL : QUEUE_ADD_LABEL;
+    toggle.dataset.word = entry.normalizedWord;
+    toggle.dataset.queueAction = "toggle";
+    toggle.setAttribute("aria-pressed", options.queued === true ? "true" : "false");
+    actions.appendChild(toggle);
   }
-
-  const remove = document.createElement("button");
-  remove.type = "button";
-  remove.className = "decision-button queue-remove";
-  remove.textContent = "Remove from queue";
-  remove.dataset.word = entry.normalizedWord;
-  remove.dataset.queueAction = "remove";
-  actions.appendChild(remove);
 
   article.appendChild(actions);
 }
@@ -252,22 +235,27 @@ function buildEntryHeader(entry: EntryWithKnown, view: ViewState, number: number
   occurrences.textContent = `×${entry.occurrences}`;
 
   header.append(target, occurrences);
-  if (entry.definitions && view.showDefinitions) {
-    const parts = entry.definitions.split(",").map((part) => part.trim()).filter(Boolean);
-    const max = 3;
-    const shown = parts.slice(0, max).join(", ");
-    const truncated = parts.length > max;
-    const definitions = document.createElement("div");
-    definitions.className = "entry-definitions";
-    definitions.textContent = truncated ? `${shown}, …` : shown;
-    if (truncated) {
-      definitions.title = entry.definitions;
-      definitions.style.cursor = "help";
-    }
-    header.insertBefore(definitions, occurrences);
-  }
   appendBadges(header, entry);
   return header;
+}
+
+// Definitions render as a full-width row after the sentence, not inside the
+// header: the header stays number/target/occurrences/badges only. Truncation
+// logic + title are preserved (Task 5 replaces the title with a disclosure).
+function buildEntryDefinitions(entry: EntryWithKnown, view: ViewState): HTMLElement | null {
+  if (!entry.definitions || !view.showDefinitions) return null;
+  const parts = entry.definitions.split(",").map((part) => part.trim()).filter(Boolean);
+  const max = 3;
+  const shown = parts.slice(0, max).join(", ");
+  const truncated = parts.length > max;
+  const definitions = document.createElement("div");
+  definitions.className = "entry-definitions";
+  definitions.textContent = truncated ? `${shown}, …` : shown;
+  if (truncated) {
+    definitions.title = entry.definitions;
+    definitions.style.cursor = "help";
+  }
+  return definitions;
 }
 
 function buildSentenceBlock(entry: EntryWithKnown, view: ViewState): HTMLElement | null {
@@ -277,6 +265,9 @@ function buildSentenceBlock(entry: EntryWithKnown, view: ViewState): HTMLElement
   return sentence;
 }
 
+// Audit order: header (number/target/occurrence/badges) → sentence →
+// definitions → merged actions row last. Virtual-list rows reuse this node,
+// so windowed rows get the same order automatically.
 export function renderEntryNode(
   entry: EntryWithKnown,
   number: number,
@@ -286,14 +277,11 @@ export function renderEntryNode(
   const article = document.createElement("article");
   article.className = "mining-entry";
   article.appendChild(buildEntryHeader(entry, view, number));
-  if (options.queueMode === true) {
-    appendQueueDecisionActions(article, entry);
-  } else {
-    appendDecisionActions(article, entry);
-    appendQueueToggle(article, entry, options.queued === true);
-  }
   const sentence = buildSentenceBlock(entry, view);
   if (sentence !== null) article.appendChild(sentence);
+  const definitions = buildEntryDefinitions(entry, view);
+  if (definitions !== null) article.appendChild(definitions);
+  appendEntryActions(article, entry, options);
   return article;
 }
 
@@ -303,6 +291,8 @@ export function renderReviewEntryNode(entry: EntryWithKnown, view: ViewState): H
   article.appendChild(buildEntryHeader(entry, view, null));
   const sentence = buildSentenceBlock(entry, view);
   if (sentence !== null) article.appendChild(sentence);
+  const definitions = buildEntryDefinitions(entry, view);
+  if (definitions !== null) article.appendChild(definitions);
   return article;
 }
 

@@ -378,3 +378,11 @@ input:focus, select:focus, button:focus-visible {
   .sticky-title { display: none; }
   .sticky-row-1 { grid-template-columns: minmax(0, 1fr) auto auto; }
 }
+
+/* Very narrow phones (~320px): the sticky pager row (Queue button + pager)
+   would otherwise overflow the ~300px shell, so let the page label shrink
+   and tighten the row gap. */
+@media (max-width: 360px) {
+  .sticky-row-1 { gap: 8px; }
+  .page-label { min-width: 0; }
+}
