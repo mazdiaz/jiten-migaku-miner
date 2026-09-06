@@ -74,11 +74,13 @@ test.describe("small phone layout at 320x568", () => {
 
     await expectNoHorizontalOverflow(page);
 
-    const decisionBox = await page.locator("[data-decision-action='known']").first().boundingBox();
-    expect(decisionBox?.height ?? 0).toBeGreaterThanOrEqual(44);
+    await expect
+      .poll(async () => (await page.locator("[data-decision-action='known']").first().boundingBox())?.height ?? 0)
+      .toBeGreaterThanOrEqual(44);
 
-    const toggleBox = await page.locator("[data-queue-action='toggle']").first().boundingBox();
-    expect(toggleBox?.height ?? 0).toBeGreaterThanOrEqual(44);
+    await expect
+      .poll(async () => (await page.locator("[data-queue-action='toggle']").first().boundingBox())?.height ?? 0)
+      .toBeGreaterThanOrEqual(44);
   });
 
   test("keeps the sticky toolbar inside the viewport", async ({ page }) => {

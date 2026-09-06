@@ -37,9 +37,11 @@ test.describe("accessibility remainder", () => {
 
     // Once scrolled, the toolbar is stuck near the top: the heading must sit
     // at or below the sticky toolbar, not underneath it.
-    const toolbarBottom = await page.locator("#stickyToolbar").evaluate((el) => el.getBoundingClientRect().bottom);
-    const headingTop = await page.locator("#resultsHeading").evaluate((el) => el.getBoundingClientRect().top);
-    expect(headingTop).toBeGreaterThanOrEqual(toolbarBottom - 1);
+    await expect.poll(async () => {
+      const toolbarBottom = await page.locator("#stickyToolbar").evaluate((el) => el.getBoundingClientRect().bottom);
+      const headingTop = await page.locator("#resultsHeading").evaluate((el) => el.getBoundingClientRect().top);
+      return headingTop - toolbarBottom;
+    }).toBeGreaterThanOrEqual(-1);
   });
 
   test("pager click focuses the results heading clear of the toolbar", async ({ page }) => {
@@ -56,9 +58,11 @@ test.describe("accessibility remainder", () => {
       page.locator("#resultsHeading").evaluate((el) => el.getBoundingClientRect().top),
     ).toBeLessThanOrEqual(140.5);
 
-    const toolbarBottom = await page.locator("#stickyToolbar").evaluate((el) => el.getBoundingClientRect().bottom);
-    const headingTop = await page.locator("#resultsHeading").evaluate((el) => el.getBoundingClientRect().top);
-    expect(headingTop).toBeGreaterThanOrEqual(toolbarBottom - 1);
+    await expect.poll(async () => {
+      const toolbarBottom = await page.locator("#stickyToolbar").evaluate((el) => el.getBoundingClientRect().bottom);
+      const headingTop = await page.locator("#resultsHeading").evaluate((el) => el.getBoundingClientRect().top);
+      return headingTop - toolbarBottom;
+    }).toBeGreaterThanOrEqual(-1);
   });
 
   test("expanded filters panel keeps the focused heading clear of the toolbar", async ({ page }) => {
@@ -76,9 +80,11 @@ test.describe("accessibility remainder", () => {
       page.evaluate(() => (document.activeElement instanceof HTMLElement ? document.activeElement.id : "")),
     ).toBe("resultsHeading");
 
-    const toolbarBottom = await page.locator("#stickyToolbar").evaluate((el) => el.getBoundingClientRect().bottom);
-    const headingTop = await page.locator("#resultsHeading").evaluate((el) => el.getBoundingClientRect().top);
-    expect(headingTop).toBeGreaterThanOrEqual(toolbarBottom - 1);
+    await expect.poll(async () => {
+      const toolbarBottom = await page.locator("#stickyToolbar").evaluate((el) => el.getBoundingClientRect().bottom);
+      const headingTop = await page.locator("#resultsHeading").evaluate((el) => el.getBoundingClientRect().top);
+      return headingTop - toolbarBottom;
+    }).toBeGreaterThanOrEqual(-1);
 
     await page.locator("#advancedToggle").click();
     await expect(page.locator("#advancedPanel")).toBeHidden();
