@@ -134,12 +134,12 @@ Measurements are fixture- and layout-dependent, not universal performance thresh
 
 ### 1. Reduce configuration above results
 
-- [ ] Collapse imports after successful load into a compact dataset/known-list summary with a Change Files control.
-- [ ] Keep full dropzones available in the empty state and when explicitly expanded.
-- [ ] Stop showing two complete filter interfaces simultaneously.
-- [ ] Keep one compact toolbar and expose advanced controls on demand.
-- [ ] Separate Filters from Display options.
-- [ ] Keep search, mode, queue count, and essential navigation easy to reach.
+- [x] Collapse imports after successful load into a compact dataset/known-list summary with a Change Files control. (verified: import-collapse unit+e2e / 927db4e)
+- [x] Keep full dropzones available in the empty state and when explicitly expanded. (verified: empty-state and expanded dropzone regressions / 927db4e)
+- [x] Stop showing two complete filter interfaces simultaneously. (verified: single-toolbar disclosure e2e — one search input, sortSelect hidden until expanded / 5a93441)
+- [x] Keep one compact toolbar and expose advanced controls on demand. (verified: advanced-panel regressions / 5a93441)
+- [x] Separate Filters from Display options. (verified: fieldset legends e2e / 5a93441)
+- [x] Keep search, mode, queue count, and essential navigation easy to reach. (verified: sticky row 1 retains search+queue+pager e2e / 5a93441)
 
 **Filters:** search, effective knownness, sentence presence, decision, occurrences, and sorting.
 
@@ -147,19 +147,19 @@ Measurements are fixture- and layout-dependent, not universal performance thresh
 
 ### 2. Clarify modes and entry hierarchy
 
-- [ ] Clearly distinguish Browse, Review, and Mining Queue.
-- [ ] Keep the current mode and exit action visible.
-- [ ] Hide irrelevant controls without modifying saved normal filters.
-- [ ] Present entries in this order: target/occurrence/badges, sentence, definition, compact actions.
-- [ ] Keep decision and queue controls outside the sentence DOM.
-- [ ] Preserve both Migaku-known and local-decision badges where applicable.
+- [x] Clearly distinguish Browse, Review, and Mining Queue. (verified: mode UI unchanged post-restructure — queue-header e2e shows queue mode banner while browse list and review overlay stay distinct / 5a93441)
+- [x] Keep the current mode and exit action visible. (verified: queue-header e2e — queue mode visible, Exit Queue present / 5a93441)
+- [x] Hide irrelevant controls without modifying saved normal filters. (verified: queue-hidden classes in advanced panel / 5a93441; queue path skips preference persistence — exit restores saved normal filters / 7b43332)
+- [x] Present entries in this order: target/occurrence/badges, sentence, definition, compact actions. (verified: entry-order unit + mobile e2e / fbd6396)
+- [x] Keep decision and queue controls outside the sentence DOM. (verified: .entry-actions row separate from .sentence — order assertions / fbd6396)
+- [x] Preserve both Migaku-known and local-decision badges where applicable. (verified: badge unit assertion in T3 / fbd6396)
 
 ### 3. Improve mobile layout
 
-- [ ] Stack queue heading and actions on narrow screens.
-- [ ] Allow queue actions and secondary toolbar controls to wrap or collapse.
-- [ ] Prefer approximately 44px touch targets for primary actions.
-- [ ] Validate 320px and 375px widths, larger text, and portrait/landscape layouts.
+- [x] Stack queue heading and actions on narrow screens. (verified: mobile-layout e2e queue section / fbd6396)
+- [x] Allow queue actions and secondary toolbar controls to wrap or collapse. (verified: advanced disclosure + mobile wrap specs / 5a93441+fbd6396)
+- [x] Prefer approximately 44px touch targets for primary actions. (verified: ≥44px bounding assertions at 320/375 / fbd6396)
+- [ ] Validate 320px and 375px widths, larger text, and portrait/landscape layouts. (partial: 320/375 verified / fbd6396; larger-text and landscape checks deferred)
 
 **Observed code defect:** queue heading/actions use a non-wrapping layout that crowds narrow screens.
 
@@ -167,13 +167,13 @@ Measurements are fixture- and layout-dependent, not universal performance thresh
 
 ### 4. Improve labels and persistence copy
 
-- [ ] Replace ambiguous Known with Hide Known and Defs with Definitions.
-- [ ] Ensure the primary Hide Known label includes locally marked Known words, not only Migaku imports.
-- [ ] Explain what highlight and pill options do.
-- [ ] Replace tab-only persistence wording with Saved Locally In This Browser where appropriate.
-- [ ] State that backups contain known words, decisions, and preferences, but exclude Jiten datasets and session queue.
-- [ ] Remind users to retain original CSV files.
-- [ ] Move Clear Saved Data and portability controls into a clearly labeled Data settings area.
+- [x] Replace ambiguous Known with Hide Known and Defs with Definitions. (verified: label text e2e / f76c4e3)
+- [x] Ensure the primary Hide Known label includes locally marked Known words, not only Migaku imports. (verified: Hide Known label title mentions locally marked Known / f76c4e3)
+- [x] Explain what highlight and pill options do. (verified: Display group adv-note explains Pill and highlighting / f76c4e3)
+- [x] Replace tab-only persistence wording with Saved Locally In This Browser where appropriate. (verified: "Saved locally in this browser." data-area copy e2e / f76c4e3)
+- [x] State that backups contain known words, decisions, and preferences, but exclude Jiten datasets and session queue. (verified: "not Jiten datasets or the session queue" scope-note copy e2e / f76c4e3)
+- [x] Remind users to retain original CSV files. (verified: "Keep your original CSV files" reminder copy e2e / f76c4e3)
+- [x] Move Clear Saved Data and portability controls into a clearly labeled Data settings area. (verified: fieldset.data-area legend + clear/export/restore controls e2e / f76c4e3)
 
 **References:** `index.html:146`, `index.html:188`, `src/app/controller.ts:447`.
 
@@ -192,15 +192,15 @@ Measurements are fixture- and layout-dependent, not universal performance thresh
 
 ### Other Accessibility Changes
 
-- [ ] Add a keyboard/touch-accessible Show Full Definition disclosure instead of relying on `title` for truncated content. Reference: `src/ui/renderer.ts:238`.
-- [ ] Use one visible, clearly focused control per file picker; remove invisible keyboard stops. Reference: `src/styles/layout.css:84`.
-- [ ] Brighten secondary text to meet 4.5:1 contrast on all surfaces where small text appears. Reference: `src/styles/tokens.css:4`.
-- [ ] Account for sticky-toolbar height when scrolling to results, and focus the results heading after keyboard pagination. Reference: `src/ui/controls.ts:158`.
-- [ ] Restrict `lang="ja"` to Japanese target/sentence text rather than English definitions and messages. Reference: `index.html:206`.
-- [ ] Allow single-letter shortcuts to be disabled or scope them to an explicitly focused interaction surface. Reference: `src/ui/controls.ts:314`.
-- [ ] Add an explicit accessible label to sticky search. Reference: `index.html:110`.
-- [ ] Narrow live announcements to concise counts/status instead of the entire rebuilt results list. Reference: `index.html:106`.
-- [ ] Respect `prefers-reduced-motion` for smooth scrolling and decorative transitions.
+- [x] Add a keyboard/touch-accessible Show Full Definition disclosure instead of relying on `title` for truncated content. Reference: `src/ui/renderer.ts:238`. (verified: definitions disclosure opens via keyboard e2e — details/summary replaces title / 2514aeb)
+- [x] Use one visible, clearly focused control per file picker; remove invisible keyboard stops. Reference: `src/styles/layout.css:84`. (verified: single dropzone focus stop markup e2e — no tabindex stops / 2514aeb)
+- [x] Brighten secondary text to meet 4.5:1 contrast on all surfaces where small text appears. Reference: `src/styles/tokens.css:4`. (verified: #8a94a8 ≥4.76:1 on all surfaces, math in task report / 2514aeb)
+- [x] Account for sticky-toolbar height when scrolling to results, and focus the results heading after keyboard pagination. Reference: `src/ui/controls.ts:158`. (verified: keyboard + click pagination focus #resultsHeading clear of sticky toolbar e2e; scroll-margin comment follow-up / 2514aeb+5cb19e6)
+- [x] Restrict `lang="ja"` to Japanese target/sentence text rather than English definitions and messages. Reference: `index.html:206`. (verified: lang scoping markup e2e — reviewContent carries no lang, only target/sentence tagged / 2514aeb)
+- [x] Allow single-letter shortcuts to be disabled or scope them to an explicitly focused interaction surface. Reference: `src/ui/controls.ts:314`. (verified: letter shortcuts inert inside toolbar, native button activation untouched e2e / 2514aeb)
+- [x] Add an explicit accessible label to sticky search. Reference: `index.html:110`. (verified: #stickySearch aria-label markup e2e / 2514aeb)
+- [x] Narrow live announcements to concise counts/status instead of the entire rebuilt results list. Reference: `index.html:106`. (verified: #results not aria-live; #resultStats/#queueStats aria-live=polite markup e2e / 2514aeb)
+- [x] Respect `prefers-reduced-motion` for smooth scrolling and decorative transitions. (verified: prefers-reduced-motion media queries disable transitions in tokens.css and layout.css / 2514aeb)
 
 Actual screen-reader announcement behavior still needs assistive-technology testing.
 
