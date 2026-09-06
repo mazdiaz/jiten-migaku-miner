@@ -462,8 +462,6 @@ body.review-open { overflow: hidden; }
   color: var(--accent);
 }
 
-.entry-queue-actions { flex-wrap: wrap; }
-
 .queue-remove { margin-left: auto; }
 
 body.queue-mode .queue-hidden { display: none !important; }

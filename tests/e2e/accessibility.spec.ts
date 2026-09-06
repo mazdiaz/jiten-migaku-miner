@@ -61,6 +61,30 @@ test.describe("accessibility remainder", () => {
     expect(headingTop).toBeGreaterThanOrEqual(toolbarBottom - 1);
   });
 
+  test("expanded filters panel keeps the focused heading clear of the toolbar", async ({ page }) => {
+    await page.goto("/");
+    await page.locator("#jitenInput").setInputFiles(SIXTY_CSV);
+    await expect(page.locator("#resultsList .mining-entry")).toHaveCount(50);
+
+    await page.locator("#advancedToggle").click();
+    await expect(page.locator("#advancedPanel")).toBeVisible();
+    await expect(page.locator("body")).toHaveClass(/advanced-open/);
+
+    await page.locator("#stickyNext").click();
+    await expect(page.locator("#stickyPage")).toHaveText("Page 2 / 2");
+    await expect.poll(() =>
+      page.evaluate(() => (document.activeElement instanceof HTMLElement ? document.activeElement.id : "")),
+    ).toBe("resultsHeading");
+
+    const toolbarBottom = await page.locator("#stickyToolbar").evaluate((el) => el.getBoundingClientRect().bottom);
+    const headingTop = await page.locator("#resultsHeading").evaluate((el) => el.getBoundingClientRect().top);
+    expect(headingTop).toBeGreaterThanOrEqual(toolbarBottom - 1);
+
+    await page.locator("#advancedToggle").click();
+    await expect(page.locator("#advancedPanel")).toBeHidden();
+    await expect(page.locator("body")).not.toHaveClass(/advanced-open/);
+  });
+
   test("definitions disclosure opens via keyboard", async ({ page }) => {
     await page.goto("/");
     await page.locator("#jitenInput").setInputFiles({

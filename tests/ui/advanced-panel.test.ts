@@ -1,4 +1,6 @@
 // @vitest-environment happy-dom
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { bindControls } from "../../src/ui/controls";
 import { getDomMap } from "../../src/ui/dom";
@@ -260,5 +262,41 @@ describe("advanced panel disclosure", () => {
     } finally {
       harness.dispose();
     }
+  });
+
+  it("toggles the advanced-open body class with the panel visibility", () => {
+    const harness = setup({ dataset: dataset(), status: "ready" });
+    try {
+      expect(document.body.classList.contains("advanced-open")).toBe(false);
+
+      harness.dom.advancedToggle.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      expect(harness.dom.advancedPanel.hidden).toBe(false);
+      expect(document.body.classList.contains("advanced-open")).toBe(true);
+
+      harness.dom.advancedToggle.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      expect(harness.dom.advancedPanel.hidden).toBe(true);
+      expect(document.body.classList.contains("advanced-open")).toBe(false);
+    } finally {
+      harness.dispose();
+    }
+  });
+
+  it("drops the advanced-open body class when the dataset clears while expanded", () => {
+    const harness = setup({ dataset: dataset(), status: "ready" });
+    try {
+      harness.dom.advancedToggle.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      expect(document.body.classList.contains("advanced-open")).toBe(true);
+
+      harness.controller.publishState({ dataset: null, status: "empty" });
+      expect(harness.dom.advancedPanel.hidden).toBe(true);
+      expect(document.body.classList.contains("advanced-open")).toBe(false);
+    } finally {
+      harness.dispose();
+    }
+  });
+
+  it("ships the advanced panel without the legacy sticky-row-2 class", () => {
+    const html = readFileSync(resolve(process.cwd(), "index.html"), "utf8");
+    expect(html).not.toContain("sticky-row-2");
   });
 });

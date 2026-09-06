@@ -178,10 +178,8 @@ function appendDecisionButtons(actions: HTMLElement, entry: EntryWithKnown): voi
 // focus-restoration tiers select on those attributes.
 function appendEntryActions(article: HTMLElement, entry: EntryWithKnown, options: EntryRenderOptions): void {
   const actions = document.createElement("div");
-  actions.className = options.queueMode === true
-    ? "entry-actions entry-queue-actions"
-    : "entry-actions";
-  actions.setAttribute("role", "toolbar");
+  actions.className = "entry-actions";
+  actions.setAttribute("role", "group");
   actions.setAttribute("aria-label", `Actions for ${entry.word}`);
 
   appendDecisionButtons(actions, entry);
@@ -379,7 +377,11 @@ export function createRenderer(dom: DomMap): Renderer {
       advancedExpanded = false;
     }
     dom.advancedToggle.disabled = !hasData;
-    dom.advancedPanel.hidden = !(hasData && advancedExpanded);
+    const advancedVisible = hasData && advancedExpanded;
+    dom.advancedPanel.hidden = !advancedVisible;
+    // Mirrors panel visibility so CSS can size scroll-margin to the expanded
+    // toolbar (body.advanced-open #resultsHeading).
+    document.body.classList.toggle("advanced-open", advancedVisible);
     dom.advancedToggle.setAttribute("aria-expanded", advancedExpanded ? "true" : "false");
     dom.stickySearch.value = state.query.search;
     const hasKnownSource = state.knownWords.size > 0

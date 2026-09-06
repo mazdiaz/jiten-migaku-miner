@@ -264,45 +264,14 @@ input:focus, select:focus, button:focus-visible {
 
 .advanced-toggle:disabled { opacity: 0.55; cursor: default; }
 
-.sticky-row-2 {
+#advancedPanel {
   display: flex;
   flex-wrap: wrap;
   gap: 10px 16px;
   align-items: flex-start;
 }
 
-.sticky-row-2[hidden] { display: none; }
-
-.sticky-row-2 .control {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-}
-
-.sticky-row-2 .control > span {
-  font-size: 0.72rem;
-}
-
-.sticky-row-2 select {
-  width: auto;
-  height: 32px;
-  padding: 0 8px;
-  font-size: 0.88rem;
-}
-
-.sticky-row-2 input[type="number"] {
-  width: 70px;
-  height: 32px;
-  padding: 0 8px;
-  font-size: 0.88rem;
-}
-
-.sticky-row-2 .check-control {
-  font-size: 0.88rem;
-  gap: 6px;
-}
-
-.sticky-row-2 .check-control input { width: 15px; height: 15px; }
+#advancedPanel[hidden] { display: none; }
 
 .adv-group {
   flex: 1 1 300px;
@@ -338,6 +307,29 @@ input:focus, select:focus, button:focus-visible {
   font-size: 0.72rem;
 }
 
+/* Compact sizing for panel controls (canonical since the sticky-row-2
+   dedupe): overrides the 42px/100% base inputs inside the panel. */
+.adv-controls select {
+  width: auto;
+  height: 32px;
+  padding: 0 8px;
+  font-size: 0.88rem;
+}
+
+.adv-controls input[type="number"] {
+  width: 70px;
+  height: 32px;
+  padding: 0 8px;
+  font-size: 0.88rem;
+}
+
+.adv-controls .check-control {
+  font-size: 0.88rem;
+  gap: 6px;
+}
+
+.adv-controls .check-control input { width: 15px; height: 15px; }
+
 .adv-note { margin: 8px 0 0; color: var(--subtle); font-size: 0.8rem; }
 
 .sticky-title {
@@ -361,10 +353,13 @@ input:focus, select:focus, button:focus-visible {
 .results-head h2 { margin: 0; font-size: 1.05rem; }
 
 /* Keep the focused/scrolled-to results heading clear of the sticky toolbar.
-   140px clears the collapsed toolbar at 375px. With the filters panel expanded
-   the heading can sit under the toolbar; scroll to recover.
-   Follow-up: conditional scroll-margin when #advancedToggle[aria-expanded='true']. */
+   140px clears the collapsed toolbar at 375px. When the filters panel is
+   expanded the renderer adds body.advanced-open; 530px clears the full
+   toolbar at 375px (measured stuck bottom ~518px: 6px top + ~512px wrapped
+   panel, Playwright/iPhone-12 viewport) with margin. */
 #resultsHeading { scroll-margin-top: 140px; }
+
+body.advanced-open #resultsHeading { scroll-margin-top: 530px; }
 
 .result-stats { margin: 4px 0 0; color: var(--muted); font-size: 0.9rem; }
 

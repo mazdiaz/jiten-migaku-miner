@@ -68,7 +68,7 @@ describe("renderEntryNode structure", () => {
     expect(toolbars).toHaveLength(1);
 
     const actions = article.querySelector<HTMLElement>(".entry-actions")!;
-    expect(actions.getAttribute("role")).toBe("toolbar");
+    expect(actions.getAttribute("role")).toBe("group");
     expect(actions.getAttribute("aria-label")).toBe("Actions for 言葉");
     expect(article.querySelectorAll(".entry-decision")).toHaveLength(0);
     expect(article.querySelectorAll(".entry-queue")).toHaveLength(0);
@@ -118,8 +118,10 @@ describe("renderEntryNode structure", () => {
     expect(toolbars).toHaveLength(1);
 
     const actions = article.querySelector<HTMLElement>(".entry-actions")!;
-    expect(actions.getAttribute("role")).toBe("toolbar");
+    expect(actions.getAttribute("role")).toBe("group");
     expect(actions.getAttribute("aria-label")).toBe("Actions for 言葉");
+    expect(actions.className).toBe("entry-actions");
+    expect(actions.classList.contains("entry-queue-actions")).toBe(false);
     expect(actions.querySelector("[data-queue-action='toggle']")).toBeNull();
 
     const decisions = [...actions.querySelectorAll<HTMLButtonElement>("[data-decision-action]")];

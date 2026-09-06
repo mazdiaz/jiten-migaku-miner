@@ -409,8 +409,9 @@ describe("queue mode view", () => {
 
     expect(dom.queueHeader.hidden).toBe(false);
     expect(dom.queueHeading.textContent).toBe("Mining Queue — 2 words");
-    const actions = [...dom.resultsList.querySelectorAll(".entry-queue-actions")];
+    const actions = [...dom.resultsList.querySelectorAll(".entry-actions")];
     expect(actions).toHaveLength(2);
+    for (const row of actions) expect(row.classList.contains("entry-queue-actions")).toBe(false);
     expect(dom.resultsList.querySelectorAll('[data-queue-action="remove"]')).toHaveLength(2);
     expect(dom.resultsList.querySelectorAll(".entry-queue")).toHaveLength(0);
   });
