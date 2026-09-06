@@ -2084,6 +2084,53 @@ describe("MinerController backup and restore", () => {
     expect(final.errorMessage).toContain("wordDecisions.replaceAll failed as requested");
   });
 
+  it("a failing restore invalidates in-flight query renders so a late completion cannot clear the error", async () => {
+    const inner = createMemoryAppStore();
+    await seedForRestore(inner);
+    const delayed = createDelayedAppStore(inner, { forwardRestoreUserState: false });
+    const worker = new FakeWorkerClient();
+    const controller = createMinerController({
+      store: delayed.store,
+      worker,
+      legacyStorage: null,
+      sessionQueueStore: createSessionQueueStore(null),
+      createId: (kind) => `${kind}-restored`,
+    });
+    const states: Readonly<AppState>[] = [];
+    controller.subscribe((state) => states.push(state));
+    await controller.init();
+    const resultBefore = states.at(-1)!.result;
+
+    // A user query is in flight when the restore fails; its late resolution
+    // must not be allowed to publish a ready render over the restore error.
+    let resolveStale: ((value: QueryResult) => void) | undefined;
+    const staleGate = new Promise<QueryResult>((resolve) => { resolveStale = resolve; });
+    let staleStarted: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => { staleStarted = resolve; });
+    worker.queryHandler = async () => {
+      staleStarted?.();
+      return staleGate;
+    };
+    controller.updateQuery({ search: "最新" });
+    await started;
+
+    delayed.failNext("preferences.save");
+    await expect(controller.restoreBackup(backupText())).rejects.toThrow(
+      "preferences.save failed as requested",
+    );
+    expect(states.at(-1)!.errorMessage).toContain("Backup could not be restored");
+
+    resolveStale?.(result([entry("stale-entry", "残")]));
+    await flushMicrotasks();
+
+    const final = states.at(-1)!;
+    expect(final.errorMessage).toContain("Backup could not be restored");
+    expect(final.errorMessage).toContain("preferences.save failed as requested");
+    expect(final.status).not.toBe("ready");
+    expect(final.result?.items.some((item) => item.id === "stale-entry")).toBe(false);
+    expect(final.result).toEqual(resultBefore);
+  });
+
   it("routes restoreUserState failures through the memory fallback and completes the restore", async () => {
     const inner = createMemoryAppStore();
     await inner.knownWords.save("old-known", "old.txt", new Set(["古い"]));
