@@ -278,6 +278,27 @@ describe("entry queue controls", () => {
     expect(harness.controller.calls.toggleQueued).toEqual([]);
   });
 
+  it("renders the pressed queued state for a mixed-case entry with a lowercase queue key", () => {
+    const dom = seedDom();
+    const renderer = createRenderer(dom);
+    const base = createInitialAppState("memory");
+    renderer.render({
+      ...base,
+      ...datasetState(),
+      queue: { datasetId: "dataset-1", normalizedWords: ["nhk"], mode: "normal" },
+      result: {
+        items: [makeEntry({ word: "NHK", normalizedWord: "NHK" })],
+        page: 1, totalPages: 1, totalEntries: 1, startIndex: 1, endIndex: 1,
+        pageSize: 50, knownCount: 0, windowed: false,
+      },
+    });
+
+    const button = dom.resultsList.querySelector<HTMLButtonElement>("[data-queue-action]")!;
+    expect(button.textContent).toBe("✓ Queued");
+    expect(button.getAttribute("aria-pressed")).toBe("true");
+    expect(button.dataset.word).toBe("NHK");
+  });
+
   it("queue count reflects membership and disables Start Mining at zero", () => {
     const harness = setup(datasetState());
     expect(harness.dom.queueToggle.textContent).toBe("Queue (0)");

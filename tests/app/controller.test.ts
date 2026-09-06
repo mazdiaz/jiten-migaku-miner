@@ -1288,10 +1288,11 @@ describe("MinerController review mode", () => {
     };
   }
 
-  function installPool(worker: FakeWorkerClient, pool: Entry[]): void {
-    worker.queryHandler = async (request) => {
-      const decided = new Set((request.decisions ?? []).map(([word]) => word));
-      const remaining = pool.filter((value) => !decided.has(value.normalizedWord));
+    function installPool(worker: FakeWorkerClient, pool: Entry[]): void {
+      worker.queryHandler = async (request) => {
+        // The real worker matches decisions against entries case-insensitively.
+        const decided = new Set((request.decisions ?? []).map(([word]) => word.toLocaleLowerCase()));
+        const remaining = pool.filter((value) => !decided.has(value.normalizedWord.toLocaleLowerCase()));
       const numericSize = request.query.pageSize === "all" ? Math.max(1, remaining.length) : Number(request.query.pageSize);
       const page = Math.max(1, request.query.page);
       const items = remaining
@@ -1373,9 +1374,9 @@ describe("MinerController review mode", () => {
     const reviewCalls = worker.queryCalls.filter((call) => call.queryChannel === "review");
     expect(reviewCalls.length).toBe(4);
     for (const call of reviewCalls) expect(call.query.page).toBe(1);
-    expect(reviewCalls[1]?.decisions).toEqual([["A", "mined"]]);
-    expect(reviewCalls[2]?.decisions).toEqual([["A", "mined"], ["B", "later"]]);
-    expect(reviewCalls[3]?.decisions).toEqual([["A", "mined"], ["B", "later"], ["C", "known"]]);
+    expect(reviewCalls[1]?.decisions).toEqual([["a", "mined"]]);
+    expect(reviewCalls[2]?.decisions).toEqual([["a", "mined"], ["b", "later"]]);
+    expect(reviewCalls[3]?.decisions).toEqual([["a", "mined"], ["b", "later"], ["c", "known"]]);
   });
 
   it("keeps mined separate from known while reviewing", async () => {
@@ -1387,9 +1388,9 @@ describe("MinerController review mode", () => {
 
     await controller.reviewDecision("mined");
 
-    expect(await store.wordDecisions.get("A")).toMatchObject({ status: "mined" });
+    expect(await store.wordDecisions.get("a")).toMatchObject({ status: "mined" });
     expect(states.at(-1)!.knownWords.size).toBe(0);
-    expect(states.at(-1)!.wordDecisions.get("A")).toMatchObject({ status: "mined" });
+    expect(states.at(-1)!.wordDecisions.get("a")).toMatchObject({ status: "mined" });
   });
 
   it("keeps the current entry and surfaces an error when the decision write fails", async () => {
@@ -1439,7 +1440,7 @@ describe("MinerController review mode", () => {
     await Promise.all([first, second]);
 
     const review = states.at(-1)!.review;
-    expect(await store.wordDecisions.get("A")).toMatchObject({ status: "mined" });
+    expect(await store.wordDecisions.get("a")).toMatchObject({ status: "mined" });
     expect(review.current?.normalizedWord).toBe("B");
     expect(review.processed).toBe(1);
   });
@@ -1457,7 +1458,7 @@ describe("MinerController review mode", () => {
     const final = states.at(-1)!;
     expect(final.review.active).toBe(false);
     expect(final.review.status).toBe("idle");
-    expect(await store.wordDecisions.get("A")).toMatchObject({ status: "mined" });
+    expect(await store.wordDecisions.get("a")).toMatchObject({ status: "mined" });
     expect(final.query.decision).toBe("all");
   });
 
@@ -1474,6 +1475,47 @@ describe("MinerController review mode", () => {
     const reviewCallsBefore = worker.queryCalls.filter((call) => call.queryChannel === "review").length;
     await controller.startReview();
     expect(worker.queryCalls.filter((call) => call.queryChannel === "review").length).toBe(reviewCallsBefore);
+  });
+
+  it("review decisions share identity with list decisions on mixed-case words", async () => {
+    const { store, worker, controller, states } = setup();
+    await seedActive(store);
+    installPool(worker, [entry("nhk-entry", "NHK", 0)]);
+    await controller.init();
+
+    await controller.startReview();
+    expect(states.at(-1)!.review.current?.normalizedWord).toBe("NHK");
+
+    await controller.reviewDecision("known");
+
+    const final = states.at(-1)!;
+    expect(final.wordDecisions.size).toBe(1);
+    expect(final.wordDecisions.get("nhk")).toMatchObject({ status: "known" });
+    expect(await store.wordDecisions.list()).toEqual([
+      { normalizedWord: "nhk", status: "known", updatedAt: FIXED_NOW },
+    ]);
+
+    // The list path converges on the same canonical key instead of adding a second one.
+    await controller.setWordDecision("NHK", "mined");
+    expect(states.at(-1)!.wordDecisions.size).toBe(1);
+    expect(states.at(-1)!.wordDecisions.get("nhk")).toMatchObject({ status: "mined" });
+  });
+
+  it("removes a mixed-case queued word after a review decision", async () => {
+    const { store, worker, controller, states } = setup();
+    await seedActive(store);
+    installPool(worker, [entry("nhk-entry", "NHK", 0)]);
+    await controller.init();
+
+    controller.toggleQueued("NHK");
+    expect(states.at(-1)!.queue.normalizedWords).toEqual(["nhk"]);
+
+    await controller.startReview();
+    await controller.reviewDecision("known");
+
+    expect(states.at(-1)!.queue.normalizedWords).toEqual([]);
+    expect(states.at(-1)!.wordDecisions.get("nhk")).toMatchObject({ status: "known" });
+    expect(await store.wordDecisions.get("nhk")).toMatchObject({ status: "known" });
   });
 });
 

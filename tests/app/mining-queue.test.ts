@@ -449,6 +449,18 @@ describe("queue mode", () => {
     expect(fired?.includeNormalizedWords).toEqual(["a", "b"]);
     expect(lastState(controller).result?.items.map((item) => item.normalizedWord)).toEqual(["a", "b"]);
   });
+
+  it("orders mixed-case queued entries by their lowercase queue keys", async () => {
+    const env = await setup();
+    const controller = createMinerController(env.options());
+    await controller.init();
+    controller.toggleQueued("B");
+    env.worker.queryHandler = async () => result([withKnown(entry("c", "c", 0)), withKnown(entry("b-entry", "B", 1))]);
+
+    await controller.startQueueMode();
+
+    expect(lastState(controller).result?.items.map((item) => item.normalizedWord)).toEqual(["B", "c"]);
+  });
 });
 
 describe("queue decision integration", () => {
@@ -514,5 +526,18 @@ describe("queue decision integration", () => {
     const state = lastState(controller);
     expect(state.queue.normalizedWords).toEqual(["b"]);
     expect(state.result?.items.map((item) => item.normalizedWord)).toEqual(["b"]);
+  });
+
+  it("removes a mixed-case queued word after a list-path decision", async () => {
+    const env = await setup();
+    const controller = createMinerController(env.options());
+    await controller.init();
+    controller.toggleQueued("NHK");
+
+    await controller.setWordDecision("NHK", "known");
+
+    const state = lastState(controller);
+    expect(state.queue.normalizedWords).toEqual([]);
+    expect(state.wordDecisions.get("nhk")?.status).toBe("known");
   });
 });

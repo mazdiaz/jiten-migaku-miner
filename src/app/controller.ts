@@ -73,10 +73,10 @@ interface UserStateSnapshot {
 }
 
 function orderByQueue(items: readonly EntryWithKnown[], queue: readonly string[]): EntryWithKnown[] {
-  const order = new Map(queue.map((word, index) => [word, index]));
+  const order = new Map(queue.map((word, index) => [word.toLocaleLowerCase(), index]));
   return [...items].sort((left, right) =>
-    (order.get(left.normalizedWord) ?? Number.MAX_SAFE_INTEGER) -
-      (order.get(right.normalizedWord) ?? Number.MAX_SAFE_INTEGER) ||
+    (order.get(left.normalizedWord.toLocaleLowerCase()) ?? Number.MAX_SAFE_INTEGER) -
+      (order.get(right.normalizedWord.toLocaleLowerCase()) ?? Number.MAX_SAFE_INTEGER) ||
     left.originalIndex - right.originalIndex,
   );
 }
@@ -347,12 +347,11 @@ class MinerControllerImpl implements MinerController {
   }
 
   async setWordDecision(normalizedWord: string, status: WordDecisionStatus | "unreviewed"): Promise<void> {
-    const normalized = normalizeText(normalizedWord).toLocaleLowerCase();
-    if (normalized.length === 0) {
+    if (normalizeText(normalizedWord).toLocaleLowerCase().length === 0) {
       throw new Error("Word decision requires a non-empty normalized word");
     }
     const epoch = this.userStateEpoch;
-    await this.applyWordDecision(normalized, status, epoch).catch((error: unknown) => {
+    await this.applyWordDecision(normalizedWord, status, epoch).catch((error: unknown) => {
       if (epoch !== this.userStateEpoch) return;
       this.setState({ errorMessage: `Word decision could not be saved: ${errorMessage(error)}` });
     });
@@ -968,23 +967,30 @@ class MinerControllerImpl implements MinerController {
     status: WordDecisionStatus | "unreviewed",
     epoch: number,
   ): Promise<void> {
+    // Single canonicalization choke point: every caller (list clicks, review
+    // triage) funnels raw words through here so persisted keys always use the
+    // canonical lowercase identity.
+    const canonical = normalizeText(normalizedWord).toLocaleLowerCase();
+    if (canonical.length === 0) {
+      throw new Error("Word decision requires a non-empty normalized word");
+    }
     await this.withUserStateLock(async () => {
       if (epoch !== this.userStateEpoch) return;
       if (status === "unreviewed") {
-        await this.storageOperation((store) => store.wordDecisions.remove(normalizedWord));
+        await this.storageOperation((store) => store.wordDecisions.remove(canonical));
         if (epoch !== this.userStateEpoch) return;
-        this.state.wordDecisions.delete(normalizedWord);
+        this.state.wordDecisions.delete(canonical);
       } else {
-        const decision: WordDecision = { normalizedWord, status, updatedAt: this.now() };
+        const decision: WordDecision = { normalizedWord: canonical, status, updatedAt: this.now() };
         await this.storageOperation((store) => store.wordDecisions.set(decision));
         if (epoch !== this.userStateEpoch) return;
-        this.state.wordDecisions.set(normalizedWord, decision);
+        this.state.wordDecisions.set(canonical, decision);
       }
       // A successful decision removes the word from the mining queue; a failed
       // write leaves the queue untouched so the word can be retried.
       const queueDatasetId = this.state.queue.datasetId;
-      if (queueDatasetId !== null && this.state.queue.normalizedWords.includes(normalizedWord)) {
-        const remaining = this.state.queue.normalizedWords.filter((queued) => queued !== normalizedWord);
+      if (queueDatasetId !== null && this.state.queue.normalizedWords.includes(canonical)) {
+        const remaining = this.state.queue.normalizedWords.filter((queued) => queued !== canonical);
         this.state.queue = { ...this.state.queue, normalizedWords: remaining };
         this.sessionQueue.save({ version: 1, datasetId: queueDatasetId, normalizedWords: remaining });
       }

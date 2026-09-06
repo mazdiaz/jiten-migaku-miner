@@ -322,11 +322,16 @@ export function createRenderer(dom: DomMap): Renderer {
       return;
     }
     const queueMode = state.queue.mode === "queue";
+    // Queue contents are canonical lowercase keys; imported entries keep their
+    // original case, so compare on the entry's lowercase identity.
     const queued = new Set(state.queue.normalizedWords);
     const startIndex = state.result?.startIndex ?? 1;
     const fragment = document.createDocumentFragment();
     items.forEach((entry, index) => fragment.appendChild(
-      renderEntryNode(entry, startIndex + index, state.view, { queueMode, queued: queued.has(entry.normalizedWord) }),
+      renderEntryNode(entry, startIndex + index, state.view, {
+        queueMode,
+        queued: queued.has(entry.normalizedWord.toLocaleLowerCase()),
+      }),
     ));
     dom.resultsList.appendChild(fragment);
   };

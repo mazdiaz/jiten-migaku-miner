@@ -173,6 +173,68 @@ describe("worker include-list queries", () => {
   });
 });
 
+describe("worker canonical case-insensitive matching", () => {
+  it("matches known words case-insensitively", async () => {
+    const engine = new WorkerEngine();
+    await loadDataset(engine, [entry(0, "NHK", 5)]);
+
+    const response = await queryOnce(engine, queryRequest({ knownWords: ["nhk"] }));
+
+    if (response.type !== "query-result") throw new Error("expected query-result");
+    expect(response.result.items).toHaveLength(1);
+    const item = response.result.items[0]!;
+    expect(item.knownByMigaku).toBe(true);
+    expect(item.known).toBe(true);
+    expect(response.result.knownCount).toBe(1);
+  });
+
+  it("matches decisions case-insensitively", async () => {
+    const engine = new WorkerEngine();
+    await loadDataset(engine, [entry(0, "NHK", 5)]);
+
+    const response = await queryOnce(engine, queryRequest({
+      decisions: [["nhk", "mined"]],
+      query: queryState({ decision: "mined" }),
+    }));
+
+    if (response.type !== "query-result") throw new Error("expected query-result");
+    expect(response.result.items).toHaveLength(1);
+    expect(response.result.items[0]?.decision).toBe("mined");
+    expect(response.result.items[0]?.knownByDecision).toBe(false);
+    expect(response.result.totalEntries).toBe(1);
+  });
+
+  it("matches the include list case-insensitively", async () => {
+    const engine = new WorkerEngine();
+    await loadDataset(engine, [entry(0, "NHK", 5), entry(1, "他", 4)]);
+
+    const response = await queryOnce(engine, queryRequest({ includeNormalizedWords: ["nhk"] }));
+
+    if (response.type !== "query-result") throw new Error("expected query-result");
+    expect(response.result.items.map((item) => item.normalizedWord)).toEqual(["NHK"]);
+    expect(response.result.totalEntries).toBe(1);
+  });
+
+  it("keeps the mixed-case normalizedWord case-preserved in output", async () => {
+    const engine = new WorkerEngine();
+    await loadDataset(engine, [entry(0, "NHK", 5)]);
+
+    const response = await queryOnce(engine, queryRequest({
+      knownWords: ["nhk"],
+      decisions: [["nhk", "mined"]],
+      includeNormalizedWords: ["nhk"],
+    }));
+
+    if (response.type !== "query-result") throw new Error("expected query-result");
+    expect(response.result.items).toHaveLength(1);
+    const item = response.result.items[0]!;
+    expect(item.knownByMigaku).toBe(true);
+    expect(item.decision).toBe("mined");
+    expect(item.word).toBe("NHK");
+    expect(item.normalizedWord).toBe("NHK");
+  });
+});
+
 describe("worker include-list protocol", () => {
   it("parses an optional include list of non-empty strings", () => {
     const parsed = parseWorkerRequest({

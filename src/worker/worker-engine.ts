@@ -398,7 +398,16 @@ export class WorkerEngine {
     const knownByMigakuByIndex = new Map<number, boolean>();
     const decisionByIndex = new Map<number, WordDecisionStatus | "unreviewed">();
     const matching = new Set<number>();
-    const includeWords = request.includeNormalizedWords === undefined ? null : new Set(request.includeNormalizedWords);
+    // Canonical match key: lowercase(normalizeText(word)). Cache fields already
+    // store entries in this form, so lookups below compare canonical to canonical.
+    const canonicalWord = (word: string): string => normalizeText(word).toLocaleLowerCase();
+    const knownLower = new Set<string>();
+    for (const word of knownWords) knownLower.add(canonicalWord(word));
+    const decisionsLower = new Map<string, WordDecisionStatus>();
+    for (const [word, status] of decisions) decisionsLower.set(canonicalWord(word), status);
+    const includeLower = request.includeNormalizedWords === undefined
+      ? null
+      : new Set(request.includeNormalizedWords.map((word) => canonicalWord(word)));
     const search = normalizeText(request.query.search).toLocaleLowerCase();
     const minimumOccurrences = Number.isFinite(request.query.minOccurrences)
       ? Math.max(0, request.query.minOccurrences)
@@ -410,8 +419,8 @@ export class WorkerEngine {
       const fields = dataset.searchFields[index];
       if (value === undefined || fields === undefined) continue;
 
-      const knownByMigaku = knownWords.has(value.normalizedWord);
-      const decision = decisions.get(value.normalizedWord) ?? "unreviewed";
+      const knownByMigaku = knownLower.has(fields.normalizedWord);
+      const decision = decisionsLower.get(fields.normalizedWord) ?? "unreviewed";
       const knownByDecision = decision === "known";
       const known = knownByMigaku || knownByDecision;
       knownByMigakuByIndex.set(index, knownByMigaku);
@@ -425,7 +434,7 @@ export class WorkerEngine {
         fields.sentence.includes(search);
       const passes =
         searchMatches &&
-        (includeWords === null || includeWords.has(value.normalizedWord)) &&
+        (includeLower === null || includeLower.has(fields.normalizedWord)) &&
         !(request.query.hideKnown && known) &&
         !(request.query.hideKanaOnly && isKanaOnly(value.normalizedWord)) &&
         !(request.query.sentence === "has" && !value.hasSentence) &&
