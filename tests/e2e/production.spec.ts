@@ -102,9 +102,42 @@ test.describe("production build serving", () => {
   });
 
   test("vocabulary folders are not bundled into dist", async ({ request }) => {
-    for (const folder of ["WORDS%20TO%20MINE", "DL"]) {
+    for (const folder of [...DISCOVERY_FOLDERS, "DL"]) {
       const response = await request.get(`/dist/${folder}/`);
       expect(response.status(), folder).toBe(404);
     }
+  });
+
+  test("folder discovery auto-loads vocabulary from repository root in production", async ({ page }) => {
+    const autoCsv = [
+      "Word,Occurences,ExampleSentence,Definitions,ReadingFurigana",
+      "自動,5,\"これは**自動**の例文です。\",automatic,自動[じどう]",
+      "静か,3,\"とても**静か**な夜です。\",quiet,静か[しずか]",
+    ].join("\n");
+
+    const listingRequests: string[] = [];
+    await page.route("**/WORDS%20TO%20MINE/", async (route) => {
+      listingRequests.push(route.request().url());
+      await route.fulfill({
+        contentType: "text/html",
+        body: '<a href="vocab.csv">vocab.csv</a>',
+      });
+    });
+    await page.route("**/vocab.csv", async (route) => {
+      if (route.request().method() === "HEAD") {
+        await route.fulfill({
+          headers: { "Last-Modified": "Thu, 03 Sep 2026 00:00:00 GMT" },
+        });
+        return;
+      }
+      await route.fulfill({ contentType: "text/csv", body: autoCsv });
+    });
+
+    await page.goto("/dist/");
+
+    await expect(page.locator("#resultsList .mining-entry")).toHaveCount(2);
+    await expect(page.locator(".mining-entry .target-word").first()).toHaveText("自動");
+    await expect(page.locator("#jitenStatus")).toContainText("vocab.csv (auto)");
+    expect(listingRequests).toEqual([`${SERVER}/WORDS%20TO%20MINE/`]);
   });
 });

@@ -1,5 +1,6 @@
 @echo off
 setlocal
+chcp 65001 >nul
 cd /d "%~dp0"
 where npm >nul 2>nul
 if errorlevel 1 (
@@ -19,5 +20,6 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
-start "" "http://127.0.0.1:8920/"
-python -m http.server 8920 --bind 127.0.0.1 --directory dist
+start "" "http://127.0.0.1:8920/dist/"
+echo Serving repository root — vocabulary folders are discoverable; browser access is loopback only.
+python -m http.server 8920 --bind 127.0.0.1 --directory .

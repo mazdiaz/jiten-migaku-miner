@@ -21,11 +21,11 @@ async function discoverFolderSources(controller: ReturnType<typeof createMinerCo
     text: () => source.text(),
   });
   if (latest.dataset === null) {
-    const csv = await folder.newest("WORDS TO MINE", ".csv");
+    const csv = await folder.newest("/WORDS TO MINE", ".csv");
     if (csv !== null) await controller.importJiten(asAuto(csv));
   }
   if (latest.knownWords.size === 0) {
-    const txt = await folder.newest("MIGAKU KNOWN WORDS", ".txt");
+    const txt = await folder.newest("/MIGAKU KNOWN WORDS", ".txt");
     if (txt !== null) await controller.importKnown(asAuto(txt));
   }
 }

@@ -19,14 +19,16 @@ Open `http://127.0.0.1:8920/`.
 
 ## Quick start (end user, Windows)
 
-Run `start-miner.bat`. It verifies `npm` and `python` are installed, builds the production bundle (`npm run build`), opens `http://127.0.0.1:8920/`, and serves the `dist` directory on loopback. If the build fails, the launcher stops before opening the browser.
+Run `start-miner.bat`. It verifies `npm` and `python` are installed, builds the production bundle (`npm run build`), serves the repository root on loopback, and opens `http://127.0.0.1:8920/dist/`. Because the server root is the repository itself, the optional `WORDS TO MINE` / `MIGAKU KNOWN WORDS` folder discovery works without copying vocabulary files anywhere; the built app in `dist/` stays free of them. Browser access is loopback only. If the build fails, the launcher stops before opening the browser.
 
 Manual equivalent on any platform:
 
 ```text
 npm run build
-python -m http.server 8920 --bind 127.0.0.1 --directory dist
+python -m http.server 8920 --bind 127.0.0.1 --directory .
 ```
+
+Then open `http://127.0.0.1:8920/dist/`.
 
 ## Commands
 
@@ -37,6 +39,7 @@ python -m http.server 8920 --bind 127.0.0.1 --directory dist
 | `npm run typecheck` | `tsc --noEmit` only |
 | `npm test` | Vitest unit/repository suites (domain, storage, worker, app, UI) |
 | `npm run test:e2e` | Playwright browser suites (`tests/e2e`) |
+| `npm run test:e2e:prod` | Playwright production-serving suite against the real build output |
 | `npm run check` | Typecheck + full unit suite + production build |
 
 Playwright browsers: run `npx playwright install chromium` once after installing dependencies.
@@ -47,7 +50,7 @@ Playwright browsers: run `npx playwright install chromium` once after installing
 
 ## Storage and privacy
 
-- All imported data stays in the browser. Network access is limited to optional same-origin folder discovery (`WORDS TO MINE/*.csv`, `MIGAKU KNOWN WORDS/*.txt`) when the page is served over HTTP(S).
+- All imported data stays in the browser. Network access is limited to optional same-origin folder discovery (`/WORDS TO MINE/*.csv`, `/MIGAKU KNOWN WORDS/*.txt` at the server root) when the page is served over HTTP(S). Under the launcher this is same-origin and loopback-only (`127.0.0.1`); the production bundle in `dist/` contains no vocabulary files, and discovery never reads anything outside the serving root.
 - Datasets, known-word sets, and preferences are stored in IndexedDB (database `jiten-migaku-miner`, versioned schema). If IndexedDB is unavailable, the app falls back to an in-memory store and shows a visible warning that data will be lost on reload.
 - "Clear saved data…" (import panel) asks for confirmation, then removes all stored datasets, known-word sets, preferences, legacy `jitenMiner.v1` / `jitenMiner.page` keys, and the migration marker from this browser.
 - Migration from the old single-file app is automatic: on first launch, `jitenMiner.v1` and `jitenMiner.page` are read (never deleted), migrated into versioned IndexedDB records, and a `jitenMiner.migration` marker is written. If migration fails, legacy keys are preserved and a warning is shown.
@@ -81,6 +84,7 @@ Key behaviors:
 - `tests/e2e/miner.spec.ts` — Playwright workflows: import, filters, toggles, pagination, known words, reload restoration, clear-data, folder auto-load.
 - `tests/e2e/performance.spec.ts` — generates a deterministic 100,000-row CSV via `node tests/fixtures/generate-100k.mjs` into a temp directory, imports it, and asserts bounded DOM while scrolling.
 - `tests/e2e/compatibility.spec.ts` — legacy-path redirect and root launcher behavior.
+- `tests/e2e/production.spec.ts` — production-serving smoke suite (`npm run test:e2e:prod`): boots the real build output, verifies assets, and asserts vocabulary folders are neither bundled into `dist/` nor fetched from it (discovery resolves against the repository root).
 
 ## Adding adapters
 
