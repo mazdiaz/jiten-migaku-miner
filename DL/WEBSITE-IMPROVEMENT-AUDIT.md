@@ -257,18 +257,18 @@ No framework rewrite is recommended. Prefer focused changes over broad restructu
 
 ## Phase 6: Strengthen Tests And Delivery
 
-- [ ] Repair backup negative tests to start from a complete valid baseline, mutate one field, and assert the intended validation message/field.
-- [ ] Add delayed-write concurrency tests for clear, restore, decisions, preferences, and dataset changes.
-- [ ] Add mobile layout and keyboard-focus regressions.
-- [ ] Add deep-scroll, row-shrink, and resize regressions.
-- [ ] Add multi-dataset IndexedDB chunk-boundary coverage.
-- [ ] Test the production build and actual static-serving path, not only the development server.
-- [ ] Verify worker import/query and legacy redirect behavior against production output.
-- [ ] Fix or document launcher folder discovery: the launcher serves `dist`, while advertised vocabulary folders live outside it.
-- [ ] Do not silently bundle private vocabulary files into distributable builds when fixing folder discovery.
-- [ ] Add browser coverage beyond desktop Chromium for browsers the project claims to support.
-- [ ] Align documented and declared Node requirements with installed tooling.
-- [ ] Consider removing `passWithNoTests: true` and disabling existing-server reuse in CI.
+- [x] Repair backup negative tests to start from a complete valid baseline, mutate one field, and assert the intended validation message/field. (verified: complete-baseline+single-mutation rewrite, 15 vacuous tests repaired / da38539)
+- [x] Add delayed-write concurrency tests for clear, restore, decisions, preferences, and dataset changes. (verified: delayed-store suites for clear/restore/decisions/preferences/imports / e79b74e 33f48dd)
+- [x] Add mobile layout and keyboard-focus regressions. (verified: mobile-layout.spec.ts + keyboard-focus specs / fbd6396 4a565d7)
+- [x] Add deep-scroll, row-shrink, and resize regressions. (verified: virtual-list estimate-change + shrink + resize guard regressions / 86b5e3f 937c105)
+- [x] Add multi-dataset IndexedDB chunk-boundary coverage. (verified: pagination-bounds regression, 40 chunks × 2 datasets / bc11d75)
+- [x] Test the production build and actual static-serving path, not only the development server. (verified: production suite over real dist, root-served / 59b10d6)
+- [x] Verify worker import/query and legacy redirect behavior against production output. (verified: prod worker import+decision round-trip + legacy redirect specs / 59b10d6)
+- [x] Fix or document launcher folder discovery: the launcher serves `dist`, while advertised vocabulary folders live outside it. (verified: root-serving launcher + origin-absolute discovery, prod interception spec / 6d5078c)
+- [x] Do not silently bundle private vocabulary files into distributable builds when fixing folder discovery. (verified: dist 404 assertions for vocab folders + DL / 59b10d6 6d5078c)
+- [x] Add browser coverage beyond desktop Chromium for browsers the project claims to support. (verified: firefox + webkit projects, dev 123/123 + prod 18/18; Edge = Chromium family not separately tested / e3f015a)
+- [x] Align documented and declared Node requirements with installed tooling. (verified: engines >=22.12.0, CI node 22, README/bat aligned / e3f015a)
+- [x] Consider removing `passWithNoTests: true` and disabling existing-server reuse in CI. (verified: removed + reuseExistingServer !CI / e3f015a)
 
 **Confirmed test gap:** many malformed-backup fixtures omit required `exportedAt`, so tests fail before reaching the validation branch they claim to exercise.
 
