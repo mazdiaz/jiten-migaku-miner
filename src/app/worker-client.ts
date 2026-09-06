@@ -297,6 +297,29 @@ class BrowserWorkerClient implements WorkerClient {
   async loadDataset(datasetId: string, chunks: AsyncIterable<readonly Entry[]>): Promise<void> {
     const requestId = this.requestId("load");
     const result = this.register<void>(requestId, "load", undefined, 0, datasetId);
+    // Mark the rejection handled while the loop below is blocked on the source
+    // iterator and the caller has not awaited `result` yet.
+    result.catch(() => {});
+
+    let rejected = false;
+    let rejectionReason: unknown;
+    let openRejectionGate: () => void = () => {};
+    const rejectionGate = new Promise<void>((resolve) => {
+      openRejectionGate = resolve;
+    });
+    void result.then(() => {}, (reason: unknown) => {
+      rejected = true;
+      rejectionReason = reason;
+      openRejectionGate();
+    });
+    const rejectionSignal = rejectionGate.then(() => ({ loadRejected: true } as const));
+    const ignore = (): void => {};
+    const iterator = chunks[Symbol.asyncIterator]();
+    const closeSource = (): void => {
+      const completion = iterator.return?.();
+      completion?.then(ignore, ignore);
+    };
+
     try {
       this.post({
         protocolVersion: WORKER_PROTOCOL_VERSION,
@@ -307,7 +330,15 @@ class BrowserWorkerClient implements WorkerClient {
       this.ensurePending(requestId);
 
       let chunkIndex = 0;
-      for await (const entries of chunks) {
+      while (!rejected) {
+        const nextPromise = iterator.next();
+        // Keep a late-settling next() from surfacing as an unhandled rejection
+        // once the rejection gate has already won the race.
+        nextPromise.then(ignore, ignore);
+        const outcome = await Promise.race([nextPromise, rejectionSignal]);
+        if ("loadRejected" in outcome) break;
+        if (outcome.done) break;
+        const entries = outcome.value;
         this.ensurePending(requestId);
         this.post({
           protocolVersion: WORKER_PROTOCOL_VERSION,
@@ -323,6 +354,11 @@ class BrowserWorkerClient implements WorkerClient {
         }
         this.ensurePending(requestId);
         chunkIndex += 1;
+      }
+
+      if (rejected) {
+        closeSource();
+        throw rejectionReason;
       }
 
       this.post({

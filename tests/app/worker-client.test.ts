@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { QueryResult, QueryState } from "../../src/domain/types";
+import type { Entry, QueryResult, QueryState } from "../../src/domain/types";
 import {
   createWorkerClient,
   type WorkerClientEvent,
@@ -222,6 +222,111 @@ describe("worker client", () => {
     expect(worker.messages.filter((message) => message.type === "load-chunk")).toHaveLength(1);
     expect(worker.messages.some((message) => message.type === "load-complete")).toBe(false);
     expect(worker.messages).toContainEqual(expect.objectContaining({ type: "cancel" }));
+  });
+
+  // Unhandled-rejection spying uses the Node process event because the test
+  // environment is "node" (vitest.config.ts) and the rejected promise is a
+  // plain JS promise created by the client, never routed through a window.
+  it("rejects worker errors mid-load promptly without unhandled rejection", async () => {
+    const worker = new FakeWorker();
+    const client = createWorkerClient(() => worker);
+
+    const unhandled: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on("unhandledRejection", onUnhandledRejection);
+    try {
+      let openGate: () => void = () => {};
+      const gate = new Promise<void>((resolve) => {
+        openGate = resolve;
+      });
+      async function* gatedSource(): AsyncIterable<readonly Entry[]> {
+        await gate;
+        yield [];
+      }
+
+      const loading = client.loadDataset("dataset-1", gatedSource());
+      const loadStart = worker.messages.find((message) => message.type === "load-start");
+      if (loadStart?.type !== "load-start") throw new Error("missing load-start request");
+      worker.emit({
+        protocolVersion: 1,
+        type: "error",
+        requestId: loadStart.requestId,
+        code: "invalid-chunk",
+        message: "load failed",
+      });
+
+      const outcome = await Promise.race([
+        loading.then(
+          () => ({ kind: "resolved" as const }),
+          (error) => ({ kind: "rejected" as const, error }),
+        ),
+        new Promise<{ kind: "timeout" }>((resolve) => setTimeout(() => resolve({ kind: "timeout" }), 50)),
+      ]);
+
+      expect(outcome.kind).toBe("rejected");
+      expect(outcome.kind === "rejected" ? outcome.error : undefined).toMatchObject({
+        name: "WorkerClientError",
+        code: "invalid-chunk",
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(unhandled).toHaveLength(0);
+    } finally {
+      process.off("unhandledRejection", onUnhandledRejection);
+    }
+  });
+
+  it("stops consuming the source iterator after a mid-load failure", async () => {
+    const worker = new FakeWorker();
+    const client = createWorkerClient(() => worker);
+
+    let nextCalls = 0;
+    let returnInvoked = false;
+    let openGate: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      openGate = resolve;
+    });
+    async function* trackedSource(): AsyncIterable<readonly Entry[]> {
+      try {
+        nextCalls += 1;
+        await gate;
+        yield [];
+        nextCalls += 1;
+        yield [];
+        nextCalls += 1;
+        yield [];
+      } finally {
+        returnInvoked = true;
+      }
+    }
+
+    const loading = client.loadDataset("dataset-1", trackedSource());
+    const loadStart = worker.messages.find((message) => message.type === "load-start");
+    if (loadStart?.type !== "load-start") throw new Error("missing load-start request");
+    worker.emit({
+      protocolVersion: 1,
+      type: "error",
+      requestId: loadStart.requestId,
+      code: "invalid-chunk",
+      message: "load failed",
+    });
+
+    const outcome = await Promise.race([
+      loading.then(
+        () => ({ kind: "resolved" as const }),
+        (error) => ({ kind: "rejected" as const, error }),
+      ),
+      new Promise<{ kind: "timeout" }>((resolve) => setTimeout(() => resolve({ kind: "timeout" }), 50)),
+    ]);
+    expect(outcome.kind).toBe("rejected");
+
+    openGate();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    expect(nextCalls).toBeLessThanOrEqual(2);
+    expect(returnInvoked).toBe(true);
   });
 
   it("rejects malformed load acknowledgements instead of leaving load pending", async () => {
