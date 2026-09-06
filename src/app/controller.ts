@@ -108,8 +108,9 @@ class MinerControllerImpl implements MinerController {
   private warningMessage: string | null = null;
   private fallbackWarning: string | null = null;
   private persistentStore: AppStore | null = null;
-  // Imports hold importLock; user-state mutations hold userStateLock; only
-  // importKnown nests userStateLock inside importLock.
+  // Imports hold importLock; user-state mutations hold userStateLock; import
+  // commit sections and clearSavedData nest userStateLock inside importLock,
+  // so nothing ever acquires importLock while holding userStateLock.
   private importLock: Promise<unknown> = Promise.resolve();
   private userStateLock: Promise<unknown> = Promise.resolve();
   private userStateEpoch = 0;
@@ -205,7 +206,7 @@ class MinerControllerImpl implements MinerController {
       }
 
       activationAttempted = true;
-      committed = await this.withImportLock(async () => {
+      committed = await this.withImportLock(() => this.withUserStateLock(async () => {
         await this.activateAndVerify(dataset);
         if (generation !== this.importGeneration) return false;
         this.state.dataset = dataset;
@@ -222,7 +223,7 @@ class MinerControllerImpl implements MinerController {
         this.setState({ status: "ready", errorMessage: this.warningMessage });
         await this.persistPreferences();
         return true;
-      });
+      }));
       if (committed) {
         await this.runQuery();
         return;
@@ -628,7 +629,7 @@ class MinerControllerImpl implements MinerController {
   }
 
   async clearSavedData(): Promise<void> {
-    await this.withUserStateLock(async () => {
+    await this.withImportLock(() => this.withUserStateLock(async () => {
       this.userStateEpoch += 1;
       this.importGeneration += 1;
       this.queryGeneration += 1;
@@ -662,7 +663,7 @@ class MinerControllerImpl implements MinerController {
         .trim() || null;
       this.state.errorMessage = this.warningMessage;
       this.publish();
-    });
+    }));
   }
 
   private async initialize(): Promise<void> {

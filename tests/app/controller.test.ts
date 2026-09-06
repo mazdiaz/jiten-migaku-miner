@@ -1897,6 +1897,50 @@ describe("MinerController user-state serialization", () => {
     expect(await delayed.store.wordDecisions.list()).toEqual([]);
   });
 
+  it("clear waits for an in-flight import commit and leaves no dataset durable", async () => {
+    const { inner, delayed, controller, states } = delayedSetup();
+    await controller.init();
+
+    delayed.gate("datasets.activate");
+    const importPromise = controller.importJiten({ name: "new.csv", text: async () => "Word\n新しい" });
+    await delayed.started("datasets.activate");
+
+    const clearPromise = controller.clearSavedData();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    // Clear must be parked behind the import's locks, not run to completion
+    // while the commit is mid-flight.
+    let clearCompleted = false;
+    void clearPromise.then(() => { clearCompleted = true; });
+    await flushMicrotasks();
+    expect(clearCompleted).toBe(false);
+
+    delayed.release("datasets.activate");
+    await Promise.all([importPromise, clearPromise]);
+
+    expect(await inner.datasets.list()).toEqual([]);
+    expect(states.at(-1)!.dataset).toBeNull();
+    expect(states.at(-1)!.status).toBe("empty");
+  });
+
+  it("import commit user-state writes cannot resurrect durable records after clear", async () => {
+    const { inner, delayed, controller, states } = delayedSetup();
+    await controller.init();
+
+    delayed.gate("preferences.save");
+    const importPromise = controller.importJiten({ name: "new.csv", text: async () => "Word\n新しい" });
+    await delayed.started("preferences.save");
+
+    const clearPromise = controller.clearSavedData();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    delayed.release("preferences.save");
+    await Promise.all([importPromise, clearPromise]);
+
+    expect(await inner.datasets.list()).toEqual([]);
+    expect(await inner.preferences.load()).toBeNull();
+    expect(states.at(-1)!.dataset).toBeNull();
+    expect(states.at(-1)!.status).toBe("empty");
+  });
+
   it("restore is atomic relative to queued decisions; rollback is not overwritten", async () => {
     const { inner, delayed, controller, states } = delayedSetup();
     await seedActive(inner);
