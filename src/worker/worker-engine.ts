@@ -36,7 +36,7 @@ interface WindowCache {
   knownCount: number;
 }
 
-interface DatasetState {
+export interface DatasetState {
   loadRequestId: string;
   entries: Entry[];
   searchFields: SearchFields[];
@@ -50,6 +50,11 @@ const EMPTY_SORT_INDEXES: Record<QueryState["sort"], number[]> = {
   "occ-asc": [],
   original: [],
 };
+
+// Maximum number of complete datasets retained in memory at once. The
+// active dataset is never evicted, so retention can only be exceeded by
+// background datasets.
+const WORKER_DATASET_RETENTION_LIMIT = 3;
 
 function createDatasetState(loadRequestId: string): DatasetState {
   return {
@@ -131,6 +136,10 @@ export class WorkerEngine {
   private activeDatasetId: string | null = null;
   private windowCache: WindowCache | null = null;
   private disposed = false;
+  // Monotonic counter bumped whenever the dataset population changes
+  // (loadComplete/dispose). In-flight queries capture it at entry and
+  // refuse to publish results or write the cache afterwards.
+  private datasetGeneration = 0;
 
   async importJiten(requestId: string, name: string, text: string, send: SendResponse): Promise<void> {
     this.ensureUsable();
@@ -259,6 +268,8 @@ export class WorkerEngine {
     this.loadRequests.delete(requestId);
     this.activeDatasetId = datasetId;
     this.windowCache = null;
+    this.datasetGeneration += 1;
+    this.evictStaleDatasets();
   }
 
   getDatasetEntryCount(datasetId: string): number {
@@ -267,6 +278,7 @@ export class WorkerEngine {
     if (dataset === undefined || !dataset.complete) {
       throw new WorkerEngineError("dataset-not-ready", `Dataset is not complete: ${datasetId}`);
     }
+    this.refreshDatasetRecency(datasetId, dataset);
     return dataset.entries.length;
   }
 
@@ -275,6 +287,7 @@ export class WorkerEngine {
     this.activeOperations.add(request.requestId);
     try {
       if (this.isCancelled(request.requestId)) return;
+      const generation = this.datasetGeneration;
       const dataset = this.datasets.get(request.datasetId);
       if (dataset === undefined) {
         throw new WorkerEngineError("dataset-not-found", `Dataset not found: ${request.datasetId}`);
@@ -282,12 +295,12 @@ export class WorkerEngine {
       if (!dataset.complete) {
         throw new WorkerEngineError("dataset-not-ready", `Dataset is not complete: ${request.datasetId}`);
       }
+      this.refreshDatasetRecency(request.datasetId, dataset);
 
       const knownWords = new Set(request.knownWords);
       const decisions = new Map(request.decisions);
-      const cacheable = request.query.pageSize === "all";
-      const signature = cacheable ? windowCacheSignature(request, knownWords, decisions) : "";
-      const cache = cacheable ? this.windowCache : null;
+      const signature = windowCacheSignature(request, knownWords, decisions);
+      const cache = this.windowCache;
 
       let orderedIndexes: number[];
       let knownByMigakuByIndex: Map<number, boolean>;
@@ -305,9 +318,8 @@ export class WorkerEngine {
         knownByMigakuByIndex = scan.knownByMigakuByIndex;
         decisionByIndex = scan.decisionByIndex;
         knownCount = scan.knownCount;
-        if (cacheable) {
-          this.windowCache = { signature, orderedIndexes, knownByMigakuByIndex, decisionByIndex, knownCount };
-        }
+        if (generation !== this.datasetGeneration) return;
+        this.windowCache = { signature, orderedIndexes, knownByMigakuByIndex, decisionByIndex, knownCount };
       }
 
       const entryWithMetadata = (entryIndex: number, value: Entry): EntryWithKnown => {
@@ -334,6 +346,7 @@ export class WorkerEngine {
           if (value !== undefined) items.push(entryWithMetadata(entryIndex, value));
         }
         if (this.isCancelled(request.requestId)) return;
+        if (generation !== this.datasetGeneration) return;
 
         send({
           protocolVersion: WORKER_PROTOCOL_VERSION,
@@ -355,28 +368,28 @@ export class WorkerEngine {
         return;
       }
 
-      const ordered: EntryWithKnown[] = [];
-      for (let offset = 0; offset < orderedIndexes.length; offset += 1) {
-        const entryIndex = orderedIndexes[offset];
+      // Domain pagination over the ordered index list yields the exact page
+      // slice plus every aggregate (page/totalPages/totalEntries/bounds),
+      // so only the requested slice gets decorated below.
+      const pagination = paginateEntries(orderedIndexes, request.query.page, request.query.pageSize);
+      const items: EntryWithKnown[] = [];
+      for (let offset = 0; offset < pagination.items.length; offset += 1) {
+        const entryIndex = pagination.items[offset];
         if (entryIndex === undefined) continue;
         const value = dataset.entries[entryIndex];
-        if (value !== undefined) ordered.push(entryWithMetadata(entryIndex, value));
+        if (value !== undefined) items.push(entryWithMetadata(entryIndex, value));
         if ((offset + 1) % WORKER_IMPORT_CHUNK_SIZE === 0 && await this.chunkFinished(request.requestId)) return;
       }
       if (await this.chunkFinished(request.requestId)) return;
-
-      const result = {
-        ...paginateEntries(ordered, request.query.page, request.query.pageSize),
-        knownCount,
-      };
       if (this.isCancelled(request.requestId)) return;
+      if (generation !== this.datasetGeneration) return;
 
       send({
         protocolVersion: WORKER_PROTOCOL_VERSION,
         type: "query-result",
         requestId: request.requestId,
         datasetId: request.datasetId,
-        result,
+        result: { ...pagination, items, knownCount, windowed: false },
       });
     } finally {
       this.activeOperations.delete(request.requestId);
@@ -384,7 +397,7 @@ export class WorkerEngine {
     }
   }
 
-  private async scanDataset(
+  protected async scanDataset(
     request: QueryRequest,
     dataset: DatasetState,
     knownWords: ReadonlySet<string>,
@@ -474,6 +487,7 @@ export class WorkerEngine {
 
   dispose(): void {
     this.disposed = true;
+    this.datasetGeneration += 1;
     this.cancelledRequests.clear();
     this.activeOperations.clear();
     this.loadRequests.clear();
@@ -481,6 +495,25 @@ export class WorkerEngine {
     this.staging.clear();
     this.activeDatasetId = null;
     this.windowCache = null;
+  }
+
+  // Map insertion order doubles as the LRU recency order: deleting and
+  // re-setting a dataset id moves it to the most-recent position.
+  private refreshDatasetRecency(datasetId: string, dataset: DatasetState): void {
+    if (!this.datasets.has(datasetId)) return;
+    this.datasets.delete(datasetId);
+    this.datasets.set(datasetId, dataset);
+  }
+
+  private evictStaleDatasets(): void {
+    let excess = this.datasets.size - WORKER_DATASET_RETENTION_LIMIT;
+    if (excess <= 0) return;
+    for (const datasetId of this.datasets.keys()) {
+      if (excess <= 0) break;
+      if (datasetId === this.activeDatasetId) continue;
+      this.datasets.delete(datasetId);
+      excess -= 1;
+    }
   }
 
   private ensureUsable(): void {

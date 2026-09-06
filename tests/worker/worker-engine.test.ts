@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import type { Entry, QueryState } from "../../src/domain/types";
+import type { Entry, QueryState, WordDecisionStatus } from "../../src/domain/types";
 import { queryEntries } from "../../src/domain/query";
 import type { WorkerResponse, QueryRequest } from "../../src/worker/protocol";
-import { WorkerEngine } from "../../src/worker/worker-engine";
+import { WorkerEngine, type DatasetState } from "../../src/worker/worker-engine";
 
 function entry(index: number, word = `word-${index}`, occurrences = index): Entry {
   return {
@@ -49,6 +49,29 @@ function queryRequest(overrides: Partial<QueryRequest> = {}): QueryRequest {
 function jitenCsv(rowCount: number): string {
   const rows = Array.from({ length: rowCount }, (_, index) => `語${index},${index},,,`);
   return ["Word,Occurences,ExampleSentence,Definitions,ReadingFurigana", ...rows].join("\n");
+}
+
+function loadDataset(engine: WorkerEngine, datasetId: string, entries: Entry[]): void {
+  const requestId = `load-${datasetId}`;
+  engine.loadStart(datasetId, requestId);
+  for (let offset = 0, chunkIndex = 0; offset < entries.length; offset += 2000, chunkIndex += 1) {
+    engine.loadChunk(datasetId, chunkIndex, entries.slice(offset, offset + 2000), requestId);
+  }
+  engine.loadComplete(datasetId, requestId);
+}
+
+class ScanCountingEngine extends WorkerEngine {
+  scanCalls = 0;
+
+  protected override async scanDataset(
+    request: QueryRequest,
+    dataset: DatasetState,
+    knownWords: ReadonlySet<string>,
+    decisions: ReadonlyMap<string, WordDecisionStatus>,
+  ) {
+    this.scanCalls += 1;
+    return super.scanDataset(request, dataset, knownWords, decisions);
+  }
 }
 
 describe("WorkerEngine", () => {
@@ -585,5 +608,132 @@ describe("WorkerEngine", () => {
     expect(engineResult?.knownCount).toBe(domainResult.knownCount);
     expect(engineResult?.startIndex).toBe(domainResult.startIndex);
     expect(engineResult?.endIndex).toBe(domainResult.endIndex);
+  });
+
+  it("numeric pagination reuses cached ordered indexes across pages", async () => {
+    const engine = new ScanCountingEngine();
+    loadDataset(engine, "dataset-1", Array.from({ length: 120 }, (_, index) => entry(index)));
+
+    const first: WorkerResponse[] = [];
+    await engine.query(
+      queryRequest({ requestId: "np-1", query: queryState({ pageSize: 50, page: 1 }) }),
+      (response) => first.push(response),
+    );
+    const second: WorkerResponse[] = [];
+    await engine.query(
+      queryRequest({ requestId: "np-2", query: queryState({ pageSize: 50, page: 2 }) }),
+      (response) => second.push(response),
+    );
+
+    const firstIds = first[0]?.type === "query-result" ? first[0].result.items.map((item) => item.id) : null;
+    const secondIds = second[0]?.type === "query-result" ? second[0].result.items.map((item) => item.id) : null;
+    expect(firstIds?.[0]).toBe("entry-0");
+    expect(secondIds).toEqual(Array.from({ length: 50 }, (_, index) => `entry-${50 + index}`));
+    expect(engine.scanCalls).toBe(1);
+
+    const changed: WorkerResponse[] = [];
+    await engine.query(
+      queryRequest({ requestId: "np-3", knownWords: ["word-3"], query: queryState({ pageSize: 50, page: 2 }) }),
+      (response) => changed.push(response),
+    );
+    expect(engine.scanCalls).toBe(2);
+  });
+
+  it("numeric pagination decorates only the requested page", async () => {
+    const engine = new WorkerEngine();
+    loadDataset(engine, "dataset-1", Array.from({ length: 10000 }, (_, index) => entry(index)));
+
+    const responses: WorkerResponse[] = [];
+    await engine.query(
+      queryRequest({ requestId: "big-page-3", query: queryState({ pageSize: 50, page: 3 }) }),
+      (response) => responses.push(response),
+    );
+
+    const result = responses[0]?.type === "query-result" ? responses[0].result : null;
+    expect(result?.items).toHaveLength(50);
+    expect(result?.items.map((item) => item.id)).toEqual(Array.from({ length: 50 }, (_, index) => `entry-${100 + index}`));
+    expect(result?.page).toBe(3);
+    expect(result?.totalPages).toBe(200);
+    expect(result?.totalEntries).toBe(10000);
+    expect(result?.startIndex).toBe(101);
+    expect(result?.endIndex).toBe(150);
+    expect(result?.windowed).toBe(false);
+  });
+
+  it("stale query does not publish or cache after dataset replacement", async () => {
+    const engine = new WorkerEngine();
+    loadDataset(engine, "dataset-1", Array.from({ length: 4001 }, (_, index) => entry(index, `old-${index}`)));
+
+    const staleResponses: WorkerResponse[] = [];
+    const staleQuery = engine.query(
+      queryRequest({
+        requestId: "stale",
+        query: queryState({ pageSize: "all" }),
+        window: { start: 0, size: 10 },
+      }),
+      (response) => staleResponses.push(response),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    loadDataset(engine, "dataset-1", [entry(9999, "新しい")]);
+    await staleQuery;
+
+    expect(staleResponses.some((response) => response.type === "query-result")).toBe(false);
+
+    const freshResponses: WorkerResponse[] = [];
+    await engine.query(
+      queryRequest({
+        requestId: "fresh",
+        query: queryState({ pageSize: "all" }),
+        window: { start: 0, size: 10 },
+      }),
+      (response) => freshResponses.push(response),
+    );
+    expect(
+      freshResponses[0]?.type === "query-result" ? freshResponses[0].result.items.map((item) => item.id) : null,
+    ).toEqual(["entry-9999"]);
+  });
+
+  it("retention evicts beyond three datasets and keeps the active dataset", async () => {
+    const engine = new WorkerEngine();
+    loadDataset(engine, "dataset-a", [entry(0, "a")]);
+    loadDataset(engine, "dataset-b", [entry(1, "b")]);
+    loadDataset(engine, "dataset-c", [entry(2, "c")]);
+    loadDataset(engine, "dataset-d", [entry(3, "d")]);
+
+    await expect(
+      engine.query(queryRequest({ requestId: "evicted", datasetId: "dataset-a" }), () => {}),
+    ).rejects.toMatchObject({ code: "dataset-not-found" });
+
+    for (const datasetId of ["dataset-b", "dataset-c", "dataset-d"]) {
+      const responses: WorkerResponse[] = [];
+      await engine.query(
+        queryRequest({ requestId: `kept-${datasetId}`, datasetId }),
+        (response) => responses.push(response),
+      );
+      expect(responses).toHaveLength(1);
+    }
+  });
+
+  it("repeated dataset imports keep the complete dataset count bounded", async () => {
+    const engine = new WorkerEngine();
+    for (let index = 1; index <= 5; index += 1) {
+      loadDataset(engine, `dataset-${index}`, [entry(index, `word-${index}`)]);
+    }
+
+    await expect(
+      engine.query(queryRequest({ requestId: "gone-1", datasetId: "dataset-1" }), () => {}),
+    ).rejects.toMatchObject({ code: "dataset-not-found" });
+    await expect(
+      engine.query(queryRequest({ requestId: "gone-2", datasetId: "dataset-2" }), () => {}),
+    ).rejects.toMatchObject({ code: "dataset-not-found" });
+
+    for (const datasetId of ["dataset-3", "dataset-4", "dataset-5"]) {
+      const responses: WorkerResponse[] = [];
+      await engine.query(
+        queryRequest({ requestId: `kept-${datasetId}`, datasetId }),
+        (response) => responses.push(response),
+      );
+      expect(responses).toHaveLength(1);
+    }
   });
 });

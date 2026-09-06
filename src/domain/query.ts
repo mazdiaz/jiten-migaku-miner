@@ -81,7 +81,7 @@ export function sortEntries(
   return sorted;
 }
 
-function emptyResult(pageSize: PageSize, windowed = false): QueryResult {
+function emptyResult<T>(pageSize: PageSize, windowed = false): PaginatedEntries<T> {
   return {
     items: [],
     page: 0,
@@ -101,17 +101,21 @@ function windowBounds(totalEntries: number, window: QueryWindow): { start: numbe
   return { start, end: Math.min(totalEntries, start + size) };
 }
 
-export function paginateEntries(
-  entries: readonly EntryWithKnown[],
+export type PaginatedEntries<T> = Omit<QueryResult, "items"> & { items: T[] };
+
+export function paginateEntries<T>(
+  entries: readonly T[],
   page: number,
   pageSize: PageSize,
   window?: QueryWindow,
-): QueryResult {
+): PaginatedEntries<T> {
   const source = Array.from(entries);
   const totalEntries = source.length;
-  if (totalEntries === 0) return emptyResult(pageSize, pageSize === "all" && window !== undefined);
+  if (totalEntries === 0) return emptyResult<T>(pageSize, pageSize === "all" && window !== undefined);
 
-  const knownCount = source.reduce((count, entry) => count + (entry.known ? 1 : 0), 0);
+  // Item-type-agnostic so callers may paginate raw index lists; the worker
+  // passes entry indexes and overrides knownCount from its own scan.
+  const knownCount = source.reduce((count, entry) => count + ((entry as EntryWithKnown).known ? 1 : 0), 0);
   if (pageSize === "all") {
     if (window !== undefined) {
       const bounds = windowBounds(totalEntries, window);
