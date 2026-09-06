@@ -625,26 +625,34 @@ class MinerControllerImpl implements MinerController {
       this.userStateEpoch += 1;
       this.importGeneration += 1;
       this.queryGeneration += 1;
-      await this.storageOperation((store) => store.clearAll());
+      const clearFailures: string[] = [];
+      try {
+        await this.storageOperation((store) => store.clearAll());
+      } catch (error) {
+        clearFailures.push(`Saved data could not be fully cleared: ${errorMessage(error)}`);
+      }
       if (this.persistentStore !== null) {
         try {
           await this.persistentStore.clearAll();
         } catch (error) {
-          this.setWarning(`Saved data could not be cleared from persistent storage: ${errorMessage(error)}`);
+          clearFailures.push(`Saved data could not be cleared from persistent storage: ${errorMessage(error)}`);
         }
       }
       if (this.legacyStorage !== null) {
         try {
           clearLegacyData(this.legacyStorage);
         } catch (error) {
-          this.setWarning(`Legacy saved data could not be cleared: ${errorMessage(error)}`);
+          clearFailures.push(`Legacy saved data could not be cleared: ${errorMessage(error)}`);
         }
       }
       this.worker.dispose();
       this.sessionQueue.clear();
       this.state = createInitialAppState(this.state.persistence);
-      this.warningMessage = this.fallbackWarning;
-      this.state.errorMessage = this.fallbackWarning;
+      this.warningMessage = [this.fallbackWarning, ...clearFailures]
+        .filter((part): part is string => part !== null)
+        .join(" ")
+        .trim() || null;
+      this.state.errorMessage = this.warningMessage;
       this.publish();
     });
   }
@@ -656,6 +664,7 @@ class MinerControllerImpl implements MinerController {
       const migrationOptions = () => ({
         storage: this.legacyStorage!,
         store: this.store,
+        persistentStore: !this.storeWasProvided && this.state.persistence === "indexeddb",
         worker: this.worker,
         query: this.state.query,
         view: this.state.view,

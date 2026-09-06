@@ -15,6 +15,7 @@ export interface LegacyMigrationOptions {
   view: ViewState;
   now?: () => string;
   createId?: (kind: "media" | "known") => string;
+  persistentStore: boolean;
 }
 
 export interface LegacyMigrationResult {
@@ -301,7 +302,7 @@ export async function migrateLegacy(options: LegacyMigrationOptions): Promise<Le
       preferencesSaveAttempted = true;
       await options.store.preferences.save(migratedPreferences);
       await verifyPreferences(options.store, migratedPreferences);
-      writeMigrationMarker(options.storage, MIGRATION_VERSION);
+      if (options.persistentStore) writeMigrationMarker(options.storage, MIGRATION_VERSION);
 
       return { migrated: true, warning: null, storageFailure: false, page, dataset, knownWords };
     } catch (error) {

@@ -868,6 +868,24 @@ describe("MinerController", () => {
     expect(states.at(-1)?.errorMessage?.toLowerCase()).toContain("memory");
   });
 
+  it("reports partial clear failure in final state", async () => {
+    const failing = flakyAppStore(createMemoryAppStore(), () => true);
+    const controller = createMinerController({
+      store: failing,
+      worker: new FakeWorkerClient(),
+      legacyStorage: null,
+      sessionQueueStore: createSessionQueueStore(null),
+    });
+    const states: Readonly<AppState>[] = [];
+    controller.subscribe((state) => states.push(state));
+    await controller.init().catch(() => undefined);
+
+    await controller.clearSavedData();
+
+    expect(states.at(-1)?.wordDecisions.size).toBe(0);
+    expect(states.at(-1)?.errorMessage).toMatch(/could not be fully cleared/i);
+  });
+
   it("preserves a newer user query when candidate query failure rolls back import", async () => {
     const store = createMemoryAppStore();
     await seedActive(store);
@@ -923,7 +941,9 @@ describe("MinerController", () => {
     expect(states.at(-1)?.persistence).toBe("memory");
     expect(states.at(-1)?.dataset?.sourceName).toBe("legacy.csv");
     expect(states.at(-1)?.errorMessage?.toLowerCase()).toContain("memory");
-    expect(storage.getItem("jitenMiner.migration")).toBe("1");
+    // Memory fallback is not durable: no completion marker, so a later reload
+    // with working storage retries the migration instead of skipping it.
+    expect(storage.getItem("jitenMiner.migration")).toBeNull();
   });
 
   it("requests viewport windows for all-results queries and scrolls without status flashes", async () => {

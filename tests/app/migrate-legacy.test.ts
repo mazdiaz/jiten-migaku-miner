@@ -147,6 +147,7 @@ describe("legacy migration", () => {
       view,
       now: () => "2026-09-04T00:00:00.000Z",
       createId: (kind) => `migrated-${kind}`,
+      persistentStore: true,
     });
 
     expect(result.migrated).toBe(true);
@@ -179,6 +180,7 @@ describe("legacy migration", () => {
       query,
       view,
       createId: (kind) => `migrated-${kind}`,
+      persistentStore: false,
     });
 
     expect(result.migrated).toBe(false);
@@ -198,6 +200,7 @@ describe("legacy migration", () => {
       worker: new FakeWorkerClient(),
       query,
       view,
+      persistentStore: false,
     });
 
     expect(result.migrated).toBe(false);
@@ -225,6 +228,7 @@ describe("legacy migration", () => {
       worker: new FakeWorkerClient(),
       query,
       view,
+      persistentStore: true,
     });
 
     expect(result.warning).toContain("storage unavailable");
@@ -255,6 +259,7 @@ describe("legacy migration", () => {
       query,
       view,
       createId: (kind) => `migrated-${kind}`,
+      persistentStore: true,
     });
 
     expect(result.migrated).toBe(false);
@@ -264,6 +269,79 @@ describe("legacy migration", () => {
     expect(await store.knownWords.getActive()).toMatchObject({ id: "old-known", words: new Set(["犬"]) });
     expect(await store.preferences.load()).toEqual({ query: { ...query, page: 3 }, view, page: 3 });
     expect(storage.getItem("jitenMiner.migration")).toBeNull();
+  });
+
+  it("does not write the migration marker when the store is not persistent", async () => {
+    const storage = legacyStorage();
+    const store = createMemoryAppStore();
+
+    const result = await migrateLegacy({
+      storage,
+      store,
+      worker: new FakeWorkerClient(),
+      query,
+      view,
+      persistentStore: false,
+    });
+
+    expect(result.migrated).toBe(true);
+    expect(storage.getItem("jitenMiner.migration")).toBeNull();
+  });
+
+  it("writes the migration marker when the store is persistent", async () => {
+    const storage = legacyStorage();
+    const store = createMemoryAppStore();
+
+    const result = await migrateLegacy({
+      storage,
+      store,
+      worker: new FakeWorkerClient(),
+      query,
+      view,
+      persistentStore: true,
+    });
+
+    expect(result.migrated).toBe(true);
+    expect(storage.getItem("jitenMiner.migration")).toBe("1");
+  });
+
+  it("retries migration on a later reload with working storage after memory fallback", async () => {
+    const storage = legacyStorage();
+    const failingDurable = createMemoryAppStore();
+    failingDurable.datasets.stage = async () => { throw new Error("IndexedDB migration stage failed"); };
+
+    const durable = await migrateLegacy({
+      storage,
+      store: failingDurable,
+      worker: new FakeWorkerClient(),
+      query,
+      view,
+      persistentStore: true,
+    });
+    expect(durable.migrated).toBe(false);
+    expect(durable.storageFailure).toBe(true);
+    expect(storage.getItem("jitenMiner.migration")).toBeNull();
+
+    const fallback = await migrateLegacy({
+      storage,
+      store: createMemoryAppStore(),
+      worker: new FakeWorkerClient(),
+      query,
+      view,
+      persistentStore: false,
+    });
+    expect(fallback.migrated).toBe(true);
+    expect(storage.getItem("jitenMiner.migration")).toBeNull();
+
+    const retried = await migrateLegacy({
+      storage,
+      store: createMemoryAppStore(),
+      worker: new FakeWorkerClient(),
+      query,
+      view,
+      persistentStore: true,
+    });
+    expect(retried.migrated).toBe(true);
   });
 
   it("does not mark migration complete when legacy fields have invalid types", async () => {
@@ -277,6 +355,7 @@ describe("legacy migration", () => {
       worker: new FakeWorkerClient(),
       query,
       view,
+      persistentStore: false,
     });
 
     expect(result.migrated).toBe(false);
