@@ -307,6 +307,16 @@ body.review-open { overflow: hidden; }
 
 .review-entry .target-word { font-size: 1.6rem; }
 
+.review-error {
+  margin-top: 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-weight: 700;
+}
+
 .review-complete {
   display: grid;
   gap: 14px;

@@ -114,6 +114,9 @@ class MinerControllerImpl implements MinerController {
   private userStateLock: Promise<unknown> = Promise.resolve();
   private userStateEpoch = 0;
   private reviewBusy = false;
+  // Bumped whenever a review session ends (stopReview or dataset change);
+  // in-flight continuations compare their captured value to detect staleness.
+  private reviewGeneration = 0;
 
   constructor(options: MinerControllerOptions) {
     this.storeWasProvided = options.store !== undefined;
@@ -214,6 +217,8 @@ class MinerControllerImpl implements MinerController {
         this.sessionQueue.clear();
         this.viewportStart = 0;
         this.queryGeneration += 1;
+        // The dataset changed; a stale review card must not survive the commit.
+        if (this.state.review.active) this.stopReview();
         this.setState({ status: "ready", errorMessage: this.warningMessage });
         await this.persistPreferences();
         return true;
@@ -366,6 +371,7 @@ class MinerControllerImpl implements MinerController {
 
   stopReview(): void {
     if (!this.state.review.active) return;
+    this.reviewGeneration += 1;
     this.state.review = { ...EMPTY_REVIEW };
     this.publish();
   }
@@ -373,6 +379,7 @@ class MinerControllerImpl implements MinerController {
   async reviewDecision(status: WordDecisionStatus): Promise<void> {
     const review = this.state.review;
     if (!review.active || review.status !== "ready" || review.current === null || this.reviewBusy) return;
+    const generation = this.reviewGeneration;
     const word = review.current.normalizedWord;
     this.reviewBusy = true;
     this.state.review = { ...review, status: "loading", errorMessage: null };
@@ -381,7 +388,7 @@ class MinerControllerImpl implements MinerController {
     const epoch = this.userStateEpoch;
     try {
       await this.applyWordDecision(word, status, epoch);
-      if (!this.state.review.active) return;
+      if (generation !== this.reviewGeneration || !this.state.review.active) return;
       this.state.review = {
         ...this.state.review,
         processed: this.state.review.processed + 1,
@@ -390,7 +397,7 @@ class MinerControllerImpl implements MinerController {
       this.publish();
       await this.runReviewQuery();
     } catch (error) {
-      if (!this.state.review.active) return;
+      if (generation !== this.reviewGeneration || !this.state.review.active) return;
       this.state.review = {
         ...this.state.review,
         status: this.state.review.current === null ? "complete" : "ready",
@@ -625,6 +632,7 @@ class MinerControllerImpl implements MinerController {
       this.userStateEpoch += 1;
       this.importGeneration += 1;
       this.queryGeneration += 1;
+      this.reviewGeneration += 1;
       const clearFailures: string[] = [];
       try {
         await this.storageOperation((store) => store.clearAll());
@@ -923,6 +931,7 @@ class MinerControllerImpl implements MinerController {
   private async runReviewQuery(options: { captureInitial?: boolean } = {}): Promise<void> {
     const dataset = this.state.dataset;
     if (dataset === null || !this.state.review.active) return;
+    const generation = this.reviewGeneration;
     // Always ask for page 1: after a decision the current entry leaves the
     // unreviewed set, so the first remaining candidate shifts into page 1.
     const reviewQuery: QueryState = {
@@ -940,7 +949,7 @@ class MinerControllerImpl implements MinerController {
         query: reviewQuery,
         queryChannel: "review",
       });
-      if (!this.state.review.active) return;
+      if (generation !== this.reviewGeneration || !this.state.review.active) return;
       const current = result.items[0] ?? null;
       this.state.review = {
         ...this.state.review,
@@ -952,7 +961,7 @@ class MinerControllerImpl implements MinerController {
       };
       this.publish();
     } catch (error) {
-      if (!this.state.review.active) return;
+      if (generation !== this.reviewGeneration || !this.state.review.active) return;
       this.state.review = {
         ...this.state.review,
         status: "error",

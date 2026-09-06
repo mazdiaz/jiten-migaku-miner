@@ -555,6 +555,46 @@ describe("review mode ui", () => {
     }
   });
 
+  it("renders review error alongside current card with alert semantics", () => {
+    const harness = setup(reviewState({
+      current: makeEntry(),
+      errorMessage: "Word decision could not be saved: boom",
+    }));
+    try {
+      const alert = harness.dom.reviewContent.querySelector('[role="alert"]');
+      expect(alert).not.toBeNull();
+      expect(alert?.classList.contains("review-error")).toBe(true);
+      expect(alert?.textContent).toContain("could not be saved");
+      expect(harness.dom.reviewContent.querySelector(".review-entry .target-word")?.textContent).toBe("言葉");
+      // The alert region is appended after the card, which stays visible.
+      expect(harness.dom.reviewContent.lastElementChild).toBe(alert);
+      expect(harness.dom.reviewContent.firstElementChild?.classList.contains("review-entry")).toBe(true);
+      // Status returned to "ready" after the failed save, so retry stays possible.
+      for (const button of [harness.dom.reviewKnown, harness.dom.reviewMined, harness.dom.reviewSkip, harness.dom.reviewLater]) {
+        expect(button.disabled).toBe(false);
+      }
+    } finally {
+      harness.dispose();
+    }
+  });
+
+  it("renders error alone when no current card", () => {
+    const harness = setup(reviewState({
+      current: null,
+      status: "error",
+      errorMessage: "Review query failed",
+    }));
+    try {
+      const alert = harness.dom.reviewContent.querySelector('[role="alert"]');
+      expect(alert).not.toBeNull();
+      expect(alert?.textContent).toContain("Review query failed");
+      expect(harness.dom.reviewContent.querySelector(".review-entry")).toBeNull();
+      expect(harness.dom.reviewContent.textContent).not.toContain("Loading review queue");
+    } finally {
+      harness.dispose();
+    }
+  });
+
   it("disables triage buttons unless a decision can be made", () => {
     const loading = setup(reviewState({ status: "loading" }));
     try {

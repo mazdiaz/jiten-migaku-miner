@@ -49,16 +49,28 @@ function renderReviewSurface(dom: DomMap, state: Readonly<AppState>): void {
 
   dom.reviewProgress.textContent = `${review.processed} processed · ${review.remaining} remaining`;
 
-  if (review.status === "error" && review.errorMessage !== null) {
-    dom.reviewContent.textContent = review.errorMessage;
-    return;
-  }
+  // The error renders whenever it is set, regardless of status: a failed
+  // decision returns to "ready" with the card kept, so retry stays possible.
+  const appendReviewError = (message: string): void => {
+    const error = document.createElement("div");
+    error.className = "review-error";
+    error.setAttribute("role", "alert");
+    error.textContent = message;
+    dom.reviewContent.appendChild(error);
+  };
+
   if (review.current === null) {
+    if (review.errorMessage !== null) {
+      dom.reviewContent.textContent = "";
+      appendReviewError(review.errorMessage);
+      return;
+    }
     dom.reviewContent.textContent = review.status === "loading" ? "Loading review queue…" : REVIEW_COMPLETE_MESSAGE;
     return;
   }
   dom.reviewContent.textContent = "";
   dom.reviewContent.appendChild(renderReviewEntryNode(review.current, state.view));
+  if (review.errorMessage !== null) appendReviewError(review.errorMessage);
 }
 
 function appendFuriganaTarget(

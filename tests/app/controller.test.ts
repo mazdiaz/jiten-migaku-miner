@@ -1501,6 +1501,100 @@ describe("MinerController review mode", () => {
     expect(states.at(-1)!.wordDecisions.get("nhk")).toMatchObject({ status: "mined" });
   });
 
+  it("stops review when a new dataset commits", async () => {
+    const { store, worker, controller, states } = setup();
+    await seedActive(store);
+    installPool(worker, reviewPool());
+    await controller.init();
+    await controller.startReview();
+    expect(states.at(-1)!.review.active).toBe(true);
+
+    await controller.importJiten({ name: "new.csv", text: async () => "Word\n新しい" });
+
+    const review = states.at(-1)!.review;
+    expect(review.active).toBe(false);
+    expect(review.status).toBe("idle");
+    expect(review.current).toBeNull();
+    expect(review.errorMessage).toBeNull();
+  });
+
+  it("review restart invalidates in-flight continuations", async () => {
+    const inner = createMemoryAppStore();
+    const delayed = createDelayedAppStore(inner);
+    const worker = new FakeWorkerClient();
+    installPool(worker, reviewPool());
+    const controller = createMinerController({
+      store: delayed.store,
+      worker,
+      legacyStorage: null,
+      sessionQueueStore: createSessionQueueStore(null),
+      now: () => FIXED_NOW,
+    });
+    const states: Readonly<AppState>[] = [];
+    controller.subscribe((state) => states.push(state));
+    await seedActive(inner);
+    await controller.init();
+    await controller.startReview();
+    expect(states.at(-1)!.review.current?.normalizedWord).toBe("A");
+
+    // Block the decision write so reviewDecision's continuation is in flight
+    // across the restart.
+    delayed.gate("wordDecisions.set");
+    const decision = controller.reviewDecision("known");
+    await delayed.started("wordDecisions.set");
+
+    controller.stopReview();
+    await controller.startReview();
+
+    delayed.release("wordDecisions.set");
+    await decision;
+
+    const review = states.at(-1)!.review;
+    expect(review.active).toBe(true);
+    expect(review.processed).toBe(0);
+    expect(review.initialTotal).toBe(3);
+    expect(review.remaining).toBe(3);
+    expect(review.current?.normalizedWord).toBe("A");
+  });
+
+  it("abandons a superseded review query after restart", async () => {
+    const { store, worker, controller, states } = setup();
+    await seedActive(store);
+    installPool(worker, reviewPool());
+    await controller.init();
+
+    // Hold the first review query (issued by startReview) unresolved.
+    let held = false;
+    let resolveHeld: ((value: QueryResult) => void) | undefined;
+    const heldQuery = new Promise<QueryResult>((resolve) => { resolveHeld = resolve; });
+    const originalHandler = worker.queryHandler;
+    if (originalHandler === null) throw new Error("review pool handler missing");
+    worker.queryHandler = async (request) => {
+      if (request.queryChannel === "review" && !held) {
+        held = true;
+        return heldQuery;
+      }
+      return originalHandler(request);
+    };
+
+    const started = controller.startReview();
+    await flushMicrotasks();
+    // The held query was requested before this decision existed.
+    await controller.setWordDecision("A", "known");
+    controller.stopReview();
+    await controller.startReview();
+
+    resolveHeld?.({ ...result([decorated(reviewPool()[0]!)]), totalEntries: 3 });
+    await started;
+
+    const review = states.at(-1)!.review;
+    expect(review.active).toBe(true);
+    expect(review.current?.normalizedWord).toBe("B");
+    expect(review.remaining).toBe(2);
+    expect(review.initialTotal).toBe(2);
+    expect(review.processed).toBe(0);
+  });
+
   it("removes a mixed-case queued word after a review decision", async () => {
     const { store, worker, controller, states } = setup();
     await seedActive(store);
