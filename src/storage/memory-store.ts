@@ -11,6 +11,7 @@ import type {
   DatasetStore,
   KnownWordStore,
   PreferencesStore,
+  RestoreUserStateSnapshot,
   WordDecisionStore,
 } from "./contracts";
 
@@ -262,6 +263,29 @@ export class MemoryAppStore implements AppStore {
     this.knownWords = this.knownWordStore;
     this.wordDecisions = this.wordDecisionStore;
     this.preferences = this.preferencesStore;
+  }
+
+  async restoreUserState(snapshot: RestoreUserStateSnapshot): Promise<void> {
+    // Validate before mutating so a duplicate aborts without partial writes,
+    // mirroring the IndexedDB transaction-abort semantics.
+    const seen = new Set<string>();
+    for (const decision of snapshot.decisions) {
+      if (seen.has(decision.normalizedWord)) {
+        throw new Error(`Duplicate word decision: ${decision.normalizedWord}`);
+      }
+      seen.add(decision.normalizedWord);
+    }
+    if (snapshot.knownWords === null) {
+      this.knownWordStore.clear();
+    } else {
+      await this.knownWordStore.save(
+        snapshot.knownWords.id,
+        snapshot.knownWords.name,
+        snapshot.knownWords.words,
+      );
+    }
+    await this.wordDecisionStore.replaceAll(snapshot.decisions);
+    await this.preferencesStore.save(snapshot.preferences);
   }
 
   async clearAll(): Promise<void> {

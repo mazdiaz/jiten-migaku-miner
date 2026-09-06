@@ -145,6 +145,35 @@ function openRawDatabase(name: string): Promise<IDBDatabase> {
   });
 }
 
+function readRestoreDiagnostics(name: string): Promise<{
+  knownSets: Array<{ id: string }>;
+  activeKnown: string | null;
+}> {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(name);
+    request.onsuccess = () => {
+      const database = request.result;
+      const transaction = database.transaction(["knownWordSets", "meta"], "readonly");
+      const knownSets: Array<{ id: string }> = [];
+      const knownRequest = transaction.objectStore("knownWordSets").getAll();
+      knownRequest.onsuccess = () => {
+        for (const record of knownRequest.result as Array<{ id: string }>) {
+          knownSets.push({ id: record.id });
+        }
+      };
+      const metaRequest = transaction.objectStore("meta").get("activeKnownWordSetId");
+      metaRequest.onsuccess = () => {
+        const value = (metaRequest.result as { value: string } | undefined)?.value ?? null;
+        database.close();
+        resolve({ knownSets, activeKnown: value });
+      };
+      transaction.onerror = () => reject(transaction.error);
+      transaction.onabort = () => reject(transaction.error);
+    };
+    request.onerror = () => reject(request.error ?? new Error("Could not open test database"));
+  });
+}
+
 function deleteDatabase(name: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.deleteDatabase(name);
@@ -413,6 +442,124 @@ describe("IndexedDbAppStore", () => {
     ).rejects.toThrow("Duplicate word decision");
 
     expect(await store.wordDecisions.list()).toEqual([original]);
+  });
+
+  it("restoreUserState commits all categories atomically and removes orphaned known sets", async () => {
+    const store: AppStore = createIndexedDbAppStore(databaseName);
+    await store.knownWords.save("set-a", "Set A", ["alpha"]);
+    await store.wordDecisions.set(decision("古い", "skip", "2026-09-01T00:00:00.000Z"));
+    await store.preferences.save({ query, view, page: 1 });
+
+    await store.restoreUserState!({
+      knownWords: { id: "set-b", name: "Set B", words: ["beta", "gamma", "beta"] },
+      decisions: [
+        decision("新しい", "mined", "2026-09-05T00:00:00.000Z"),
+        decision("透過", "later", "2026-09-05T01:00:00.000Z"),
+      ],
+      preferences: { query, view, page: 4 },
+    });
+
+    expect(await store.knownWords.getActive()).toEqual({
+      id: "set-b",
+      name: "Set B",
+      words: new Set(["beta", "gamma"]),
+    });
+    expect(await store.wordDecisions.list()).toEqual([
+      decision("新しい", "mined", "2026-09-05T00:00:00.000Z"),
+      decision("透過", "later", "2026-09-05T01:00:00.000Z"),
+    ]);
+    expect(await store.preferences.load()).toEqual({ query, view, page: 4 });
+    const diagnostics = await readRestoreDiagnostics(databaseName);
+    expect(diagnostics.knownSets).toEqual([{ id: "set-b" }]);
+    expect(diagnostics.activeKnown).toBe("set-b");
+  });
+
+  it("restoreUserState with null knownWords removes the prior set and clears the pointer", async () => {
+    const store: AppStore = createIndexedDbAppStore(databaseName);
+    await store.knownWords.save("set-a", "Set A", ["alpha"]);
+    await store.wordDecisions.set(decision("古い", "skip", "2026-09-01T00:00:00.000Z"));
+    await store.preferences.save({ query, view, page: 1 });
+
+    await store.restoreUserState!({
+      knownWords: null,
+      decisions: [],
+      preferences: { query, view, page: 1 },
+    });
+
+    expect(await store.knownWords.getActive()).toBeNull();
+    expect(await store.wordDecisions.list()).toEqual([]);
+    const diagnostics = await readRestoreDiagnostics(databaseName);
+    expect(diagnostics.knownSets).toEqual([]);
+    expect(diagnostics.activeKnown).toBeNull();
+  });
+
+  it("restoreUserState leaves all prior state intact when a request fails mid-transaction", async () => {
+    const store: AppStore = createIndexedDbAppStore(databaseName);
+    await store.knownWords.save("set-a", "Set A", ["alpha"]);
+    const priorDecision = decision("古い", "skip", "2026-09-01T00:00:00.000Z");
+    await store.wordDecisions.set(priorDecision);
+    await store.preferences.save({ query, view, page: 1 });
+
+    const originalPut = IDBObjectStore.prototype.put;
+    const putSpy = vi
+      .spyOn(IDBObjectStore.prototype, "put")
+      .mockImplementation(function (
+        this: IDBObjectStore,
+        value: unknown,
+        key?: IDBValidKey,
+      ) {
+        if ((value as { id?: unknown }).id === "current") {
+          throw new Error("injected preferences failure");
+        }
+        return originalPut.call(this, value, key);
+      });
+
+    await expect(
+      store.restoreUserState!({
+        knownWords: { id: "set-b", name: "Set B", words: ["beta"] },
+        decisions: [decision("新しい", "mined", "2026-09-05T00:00:00.000Z")],
+        preferences: { query, view, page: 4 },
+      }),
+    ).rejects.toThrow("injected preferences failure");
+
+    putSpy.mockRestore();
+    expect(await store.knownWords.getActive()).toEqual({
+      id: "set-a",
+      name: "Set A",
+      words: new Set(["alpha"]),
+    });
+    expect(await store.wordDecisions.list()).toEqual([priorDecision]);
+    expect(await store.preferences.load()).toEqual({ query, view, page: 1 });
+    const diagnostics = await readRestoreDiagnostics(databaseName);
+    expect(diagnostics.knownSets).toEqual([{ id: "set-a" }]);
+    expect(diagnostics.activeKnown).toBe("set-a");
+  });
+
+  it("restoreUserState aborts the whole transaction on duplicate decisions", async () => {
+    const store: AppStore = createIndexedDbAppStore(databaseName);
+    await store.knownWords.save("set-a", "Set A", ["alpha"]);
+    const priorDecision = decision("古い", "skip", "2026-09-01T00:00:00.000Z");
+    await store.wordDecisions.set(priorDecision);
+    await store.preferences.save({ query, view, page: 1 });
+
+    await expect(
+      store.restoreUserState!({
+        knownWords: { id: "set-b", name: "Set B", words: ["beta"] },
+        decisions: [
+          decision("新しい", "mined", "2026-09-05T00:00:00.000Z"),
+          decision("新しい", "skip", "2026-09-05T01:00:00.000Z"),
+        ],
+        preferences: { query, view, page: 4 },
+      }),
+    ).rejects.toThrow("Duplicate word decision");
+
+    expect(await store.knownWords.getActive()).toEqual({
+      id: "set-a",
+      name: "Set A",
+      words: new Set(["alpha"]),
+    });
+    expect(await store.wordDecisions.list()).toEqual([priorDecision]);
+    expect(await store.preferences.load()).toEqual({ query, view, page: 1 });
   });
 
   it("does not leave partial data or replace active data when staging fails", async () => {

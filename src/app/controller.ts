@@ -492,25 +492,59 @@ class MinerControllerImpl implements MinerController {
       }));
 
       const knownId = this.createId("known");
-      let decisionsWritten = false;
-      let preferencesWritten = false;
-      try {
-        await this.writeRestoredKnownWords(knownId, backup);
-        await this.storageOperation((store) => store.wordDecisions.replaceAll(backup.wordDecisions));
-        decisionsWritten = true;
-        await this.writeRestoredPreferences(backup);
-        preferencesWritten = true;
-      } catch (error) {
-        const rollbackWarning = await this.rollbackUserState(snapshot, {
-          knownWritten: true,
-          decisionsWritten,
-          preferencesWritten,
+      const preferences = backup.preferences ?? {
+        query: { ...DEFAULT_QUERY, page: 1 },
+        view: { ...DEFAULT_VIEW },
+        page: 1,
+      };
+
+      // Single-transaction fast path: stores implementing restoreUserState
+      // commit every category in one durable transaction, so process death
+      // mid-restore leaves the pre-restore state intact and app-level
+      // rollback is unnecessary. Presence is checked inside the operation
+      // because storageOperation may retry on a different (memory) store.
+      const restoredAtomically = await this.storageOperation(async (store) => {
+        if (store.restoreUserState === undefined) return false;
+        await store.restoreUserState({
+          knownWords: backup.knownWords === null
+            ? null
+            : {
+                id: knownId,
+                name: backup.knownWords.name,
+                words: new Set(backup.knownWords.words),
+              },
+          decisions: backup.wordDecisions,
+          preferences,
         });
-        const message = rollbackWarning === null
-          ? errorMessage(error)
-          : `${errorMessage(error)} ${rollbackWarning}`;
-        this.setState({ errorMessage: `Backup could not be restored: ${message}` });
+        return true;
+      }).catch((error: unknown) => {
+        // The atomic transaction aborted; the storage engine rolled
+        // everything back, so no app-level rollback writes are needed.
+        this.setState({ errorMessage: `Backup could not be restored: ${errorMessage(error)}` });
         throw error;
+      });
+
+      if (!restoredAtomically) {
+        let decisionsWritten = false;
+        let preferencesWritten = false;
+        try {
+          await this.writeRestoredKnownWords(knownId, backup);
+          await this.storageOperation((store) => store.wordDecisions.replaceAll(backup.wordDecisions));
+          decisionsWritten = true;
+          await this.storageOperation((store) => store.preferences.save(preferences));
+          preferencesWritten = true;
+        } catch (error) {
+          const rollbackWarning = await this.rollbackUserState(snapshot, {
+            knownWritten: true,
+            decisionsWritten,
+            preferencesWritten,
+          });
+          const message = rollbackWarning === null
+            ? errorMessage(error)
+            : `${errorMessage(error)} ${rollbackWarning}`;
+          this.setState({ errorMessage: `Backup could not be restored: ${message}` });
+          throw error;
+        }
       }
 
       this.applyRestoredState(backup);
@@ -543,15 +577,6 @@ class MinerControllerImpl implements MinerController {
     }
     const words = new Set(backup.knownWords.words);
     await this.storageOperation((store) => store.knownWords.save(knownId, backup.knownWords!.name, words));
-  }
-
-  private async writeRestoredPreferences(backup: MinerBackupV1): Promise<void> {
-    const preferences = backup.preferences ?? {
-      query: { ...DEFAULT_QUERY, page: 1 },
-      view: { ...DEFAULT_VIEW },
-      page: 1,
-    };
-    await this.storageOperation((store) => store.preferences.save(preferences));
   }
 
   private async rollbackUserState(

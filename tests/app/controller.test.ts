@@ -1,5 +1,5 @@
 import "fake-indexeddb/auto";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Entry, QueryResult, QueryState, ViewState, WordDecisionStatus } from "../../src/domain/types";
 import type { AppState, FileSource } from "../../src/app/state";
 import { DEFAULT_QUERY, DEFAULT_VIEW } from "../../src/app/state";
@@ -248,10 +248,16 @@ function flakyAppStore(inner: AppStore, shouldFail: () => boolean): AppStore {
       save: guard(inner.preferences.save.bind(inner.preferences)),
     },
     clearAll: guard(inner.clearAll.bind(inner)),
+    ...(inner.restoreUserState !== undefined
+      ? { restoreUserState: guard(inner.restoreUserState.bind(inner)) }
+      : {}),
   };
 }
 
-function createDelayedAppStore(inner: AppStore): {
+function createDelayedAppStore(
+  inner: AppStore,
+  options: { forwardRestoreUserState?: boolean } = {},
+): {
   store: AppStore;
   started(method: string): Promise<void>;
   release(method: string): void;
@@ -343,6 +349,14 @@ function createDelayedAppStore(inner: AppStore): {
         save: delay("preferences.save", inner.preferences.save.bind(inner.preferences)),
       },
       clearAll: delay("clearAll", inner.clearAll.bind(inner)),
+      ...(options.forwardRestoreUserState === false || inner.restoreUserState === undefined
+        ? {}
+        : {
+            restoreUserState: delay(
+              "restoreUserState",
+              inner.restoreUserState.bind(inner),
+            ),
+          }),
     },
     started,
     release,
@@ -1659,6 +1673,18 @@ describe("MinerController backup and restore", () => {
     await store.preferences.save({ query: { ...backupQuery, search: "古い", page: 1 }, view, page: 1 });
   }
 
+  // Wave-1 rollback tests pin the sequential fallback path: strip the optional
+  // atomic method so stores without restoreUserState stay covered.
+  function withoutRestoreUserState(inner: AppStore): AppStore {
+    return {
+      datasets: inner.datasets,
+      knownWords: inner.knownWords,
+      wordDecisions: inner.wordDecisions,
+      preferences: inner.preferences,
+      clearAll: inner.clearAll.bind(inner),
+    };
+  }
+
   function restoreSetup(store: AppStore) {
     const worker = new FakeWorkerClient();
     const controller = createMinerController(decisionOptions(store, worker));
@@ -1799,7 +1825,7 @@ describe("MinerController backup and restore", () => {
   it("rolls back all three categories when the decision replacement fails", async () => {
     const store = createMemoryAppStore();
     await seedForRestore(store);
-    const { controller, states } = restoreSetup(store);
+    const { controller, states } = restoreSetup(withoutRestoreUserState(store));
     await controller.init();
 
     store.wordDecisions.replaceAll = async () => {
@@ -1823,7 +1849,7 @@ describe("MinerController backup and restore", () => {
   it("rolls back and warns when the preferences write fails", async () => {
     const store = createMemoryAppStore();
     await seedForRestore(store);
-    const { controller, states } = restoreSetup(store);
+    const { controller, states } = restoreSetup(withoutRestoreUserState(store));
     await controller.init();
 
     store.preferences.save = async () => {
@@ -1843,7 +1869,7 @@ describe("MinerController backup and restore", () => {
   it("reports rollback failures instead of reporting success", async () => {
     const store = createMemoryAppStore();
     await seedForRestore(store);
-    const { controller, states } = restoreSetup(store);
+    const { controller, states } = restoreSetup(withoutRestoreUserState(store));
     await controller.init();
 
     store.wordDecisions.replaceAll = async () => {
@@ -1857,6 +1883,177 @@ describe("MinerController backup and restore", () => {
 
     expect(states.at(-1)!.errorMessage).toContain("Known-word rollback failed");
     expect(states.at(-1)!.status).toBe("ready");
+  });
+
+  it("restoreBackup uses the single-transaction path when the store provides it", async () => {
+    const inner = createMemoryAppStore();
+    await seedForRestore(inner);
+    // Spies live on a wrapper layer, not on inner: the atomic implementation
+    // may legitimately use inner's own category methods internally, and only
+    // direct controller traffic through the wrapper proves the fast path.
+    const knownSave = vi.fn(inner.knownWords.save.bind(inner.knownWords));
+    const replaceAll = vi.fn(inner.wordDecisions.replaceAll.bind(inner.wordDecisions));
+    const preferencesSave = vi.fn(inner.preferences.save.bind(inner.preferences));
+    const restoreUserState = vi.fn(inner.restoreUserState!.bind(inner));
+    const store: AppStore = {
+      datasets: inner.datasets,
+      knownWords: {
+        save: knownSave,
+        getActive: inner.knownWords.getActive.bind(inner.knownWords),
+        ...(inner.knownWords.remove !== undefined
+          ? { remove: inner.knownWords.remove.bind(inner.knownWords) }
+          : {}),
+        ...(inner.knownWords.clear !== undefined
+          ? { clear: inner.knownWords.clear.bind(inner.knownWords) }
+          : {}),
+      },
+      wordDecisions: {
+        get: inner.wordDecisions.get.bind(inner.wordDecisions),
+        list: inner.wordDecisions.list.bind(inner.wordDecisions),
+        set: inner.wordDecisions.set.bind(inner.wordDecisions),
+        remove: inner.wordDecisions.remove.bind(inner.wordDecisions),
+        replaceAll: replaceAll,
+        ...(inner.wordDecisions.clear !== undefined
+          ? { clear: inner.wordDecisions.clear.bind(inner.wordDecisions) }
+          : {}),
+      },
+      preferences: {
+        load: inner.preferences.load.bind(inner.preferences),
+        save: preferencesSave,
+        ...(inner.preferences.clear !== undefined
+          ? { clear: inner.preferences.clear.bind(inner.preferences) }
+          : {}),
+      },
+      clearAll: inner.clearAll.bind(inner),
+      restoreUserState,
+    };
+    const worker = new FakeWorkerClient();
+    const controller = createMinerController({
+      ...decisionOptions(store, worker),
+      createId: (kind) => `${kind}-restored`,
+    });
+    const states: Readonly<AppState>[] = [];
+    controller.subscribe((state) => states.push(state));
+    worker.queryResult = { ...result(), page: 2, totalPages: 2 };
+    await controller.init();
+
+    await controller.restoreBackup(backupText());
+
+    expect(restoreUserState).toHaveBeenCalledTimes(1);
+    expect(restoreUserState.mock.calls[0]![0]).toEqual({
+      knownWords: { id: "known-restored", name: "known.txt", words: new Set(["犬", "猫"]) },
+      decisions: [
+        { normalizedWord: "犬", status: "mined", updatedAt: "2026-08-01T00:00:00.000Z" },
+        { normalizedWord: "鳥", status: "later", updatedAt: "2026-08-02T00:00:00.000Z" },
+      ],
+      preferences: { query: restoredQuery, view: restoredView, page: 2 },
+    });
+    expect(knownSave).not.toHaveBeenCalled();
+    expect(replaceAll).not.toHaveBeenCalled();
+    // The only preferences write is the post-restore persist, never a
+    // restore-phase sequential write.
+    expect(preferencesSave.mock.invocationCallOrder.at(-1)).toBeGreaterThan(
+      restoreUserState.mock.invocationCallOrder[0]!,
+    );
+    expect(await inner.knownWords.getActive()).toMatchObject({ id: "known-restored" });
+    expect(await inner.wordDecisions.list()).toHaveLength(2);
+    expect(await inner.preferences.load()).toMatchObject({ page: 2 });
+    const final = states.at(-1)!;
+    expect(final.knownWords).toEqual(new Set(["犬", "猫"]));
+    expect(final.knownWordsName).toBe("known.txt");
+    expect(final.wordDecisions.get("犬")).toMatchObject({ status: "mined" });
+    expect(final.query).toEqual(restoredQuery);
+    expect(final.errorMessage).toBeNull();
+  });
+
+  it("restoreBackup falls back to sequential writes and rolls back without the method", async () => {
+    const inner = createMemoryAppStore();
+    await seedForRestore(inner);
+    const delayed = createDelayedAppStore(inner, { forwardRestoreUserState: false });
+    const worker = new FakeWorkerClient();
+    const controller = createMinerController({
+      store: delayed.store,
+      worker,
+      legacyStorage: null,
+      sessionQueueStore: createSessionQueueStore(null),
+      now: () => FIXED_NOW,
+      createId: (kind) => `${kind}-restored`,
+    });
+    const states: Readonly<AppState>[] = [];
+    controller.subscribe((state) => states.push(state));
+    await controller.init();
+
+    delayed.failNext("wordDecisions.replaceAll");
+    await expect(controller.restoreBackup(backupText())).rejects.toThrow(
+      "wordDecisions.replaceAll failed as requested",
+    );
+
+    expect(await inner.knownWords.getActive()).toMatchObject({ id: "old-known", name: "old.txt" });
+    expect(await inner.wordDecisions.list()).toEqual([
+      { normalizedWord: "古い", status: "skip", updatedAt: "2026-07-01T00:00:00.000Z" },
+    ]);
+    expect(await inner.preferences.load()).toMatchObject({ page: 1 });
+    const final = states.at(-1)!;
+    expect(final.knownWords).toEqual(new Set(["古い"]));
+    expect(final.wordDecisions.has("犬")).toBe(false);
+    expect(final.errorMessage).toContain("wordDecisions.replaceAll failed as requested");
+  });
+
+  it("routes restoreUserState failures through the memory fallback and completes the restore", async () => {
+    const inner = createMemoryAppStore();
+    await inner.knownWords.save("old-known", "old.txt", new Set(["古い"]));
+    await inner.wordDecisions.set({
+      normalizedWord: "古い",
+      status: "skip",
+      updatedAt: "2026-07-01T00:00:00.000Z",
+    });
+    await inner.preferences.save({ query: { ...backupQuery, page: 1 }, view, page: 1 });
+    const sequentialReplaceAll = vi.fn(inner.wordDecisions.replaceAll.bind(inner.wordDecisions));
+    inner.wordDecisions.replaceAll = sequentialReplaceAll;
+    let atomicFailures = 0;
+    const store: AppStore = {
+      datasets: inner.datasets,
+      knownWords: inner.knownWords,
+      wordDecisions: inner.wordDecisions,
+      preferences: inner.preferences,
+      clearAll: inner.clearAll.bind(inner),
+      restoreUserState: async (snapshot) => {
+        atomicFailures += 1;
+        if (atomicFailures === 1) throw new Error("IndexedDB restore failed");
+        await inner.restoreUserState!(snapshot);
+      },
+    };
+    const worker = new FakeWorkerClient();
+    const controller = createMinerController({
+      indexedDbStoreFactory: () => store,
+      worker,
+      legacyStorage: null,
+      sessionQueueStore: createSessionQueueStore(null),
+      now: () => FIXED_NOW,
+      createId: (kind) => `${kind}-restored`,
+    });
+    const states: Readonly<AppState>[] = [];
+    controller.subscribe((state) => states.push(state));
+    await controller.init();
+
+    await controller.restoreBackup(backupText());
+
+    expect(atomicFailures).toBe(1);
+    expect(sequentialReplaceAll).not.toHaveBeenCalled();
+    const final = states.at(-1)!;
+    expect(final.persistence).toBe("memory");
+    expect(final.knownWords).toEqual(new Set(["犬", "猫"]));
+    expect(final.wordDecisions.get("犬")).toMatchObject({ status: "mined" });
+    expect(final.wordDecisions.has("古い")).toBe(false);
+    expect(final.status).toBe("empty");
+    expect(final.errorMessage).toContain("memory");
+    // The original store never received a successful atomic restore; the
+    // backup lives in the replacement memory store.
+    expect(await inner.knownWords.getActive()).toMatchObject({ id: "old-known" });
+    const exported = JSON.parse(await controller.exportBackup()) as {
+      knownWords: { words: string[] } | null;
+    };
+    expect(exported.knownWords?.words).toEqual(expect.arrayContaining(["犬", "猫"]));
   });
 });
 
@@ -1956,15 +2153,15 @@ describe("MinerController user-state serialization", () => {
       preferences: { query: { ...query, page: 1 }, view, page: 1 },
     });
 
-    delayed.gate("preferences.save");
-    delayed.failNext("preferences.save");
+    delayed.gate("restoreUserState");
+    delayed.failNext("restoreUserState");
     const restorePromise = controller.restoreBackup(backup);
-    await delayed.started("preferences.save");
+    await delayed.started("restoreUserState");
 
     const queuedDecision = controller.setWordDecision("新しい", "mined");
     await new Promise((resolve) => setTimeout(resolve, 20));
-    delayed.release("preferences.save");
-    await expect(restorePromise).rejects.toThrow("preferences.save failed as requested");
+    delayed.release("restoreUserState");
+    await expect(restorePromise).rejects.toThrow("restoreUserState failed as requested");
     await queuedDecision;
 
     const durable = (await inner.wordDecisions.list())
@@ -1990,13 +2187,13 @@ describe("MinerController user-state serialization", () => {
       preferences: { query: { ...query, page: 1 }, view, page: 1 },
     });
 
-    delayed.gate("wordDecisions.replaceAll");
+    delayed.gate("restoreUserState");
     const importPromise = controller.importKnown({ name: "known.csv", text: async () => "新しい" });
     const restorePromise = controller.restoreBackup(backup);
-    await delayed.started("wordDecisions.replaceAll");
+    await delayed.started("restoreUserState");
     await new Promise((resolve) => setTimeout(resolve, 20));
     delayed.failNext("knownWords.save");
-    delayed.release("wordDecisions.replaceAll");
+    delayed.release("restoreUserState");
     await Promise.all([restorePromise, importPromise]);
 
     const final = states.at(-1)!;

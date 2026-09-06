@@ -190,6 +190,68 @@ describe("MemoryAppStore", () => {
   });
 });
 
+describe("MemoryAppStore restoreUserState", () => {
+  it("applies all three categories and clears the prior known set", async () => {
+    const store = createMemoryAppStore();
+    await store.knownWords.save("old", "Old words", ["alpha"]);
+    await store.wordDecisions.set(decision("古い", "skip", "2026-09-01T00:00:00.000Z"));
+    await store.preferences.save({ query, view, page: 1 });
+
+    await store.restoreUserState!({
+      knownWords: { id: "new", name: "New words", words: ["beta", "gamma", "beta"] },
+      decisions: [decision("新しい", "mined", "2026-09-05T00:00:00.000Z")],
+      preferences: { query, view, page: 5 },
+    });
+
+    expect(await store.knownWords.getActive()).toEqual({
+      id: "new",
+      name: "New words",
+      words: new Set(["beta", "gamma"]),
+    });
+    expect(await store.wordDecisions.list()).toEqual([
+      decision("新しい", "mined", "2026-09-05T00:00:00.000Z"),
+    ]);
+    expect(await store.preferences.load()).toEqual({ query, view, page: 5 });
+
+    await store.restoreUserState!({
+      knownWords: null,
+      decisions: [],
+      preferences: { query, view, page: 1 },
+    });
+
+    expect(await store.knownWords.getActive()).toBeNull();
+    expect(await store.wordDecisions.list()).toEqual([]);
+    expect(await store.preferences.load()).toEqual({ query, view, page: 1 });
+  });
+
+  it("rejects duplicate decisions without mutating any category", async () => {
+    const store = createMemoryAppStore();
+    await store.knownWords.save("old", "Old words", ["alpha"]);
+    const priorDecision = decision("古い", "skip", "2026-09-01T00:00:00.000Z");
+    await store.wordDecisions.set(priorDecision);
+    await store.preferences.save({ query, view, page: 1 });
+
+    await expect(
+      store.restoreUserState!({
+        knownWords: { id: "new", name: "New words", words: ["beta"] },
+        decisions: [
+          decision("新しい", "mined", "2026-09-05T00:00:00.000Z"),
+          decision("新しい", "skip", "2026-09-05T01:00:00.000Z"),
+        ],
+        preferences: { query, view, page: 5 },
+      }),
+    ).rejects.toThrow("Duplicate word decision");
+
+    expect(await store.knownWords.getActive()).toEqual({
+      id: "old",
+      name: "Old words",
+      words: new Set(["alpha"]),
+    });
+    expect(await store.wordDecisions.list()).toEqual([priorDecision]);
+    expect(await store.preferences.load()).toEqual({ query, view, page: 1 });
+  });
+});
+
 describe("MemoryAppStore wordDecisions", () => {
   it("saves and reads a decision by normalized word", async () => {
     const store = createMemoryAppStore();

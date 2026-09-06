@@ -43,10 +43,17 @@ export interface WordDecisionStore {
   clear?(): Promise<void> | void;
 }
 
+export interface RestoreUserStateSnapshot {
+  knownWords: { id: string; name: string; words: Iterable<string> } | null;
+  decisions: readonly WordDecision[];
+  preferences: { query: QueryState; view: ViewState; page: number };
+}
+
 export interface AppStore {
   datasets: DatasetStore;
   knownWords: KnownWordStore;
   wordDecisions: WordDecisionStore;
   preferences: PreferencesStore;
   clearAll(): Promise<void>;
+  restoreUserState?(snapshot: RestoreUserStateSnapshot): Promise<void>;
 }

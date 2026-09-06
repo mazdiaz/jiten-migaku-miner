@@ -10,6 +10,7 @@ import type {
   DatasetStore,
   KnownWordStore,
   PreferencesStore,
+  RestoreUserStateSnapshot,
   WordDecisionStore,
 } from "./contracts";
 
@@ -812,6 +813,58 @@ export class IndexedDbAppStore implements AppStore {
     this.knownWords = new IndexedDbKnownWordStore(databaseName);
     this.wordDecisions = new IndexedDbWordDecisionStore(databaseName);
     this.preferences = new IndexedDbPreferencesStore(databaseName);
+  }
+
+  async restoreUserState(snapshot: RestoreUserStateSnapshot): Promise<void> {
+    const knownRecord: KnownWordSetRecord | null = snapshot.knownWords === null
+      ? null
+      : {
+          id: snapshot.knownWords.id,
+          name: snapshot.knownWords.name,
+          words: [...new Set(snapshot.knownWords.words)],
+        };
+    const decisionRecords = snapshot.decisions.map(cloneDecision);
+    const preferencesRecord: PreferencesRecord = {
+      id: PREFERENCES_KEY,
+      query: { ...snapshot.preferences.query },
+      view: { ...snapshot.preferences.view },
+      page: snapshot.preferences.page,
+    };
+    await withDatabase(this.databaseName, async (database) => {
+      await runTransaction<void>(
+        database,
+        [KNOWN_WORD_SETS_STORE, META_STORE, WORD_DECISIONS_STORE, PREFERENCES_STORE],
+        "readwrite",
+        (transaction, resolveResult, abort) => {
+          const knownSets = transaction.objectStore(KNOWN_WORD_SETS_STORE);
+          // Restores own the known-word-set store: clearing it drops every
+          // set record orphaned by earlier saves.
+          knownSets.clear();
+          if (knownRecord === null) {
+            transaction.objectStore(META_STORE).delete(ACTIVE_KNOWN_WORD_SET_KEY);
+          } else {
+            knownSets.put(knownRecord);
+            transaction.objectStore(META_STORE).put({
+              key: ACTIVE_KNOWN_WORD_SET_KEY,
+              value: knownRecord.id,
+            } satisfies MetaRecord);
+          }
+          const decisions = transaction.objectStore(WORD_DECISIONS_STORE);
+          decisions.clear();
+          const seen = new Set<string>();
+          for (const record of decisionRecords) {
+            if (seen.has(record.normalizedWord)) {
+              abort(new Error(`Duplicate word decision: ${record.normalizedWord}`));
+              return;
+            }
+            seen.add(record.normalizedWord);
+            decisions.put(record);
+          }
+          transaction.objectStore(PREFERENCES_STORE).put(preferencesRecord);
+          resolveResult(undefined);
+        },
+      );
+    });
   }
 
   async clearAll(): Promise<void> {
