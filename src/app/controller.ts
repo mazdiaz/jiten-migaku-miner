@@ -722,9 +722,41 @@ class MinerControllerImpl implements MinerController {
 
   private async switchToMemory(error: unknown): Promise<void> {
     if (this.persistentStore === null) this.persistentStore = this.store;
-    this.store = createMemoryAppStore();
+    const replacement = createMemoryAppStore();
+    const transferFailures: string[] = [];
+    try {
+      if (this.state.knownWords.size > 0) {
+        await replacement.knownWords.save(
+          this.createId("known"),
+          this.state.knownWordsName ?? "Recovered known words",
+          this.state.knownWords,
+        );
+      }
+    } catch (transferError) {
+      transferFailures.push(`Known-word recovery failed: ${errorMessage(transferError)}`);
+    }
+    try {
+      if (this.state.wordDecisions.size > 0) {
+        await replacement.wordDecisions.replaceAll([...this.state.wordDecisions.values()]);
+      }
+    } catch (transferError) {
+      transferFailures.push(`Word-decision recovery failed: ${errorMessage(transferError)}`);
+    }
+    try {
+      await replacement.preferences.save({
+        query: { ...this.state.query, page: this.state.page },
+        view: { ...this.state.view },
+        page: this.state.page,
+      });
+    } catch {
+      // Preferences are non-critical; visible state retains them.
+    }
+
+    this.store = replacement;
     this.state.persistence = "memory";
-    const message = `IndexedDB unavailable; using memory persistence. ${errorMessage(error)}`;
+    const message = `IndexedDB unavailable; using memory persistence. ${errorMessage(error)}${
+      transferFailures.length > 0 ? ` ${transferFailures.join(" ")}` : ""
+    }`;
     this.fallbackWarning = message;
     this.setWarning(message);
   }

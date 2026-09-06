@@ -11,6 +11,7 @@ import {
 import type { WorkerClient, WorkerQueryInput } from "../../src/app/worker-client";
 import { createFileSource } from "../../src/platform/file-source";
 import { createFolderSource } from "../../src/platform/folder-source";
+import { createSessionQueueStore } from "../../src/platform/session-queue";
 import { createMemoryAppStore } from "../../src/storage/memory-store";
 import type {
   DatasetMetadata,
@@ -205,6 +206,48 @@ async function seedActive(store: AppStore, id = "old-dataset"): Promise<void> {
 
 function controllerOptions(store: AppStore, worker: FakeWorkerClient, storage?: Storage): MinerControllerOptions {
   return { store, worker, legacyStorage: storage ?? new TestStorage() };
+}
+
+function flakyAppStore(inner: AppStore, shouldFail: () => boolean): AppStore {
+  const failure = () => new Error("simulated late storage failure");
+  // Methods are bound to their owner objects; detaching them would lose `this`
+  // and turn every call into a spurious fallback-triggering failure.
+  const guard = <A extends unknown[], R>(operation: (...args: A) => Promise<R>) =>
+    async (...args: A): Promise<R> => {
+      if (shouldFail()) throw failure();
+      return operation(...args);
+    };
+  const guardIterable = <A extends unknown[], R>(operation: (...args: A) => AsyncIterable<R>) =>
+    async function* (...args: A): AsyncGenerator<R> {
+      if (shouldFail()) throw failure();
+      yield* operation(...args);
+    };
+  return {
+    datasets: {
+      stage: guard(inner.datasets.stage.bind(inner.datasets)),
+      activate: guard(inner.datasets.activate.bind(inner.datasets)),
+      getActive: guard(inner.datasets.getActive.bind(inner.datasets)),
+      list: guard(inner.datasets.list.bind(inner.datasets)),
+      readChunks: guardIterable(inner.datasets.readChunks.bind(inner.datasets)),
+      remove: guard(inner.datasets.remove.bind(inner.datasets)),
+    },
+    knownWords: {
+      save: guard(inner.knownWords.save.bind(inner.knownWords)),
+      getActive: guard(inner.knownWords.getActive.bind(inner.knownWords)),
+    },
+    wordDecisions: {
+      get: guard(inner.wordDecisions.get.bind(inner.wordDecisions)),
+      list: guard(inner.wordDecisions.list.bind(inner.wordDecisions)),
+      set: guard(inner.wordDecisions.set.bind(inner.wordDecisions)),
+      remove: guard(inner.wordDecisions.remove.bind(inner.wordDecisions)),
+      replaceAll: guard(inner.wordDecisions.replaceAll.bind(inner.wordDecisions)),
+    },
+    preferences: {
+      load: guard(inner.preferences.load.bind(inner.preferences)),
+      save: guard(inner.preferences.save.bind(inner.preferences)),
+    },
+    clearAll: guard(inner.clearAll.bind(inner)),
+  };
 }
 
 describe("MinerController", () => {
@@ -674,6 +717,31 @@ describe("MinerController", () => {
 
     expect(states.at(-1)?.persistence).toBe("memory");
     expect(states.at(-1)?.errorMessage?.toLowerCase()).toContain("memory");
+  });
+
+  it("preserves known words and decisions in exports after a late storage failure", async () => {
+    const inner = createMemoryAppStore();
+    let failing = false;
+    const worker = new FakeWorkerClient();
+    const controller = createMinerController({
+      indexedDbStoreFactory: () => flakyAppStore(inner, () => failing),
+      worker,
+      legacyStorage: null,
+      sessionQueueStore: createSessionQueueStore(null),
+    });
+    await controller.init();
+
+    await controller.importKnown({ name: "known.txt", text: async () => "新しい\n" });
+    failing = true;
+    await controller.setWordDecision("新しい", "known").catch(() => undefined);
+    failing = false;
+
+    const backup = JSON.parse(await controller.exportBackup());
+    expect(backup.knownWords).not.toBeNull();
+    expect(backup.knownWords.words).toContain("新しい");
+    // The retried decision write succeeds against the replacement store, so the
+    // export reflects the real post-fallback state; nothing is fabricated.
+    expect(backup.wordDecisions.map((d: { normalizedWord: string }) => d.normalizedWord)).toEqual(["新しい"]);
   });
 
   it("clears abandoned persistent data and keeps fallback warning after clear", async () => {
