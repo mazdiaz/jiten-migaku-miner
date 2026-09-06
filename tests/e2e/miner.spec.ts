@@ -13,6 +13,11 @@ async function acceptDialogs(page: Page): Promise<void> {
   page.on("dialog", (dialog) => dialog.accept());
 }
 
+async function openFilters(page: Page): Promise<void> {
+  await page.locator("#advancedToggle").click();
+  await expect(page.locator("#advancedPanel")).toBeVisible();
+}
+
 test.describe("canonical miner", () => {
   test("loads the shell with current labels, disabled filters, and empty state", async ({ page }) => {
     await page.goto("/");
@@ -24,8 +29,8 @@ test.describe("canonical miner", () => {
     await expect(page.locator("#jitenStatus")).toHaveText("No CSV loaded");
     await expect(page.locator("#knownStatus")).toHaveText("Optional · no list loaded");
     await expect(page.locator("#errorBox")).toBeHidden();
-    await expect(page.locator("#filtersFieldset")).toHaveAttribute("disabled", "");
-    await expect(page.locator("#searchInput")).toBeDisabled();
+    await expect(page.locator("#advancedToggle")).toBeDisabled();
+    await expect(page.locator("#advancedPanel")).toBeHidden();
     await expect(page.locator("#resultsList .empty-state")).toContainText(
       "Load a Jiten CSV above. Everything stays in this browser tab.",
     );
@@ -45,7 +50,7 @@ test.describe("canonical miner", () => {
     await expect(page.locator(".mining-entry .sentence").first()).toContainText("彼は気になる。");
     await expect(page.locator(".mining-entry .entry-definitions").first()).toBeVisible();
     await expect(page.locator("#jitenStatus")).toContainText("✓");
-    await expect(page.locator("#filtersFieldset")).toBeEnabled();
+    await expect(page.locator("#advancedToggle")).toBeEnabled();
     await expect(page.locator("#stickyToolbar")).toBeVisible();
     await expect(page.locator("#stickyTitle")).toContainText("jiten-small");
     await expect(page.locator(".mining-entry ruby")).toHaveCount(0);
@@ -80,21 +85,43 @@ test.describe("canonical miner", () => {
     await expect(page.locator("#changeFiles")).toHaveAttribute("aria-expanded", "true");
   });
 
-  test("searches words and mirrors the sticky search box", async ({ page }) => {
+  test("exposes one search input and collapses filters behind the disclosure", async ({ page }) => {
     await page.goto("/");
     await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
 
-    await page.locator("#searchInput").fill("プール");
+    await expect(page.locator('input[type="search"]')).toHaveCount(1);
+    await expect(page.locator("#stickySearch")).toBeVisible();
+    await expect(page.locator("#advancedPanel")).toBeHidden();
+    await expect(page.locator("#sortSelect")).toBeHidden();
+    await expect(page.locator("#advancedToggle")).toHaveAttribute("aria-expanded", "false");
+    await expect(page.locator("#advancedToggle")).toHaveAttribute("aria-controls", "advancedPanel");
+
+    await openFilters(page);
+    await expect(page.locator("#advancedToggle")).toHaveAttribute("aria-expanded", "true");
+    await expect(page.locator("#advancedPanel legend").filter({ hasText: "Filters" })).toBeVisible();
+    await expect(page.locator("#advancedPanel legend").filter({ hasText: "Display" })).toBeVisible();
+    await expect(page.locator("#sortSelect")).toBeVisible();
+
+    await page.locator("#advancedToggle").click();
+    await expect(page.locator("#advancedPanel")).toBeHidden();
+    await expect(page.locator("#sortSelect")).toBeHidden();
+    await expect(page.locator("#advancedToggle")).toHaveAttribute("aria-expanded", "false");
+  });
+
+  test("searches words from the single toolbar search box", async ({ page }) => {
+    await page.goto("/");
+    await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
+    await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
+
+    await page.locator("#stickySearch").fill("プール");
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(1);
     await expect(page.locator(".mining-entry .target-word").first()).toHaveText("プール");
-    await expect(page.locator("#stickySearch")).toHaveValue("プール");
 
     await page.locator("#stickySearch").fill("静か");
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(1);
-    await expect(page.locator("#searchInput")).toHaveValue("静か");
 
-    await page.locator("#searchInput").fill("");
+    await page.locator("#stickySearch").fill("");
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
   });
 
@@ -104,41 +131,40 @@ test.describe("canonical miner", () => {
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(50);
     await expect(page.locator("#resultStats")).toContainText("Loaded 60");
 
-    await expect(page.locator("#topPage")).toHaveText("Page 1 / 2");
-    await expect(page.locator("#topPrev")).toBeDisabled();
+    await expect(page.locator("#stickyPage")).toHaveText("Page 1 / 2");
+    await expect(page.locator("#stickyPrev")).toBeDisabled();
     await expect(page.locator("#bottomNext")).toBeEnabled();
 
-    await page.locator("#topNext").click();
-    await expect(page.locator("#topPage")).toHaveText("Page 2 / 2");
+    await page.locator("#stickyNext").click();
+    await expect(page.locator("#stickyPage")).toHaveText("Page 2 / 2");
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(10);
     await expect(page.locator(".mining-entry .entry-number").first()).toHaveText("51.");
-    await expect(page.locator("#topNext")).toBeDisabled();
+    await expect(page.locator("#stickyNext")).toBeDisabled();
 
     await page.locator("body").press("ArrowLeft");
-    await expect(page.locator("#topPage")).toHaveText("Page 1 / 2");
+    await expect(page.locator("#stickyPage")).toHaveText("Page 1 / 2");
     await expect(page.locator(".mining-entry .entry-number").first()).toHaveText("1.");
 
-    await page.locator("#searchInput").focus();
+    await page.locator("#stickySearch").focus();
     await page.keyboard.press("ArrowRight");
-    await expect(page.locator("#topPage")).toHaveText("Page 1 / 2");
+    await expect(page.locator("#stickyPage")).toHaveText("Page 1 / 2");
 
-    await page.locator("#searchInput").blur();
+    await page.locator("#stickySearch").blur();
     await page.locator("body").press("ArrowRight");
-    await expect(page.locator("#topPage")).toHaveText("Page 2 / 2");
+    await expect(page.locator("#stickyPage")).toHaveText("Page 2 / 2");
 
+    await openFilters(page);
     await page.locator("#pageSize").selectOption("25");
-    await expect(page.locator("#topPage")).toHaveText("Page 1 / 3");
+    await expect(page.locator("#stickyPage")).toHaveText("Page 1 / 3");
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(25);
-    await expect(page.locator("#stickyPageSize")).toHaveValue("25");
 
-    await page.locator("#stickyPageSize").selectOption("all");
-    await expect(page.locator("#topPage")).toHaveText("Page 1 / 1");
+    await page.locator("#pageSize").selectOption("all");
+    await expect(page.locator("#stickyPage")).toHaveText("Page 1 / 1");
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(60);
 
-    await page.locator("#stickySort").selectOption("occ-asc");
+    await page.locator("#sortSelect").selectOption("occ-asc");
     await expect(page.locator(".mining-entry .entry-number").first()).toHaveText("1.");
     await expect(page.locator(".mining-entry .target-word").first()).toHaveText("語1");
-    await expect(page.locator("#sortSelect")).toHaveValue("occ-asc");
   });
 
   test("imports known words, hides known entries, and re-enables them", async ({ page }) => {
@@ -149,6 +175,7 @@ test.describe("canonical miner", () => {
     await page.locator("#knownInput").setInputFiles(SMALL_KNOWN);
     await expect(page.locator("#knownStatus")).toContainText("✓");
     await expect(page.locator("#knownStatus")).toContainText("1");
+    await openFilters(page);
     await expect(page.locator("#hideKnown")).toBeChecked();
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(2);
     await expect(page.locator("#resultStats")).toContainText("1 match Migaku known words");
@@ -162,6 +189,7 @@ test.describe("canonical miner", () => {
     await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
 
+    await openFilters(page);
     await page.locator("#sentenceFilter").selectOption("has");
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(2);
 
@@ -181,6 +209,7 @@ test.describe("canonical miner", () => {
   test("sorts by occurrences and original order", async ({ page }) => {
     await page.goto("/");
     await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
+    await openFilters(page);
 
     await page.locator("#sortSelect").selectOption("occ-asc");
     await expect(page.locator(".mining-entry .target-word").first()).toHaveText("静か");
@@ -194,12 +223,12 @@ test.describe("canonical miner", () => {
     await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
     await expect(page.locator(".mining-entry .entry-definitions").first()).toBeVisible();
 
+    await openFilters(page);
     await page.locator("#showDefinitions").uncheck();
     await expect(page.locator(".mining-entry .entry-definitions")).toHaveCount(0);
 
     await page.locator("#showFurigana").check();
     await expect(page.locator(".mining-entry .target-word ruby").first()).toBeVisible();
-    await expect(page.locator("#stickyFurigana")).toBeChecked();
 
     await page.locator("#showHighlight").check();
     await expect(page.locator(".target-highlight").first()).toBeVisible();
@@ -208,13 +237,14 @@ test.describe("canonical miner", () => {
     await page.locator("#pillHighlight").check();
     await expect(page.locator("body")).toHaveClass(/hl-pill/);
 
-    await page.locator("#stickyHl").uncheck();
+    await page.locator("#showHighlight").uncheck();
     await expect(page.locator(".target-highlight")).toHaveCount(0);
   });
 
   test("reconciles furigana highlights after DOM mutation and falls back live", async ({ page }) => {
     await page.goto("/");
     await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
+    await openFilters(page);
     await page.locator("#showHighlight").check();
     await page.locator("#showFurigana").check();
 
@@ -250,16 +280,16 @@ test.describe("canonical miner", () => {
     await page.goto("/");
     await page.locator("#jitenInput").setInputFiles(SIXTY_CSV);
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(50);
-    await page.locator("#topNext").click();
-    await expect(page.locator("#topPage")).toHaveText("Page 2 / 2");
-    await page.locator("#searchInput").fill("語59");
+    await page.locator("#stickyNext").click();
+    await expect(page.locator("#stickyPage")).toHaveText("Page 2 / 2");
+    await page.locator("#stickySearch").fill("語59");
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(1);
 
     await page.reload();
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(1);
     await expect(page.locator("#resultStats")).toContainText("Loaded 60");
-    await expect(page.locator("#searchInput")).toHaveValue("語59");
-    await expect(page.locator("#topPage")).toHaveText("Page 1 / 1");
+    await expect(page.locator("#stickySearch")).toHaveValue("語59");
+    await expect(page.locator("#stickyPage")).toHaveText("Page 1 / 1");
   });
 
   test("clears saved data after confirmation", async ({ page }) => {
@@ -275,8 +305,8 @@ test.describe("canonical miner", () => {
     );
     await expect(page.locator("#resultStats")).toHaveText("Load a Jiten CSV to begin.");
     await expect(page.locator("#jitenStatus")).toHaveText("No CSV loaded");
-    await expect(page.locator("#filtersFieldset")).toHaveAttribute("disabled", "");
-    await expect(page.locator("#searchInput")).toBeDisabled();
+    await expect(page.locator("#advancedToggle")).toBeDisabled();
+    await expect(page.locator("#advancedPanel")).toBeHidden();
 
     await page.reload();
     await expect(page.locator("#resultsList .empty-state")).toBeVisible();

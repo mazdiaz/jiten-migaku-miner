@@ -55,6 +55,8 @@ test.describe("review mode", () => {
     await expect(page.locator("#reviewButton")).toBeFocused();
 
     // Decisions land in the normal list filters.
+    await page.locator("#advancedToggle").click();
+    await expect(page.locator("#advancedPanel")).toBeVisible();
     await page.locator("#decisionFilter").selectOption("mined");
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(1);
     await expect(page.locator(".mining-entry .target-word").first()).toHaveText("気になる");
@@ -77,6 +79,8 @@ test.describe("review mode", () => {
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
 
     // Mined decision persisted and follows the word.
+    await page.locator("#advancedToggle").click();
+    await expect(page.locator("#advancedPanel")).toBeVisible();
     await page.locator("#decisionFilter").selectOption("mined");
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(1);
     await expect(page.locator(".mining-entry .target-word").first()).toHaveText("気になる");
@@ -99,13 +103,17 @@ test.describe("review mode", () => {
     await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
 
+    // Expand filters first: the disclosure stays expanded (but inert) under the overlay.
+    await page.locator("#advancedToggle").click();
+    await expect(page.locator("#advancedPanel")).toBeVisible();
+
     await openReview(page);
     await expect(reviewTarget(page)).toHaveText("気になる");
     await page.locator("#pageSize").selectOption("25");
     await page.locator("#reviewContent").click();
     await page.keyboard.press("n");
     await expect(reviewTarget(page)).toHaveText("気になる");
-    await expect(page.locator("#topPage")).toHaveText("Page 1 / 1");
+    await expect(page.locator("#stickyPage")).toHaveText("Page 1 / 1");
   });
 
   test("button clicks apply the same decisions as shortcuts", async ({ page }) => {
@@ -121,6 +129,8 @@ test.describe("review mode", () => {
     await page.locator("#reviewExit").click();
     await expect(page.locator("#reviewOverlay")).toBeHidden();
 
+    await page.locator("#advancedToggle").click();
+    await expect(page.locator("#advancedPanel")).toBeVisible();
     await page.locator("#decisionFilter").selectOption("known");
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(1);
     await expect(page.locator(".mining-entry .target-word").first()).toHaveText("気になる");

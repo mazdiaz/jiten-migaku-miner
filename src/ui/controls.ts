@@ -11,6 +11,7 @@ export interface ControlsOptions {
   downloadBackup?: (filename: string, contents: string) => void;
   onSearch?: (value: string) => void;
   onToggleImports?: () => void;
+  onToggleAdvanced?: () => void;
 }
 
 export const RESTORE_CONFIRM_MESSAGE = [
@@ -82,6 +83,7 @@ export function bindControls(
   const confirmQueueClear = options.confirmQueueClear ?? ((message: string) => globalThis.confirm(message));
   const onSearch = options.onSearch;
   const onToggleImports = options.onToggleImports;
+  const onToggleAdvanced = options.onToggleAdvanced;
   let latest: Readonly<AppState> | null = null;
   let reviewWasActive = false;
   let pendingFocus: PendingFocus | null = null;
@@ -253,39 +255,29 @@ export function bindControls(
     onToggleImports?.();
   });
 
-  bindSearch(dom.searchInput);
+  recorder.add(dom.advancedToggle, "click", () => {
+    onToggleAdvanced?.();
+  });
+
   bindSearch(dom.stickySearch);
 
   bindQueryCheckbox(dom.hideKnown, (checked) => ({ hideKnown: checked }));
-  bindQueryCheckbox(dom.stickyHideKnown, (checked) => ({ hideKnown: checked }));
   bindQueryCheckbox(dom.hideKanaOnly, (checked) => ({ hideKanaOnly: checked }));
-  bindQueryCheckbox(dom.stickyHideKana, (checked) => ({ hideKanaOnly: checked }));
 
   bindSelect(dom.sortSelect, (value) => ({ sort: value as QueryState["sort"] }));
-  bindSelect(dom.stickySort, (value) => ({ sort: value as QueryState["sort"] }));
   bindSelect(dom.sentenceFilter, (value) => ({ sentence: value as QueryState["sentence"] }));
-  bindSelect(dom.stickySentence, (value) => ({ sentence: value as QueryState["sentence"] }));
   bindSelect(dom.decisionFilter, (value) => ({ decision: value as QueryState["decision"] }));
-  bindSelect(dom.stickyDecision, (value) => ({ decision: value as QueryState["decision"] }));
   bindSelect(dom.pageSize, parsePageSize);
-  bindSelect(dom.stickyPageSize, parsePageSize);
 
   bindMinOccurrences(dom.minOccurrences);
-  bindMinOccurrences(dom.stickyMin);
 
   bindViewCheckbox(dom.showFurigana, (checked) => ({ showFurigana: checked }));
-  bindViewCheckbox(dom.stickyFurigana, (checked) => ({ showFurigana: checked }));
   bindViewCheckbox(dom.pillHighlight, (checked) => ({ pillHighlight: checked }));
-  bindViewCheckbox(dom.stickyPill, (checked) => ({ pillHighlight: checked }));
   bindViewCheckbox(dom.showHighlight, (checked) => ({ showHighlight: checked }));
-  bindViewCheckbox(dom.stickyHl, (checked) => ({ showHighlight: checked }));
   bindViewCheckbox(dom.showDefinitions, (checked) => ({ showDefinitions: checked }));
-  bindViewCheckbox(dom.stickyDefs, (checked) => ({ showDefinitions: checked }));
 
-  bindPagerButton(dom.topPrev, -1);
   bindPagerButton(dom.bottomPrev, -1);
   bindPagerButton(dom.stickyPrev, -1);
-  bindPagerButton(dom.topNext, 1);
   bindPagerButton(dom.bottomNext, 1);
   bindPagerButton(dom.stickyNext, 1);
 

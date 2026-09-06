@@ -43,14 +43,16 @@ function seedDom(): DomMap {
   add("restoreBackupInput", "input").setAttribute("type", "file");
   add("backupStatus", "span");
   add("errorBox", "div");
-  add("filtersFieldset", "fieldset");
-  add("searchInput", "input").setAttribute("type", "search");
+  const advancedToggle = add("advancedToggle", "button");
+  advancedToggle.setAttribute("aria-expanded", "false");
+  advancedToggle.setAttribute("aria-controls", "advancedPanel");
+  const advancedPanel = add("advancedPanel", "div");
+  advancedPanel.hidden = true;
   add("stickySearch", "input").setAttribute("type", "search");
-  for (const id of ["hideKnown", "hideKanaOnly", "showFurigana", "pillHighlight", "stickyPill", "showHighlight", "stickyHl", "showDefinitions", "stickyDefs", "stickyHideKnown", "stickyHideKana", "stickyFurigana"]) {
+  for (const id of ["hideKnown", "hideKanaOnly", "showFurigana", "pillHighlight", "showHighlight", "showDefinitions"]) {
     add(id, "input").setAttribute("type", "checkbox");
   }
   add("minOccurrences", "input").setAttribute("type", "number");
-  add("stickyMin", "input").setAttribute("type", "number");
 
   const withOptions = (id: string, options: Array<[string, string]>): HTMLSelectElement => {
     const select = add(id, "select") as HTMLSelectElement;
@@ -64,17 +66,10 @@ function seedDom(): DomMap {
   };
 
   withOptions("sentenceFilter", [["any", "any"], ["has", "has"], ["none", "none"]]);
-  withOptions("stickySentence", [["any", "any"], ["has", "has"], ["none", "none"]]);
   withOptions("sortSelect", [["occ-desc", "occ-desc"], ["occ-asc", "occ-asc"], ["original", "original"]]);
-  withOptions("stickySort", [["occ-desc", "occ-desc"], ["occ-asc", "occ-asc"], ["original", "original"]]);
   withOptions("pageSize", [["25", "25"], ["50", "50"], ["100", "100"], ["all", "all"]]);
-  withOptions("stickyPageSize", [["25", "25"], ["50", "50"], ["100", "100"], ["all", "all"]]);
   withOptions("decisionFilter", [
     ["all", "All decisions"], ["unreviewed", "Unreviewed"], ["known", "Known"],
-    ["mined", "Mined"], ["skip", "Skipped"], ["later", "Later"],
-  ]);
-  withOptions("stickyDecision", [
-    ["all", "All"], ["unreviewed", "Unreviewed"], ["known", "Known"],
     ["mined", "Mined"], ["skip", "Skipped"], ["later", "Later"],
   ]);
 
@@ -120,9 +115,6 @@ function seedDom(): DomMap {
   add("stickyPrev", "button");
   add("stickyNext", "button");
   add("stickyPage", "span");
-  add("topPrev", "button");
-  add("topNext", "button");
-  add("topPage", "span");
   add("bottomPrev", "button");
   add("bottomNext", "button");
   add("bottomPage", "span");
@@ -325,39 +317,32 @@ beforeEach(() => {
 });
 
 describe("decision filter select", () => {
-  it("offers exactly the plan's decision options in primary and sticky selects", () => {
+  it("offers exactly the plan's decision options in the filters select", () => {
     const dom = seedDom();
     const expectedValues = ["all", "unreviewed", "known", "mined", "skip", "later"];
     const expectedLabels = ["All decisions", "Unreviewed", "Known", "Mined", "Skipped", "Later"];
-    for (const select of [dom.decisionFilter, dom.stickyDecision]) {
-      expect([...select.options].map((option) => option.value)).toEqual(expectedValues);
-    }
+    expect([...dom.decisionFilter.options].map((option) => option.value)).toEqual(expectedValues);
     expect([...dom.decisionFilter.options].map((option) => option.textContent)).toEqual(expectedLabels);
   });
 
-  it("mirrors state.query.decision in both selects", () => {
+  it("mirrors state.query.decision in the select", () => {
     const dom = seedDom();
     const renderer = createRenderer(dom);
     const base = createInitialAppState("memory");
     renderer.render({ ...base, query: { ...base.query, decision: "mined" } });
     expect(dom.decisionFilter.value).toBe("mined");
-    expect(dom.stickyDecision.value).toBe("mined");
   });
 
-  it("keeps primary and sticky decision selects synchronized in both directions", () => {
+  it("updates the controller on change and reflects state on rerender", () => {
     const harness = setup();
     try {
-      harness.dom.stickyDecision.value = "skip";
-      harness.dom.stickyDecision.dispatchEvent(new Event("change"));
-      expect(harness.controller.calls.updateQuery.at(-1)).toEqual({ decision: "skip" });
-      harness.dom.decisionFilter.value = "later";
+      harness.dom.decisionFilter.value = "skip";
       harness.dom.decisionFilter.dispatchEvent(new Event("change"));
-      expect(harness.controller.calls.updateQuery.at(-1)).toEqual({ decision: "later" });
+      expect(harness.controller.calls.updateQuery.at(-1)).toEqual({ decision: "skip" });
 
       harness.state.query.decision = "known";
       harness.render();
       expect(harness.dom.decisionFilter.value).toBe("known");
-      expect(harness.dom.stickyDecision.value).toBe("known");
     } finally {
       harness.dispose();
     }
@@ -520,7 +505,6 @@ describe("hide-known gate", () => {
     const harness = setup();
     try {
       expect(harness.dom.hideKnown.disabled).toBe(true);
-      expect(harness.dom.stickyHideKnown.disabled).toBe(true);
     } finally {
       harness.dispose();
     }
@@ -530,7 +514,6 @@ describe("hide-known gate", () => {
     const harness = setup({ knownWords: new Set(["透明明"]) });
     try {
       expect(harness.dom.hideKnown.disabled).toBe(false);
-      expect(harness.dom.stickyHideKnown.disabled).toBe(false);
     } finally {
       harness.dispose();
     }
@@ -545,7 +528,6 @@ describe("hide-known gate", () => {
     });
     try {
       expect(harness.dom.hideKnown.disabled).toBe(false);
-      expect(harness.dom.stickyHideKnown.disabled).toBe(false);
     } finally {
       harness.dispose();
     }

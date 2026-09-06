@@ -64,6 +64,7 @@ async function bootstrap(): Promise<void> {
   bindControls(dom, controller, {
     onSearch: (value) => queryController.search(value),
     onToggleImports: () => renderer.toggleImportsExpanded(),
+    onToggleAdvanced: () => renderer.toggleAdvancedPanel(),
   });
   await controller.init();
   if (latest !== null) await discoverFolderSources(controller, latest);

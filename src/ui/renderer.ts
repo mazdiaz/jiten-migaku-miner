@@ -6,6 +6,7 @@ import type { DomMap } from "./dom";
 export interface Renderer {
   render(state: Readonly<AppState>): void;
   toggleImportsExpanded(): void;
+  toggleAdvancedPanel(): void;
 }
 
 const DECISION_LABELS: Record<WordDecisionStatus, string> = {
@@ -313,17 +314,22 @@ export function createRenderer(dom: DomMap): Renderer {
   let importsExpanded = false;
   let importsKey: string | null = null;
   let importsKeySeen = false;
+  // Advanced-panel expansion mirrors the import-panel pattern: UI-local state
+  // collapsed by default, toggled by #advancedToggle, and reset whenever the
+  // dataset identity changes so each import starts collapsed.
+  let advancedExpanded = false;
+  let advancedDatasetId: string | null = null;
   let lastState: Readonly<AppState> | null = null;
 
   const setPager = (result: QueryResult | null): void => {
     const page = result?.page ?? 0;
     const totalPages = result?.totalPages ?? 0;
     const pageText = `Page ${page} / ${totalPages}`;
-    for (const node of [dom.topPage, dom.bottomPage, dom.stickyPage]) node.textContent = pageText;
+    for (const node of [dom.bottomPage, dom.stickyPage]) node.textContent = pageText;
     const atStart = page <= 1;
     const atEnd = page === 0 || page >= totalPages;
-    for (const button of [dom.topPrev, dom.bottomPrev, dom.stickyPrev]) button.disabled = atStart;
-    for (const button of [dom.topNext, dom.bottomNext, dom.stickyNext]) button.disabled = atEnd;
+    for (const button of [dom.bottomPrev, dom.stickyPrev]) button.disabled = atStart;
+    for (const button of [dom.bottomNext, dom.stickyNext]) button.disabled = atEnd;
   };
 
   const renderItems = (state: Readonly<AppState>, hasData: boolean): void => {
@@ -362,35 +368,29 @@ export function createRenderer(dom: DomMap): Renderer {
   };
 
   const syncControls = (state: Readonly<AppState>, hasData: boolean): void => {
-    dom.filtersFieldset.disabled = !hasData;
-    dom.searchInput.value = state.query.search;
+    const datasetId = state.dataset?.id ?? null;
+    if (datasetId !== advancedDatasetId) {
+      advancedDatasetId = datasetId;
+      advancedExpanded = false;
+    }
+    dom.advancedToggle.disabled = !hasData;
+    dom.advancedPanel.hidden = !(hasData && advancedExpanded);
+    dom.advancedToggle.setAttribute("aria-expanded", advancedExpanded ? "true" : "false");
     dom.stickySearch.value = state.query.search;
     const hasKnownSource = state.knownWords.size > 0
       || [...state.wordDecisions.values()].some((entryDecision) => entryDecision.status === "known");
     dom.hideKnown.checked = state.query.hideKnown;
     dom.hideKnown.disabled = !hasKnownSource;
-    dom.stickyHideKnown.checked = state.query.hideKnown;
-    dom.stickyHideKnown.disabled = !hasKnownSource;
     dom.hideKanaOnly.checked = state.query.hideKanaOnly;
-    dom.stickyHideKana.checked = state.query.hideKanaOnly;
     dom.showFurigana.checked = state.view.showFurigana;
-    dom.stickyFurigana.checked = state.view.showFurigana;
     dom.pillHighlight.checked = state.view.pillHighlight;
-    dom.stickyPill.checked = state.view.pillHighlight;
     dom.showHighlight.checked = state.view.showHighlight;
-    dom.stickyHl.checked = state.view.showHighlight;
     dom.showDefinitions.checked = state.view.showDefinitions;
-    dom.stickyDefs.checked = state.view.showDefinitions;
     dom.sentenceFilter.value = state.query.sentence;
-    dom.stickySentence.value = state.query.sentence;
     dom.decisionFilter.value = state.query.decision;
-    dom.stickyDecision.value = state.query.decision;
     dom.minOccurrences.value = String(state.query.minOccurrences);
-    dom.stickyMin.value = String(state.query.minOccurrences);
     dom.sortSelect.value = state.query.sort;
-    dom.stickySort.value = state.query.sort;
     dom.pageSize.value = String(state.query.pageSize);
-    dom.stickyPageSize.value = String(state.query.pageSize);
     const queueCount = state.queue.normalizedWords.length;
     dom.queueToggle.textContent = `Queue (${queueCount})`;
     dom.queueToggle.disabled = hasData === false || queueCount === 0;
@@ -477,6 +477,10 @@ export function createRenderer(dom: DomMap): Renderer {
     render: renderState,
     toggleImportsExpanded(): void {
       importsExpanded = !importsExpanded;
+      if (lastState !== null) renderState(lastState);
+    },
+    toggleAdvancedPanel(): void {
+      advancedExpanded = !advancedExpanded;
       if (lastState !== null) renderState(lastState);
     },
   };

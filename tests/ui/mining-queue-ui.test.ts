@@ -41,14 +41,16 @@ function seedDom(): DomMap {
   add("restoreBackupInput", "input").setAttribute("type", "file");
   add("backupStatus", "span");
   add("errorBox", "div");
-  add("filtersFieldset", "fieldset");
-  add("searchInput", "input").setAttribute("type", "search");
+  const advancedToggle = add("advancedToggle", "button");
+  advancedToggle.setAttribute("aria-expanded", "false");
+  advancedToggle.setAttribute("aria-controls", "advancedPanel");
+  const advancedPanel = add("advancedPanel", "div");
+  advancedPanel.hidden = true;
   add("stickySearch", "input").setAttribute("type", "search");
-  for (const id of ["hideKnown", "hideKanaOnly", "showFurigana", "pillHighlight", "stickyPill", "showHighlight", "stickyHl", "showDefinitions", "stickyDefs", "stickyHideKnown", "stickyHideKana", "stickyFurigana"]) {
+  for (const id of ["hideKnown", "hideKanaOnly", "showFurigana", "pillHighlight", "showHighlight", "showDefinitions"]) {
     add(id, "input").setAttribute("type", "checkbox");
   }
   add("minOccurrences", "input").setAttribute("type", "number");
-  add("stickyMin", "input").setAttribute("type", "number");
 
   const withOptions = (id: string, options: Array<[string, string]>): HTMLSelectElement => {
     const select = add(id, "select") as HTMLSelectElement;
@@ -62,13 +64,9 @@ function seedDom(): DomMap {
   };
 
   withOptions("sentenceFilter", [["any", "any"], ["has", "has"], ["none", "none"]]);
-  withOptions("stickySentence", [["any", "any"], ["has", "has"], ["none", "none"]]);
   withOptions("sortSelect", [["occ-desc", "occ-desc"], ["occ-asc", "occ-asc"], ["original", "original"]]);
-  withOptions("stickySort", [["occ-desc", "occ-desc"], ["occ-asc", "occ-asc"], ["original", "original"]]);
   withOptions("pageSize", [["25", "25"], ["50", "50"], ["100", "100"], ["all", "all"]]);
-  withOptions("stickyPageSize", [["25", "25"], ["50", "50"], ["100", "100"], ["all", "all"]]);
   withOptions("decisionFilter", [["all", "All decisions"], ["unreviewed", "Unreviewed"]]);
-  withOptions("stickyDecision", [["all", "All"], ["unreviewed", "Unreviewed"]]);
 
   add("results", "section");
   add("resultsHeading", "h2");
@@ -108,9 +106,6 @@ function seedDom(): DomMap {
   add("stickyPrev", "button");
   add("stickyNext", "button");
   add("stickyPage", "span");
-  add("topPrev", "button");
-  add("topNext", "button");
-  add("topPage", "span");
   add("bottomPrev", "button");
   add("bottomNext", "button");
   add("bottomPage", "span");

@@ -23,6 +23,7 @@ test.describe("large dataset performance", () => {
       await expect(page.locator("#resultsList .mining-entry")).toHaveCount(50);
       const firstQueryDuration = Date.now() - importStarted;
 
+      await page.locator("#advancedToggle").click();
       await page.locator("#pageSize").selectOption("all");
       await expect(page.locator("#resultStats")).toContainText("99,800 currently shown", { timeout: 60_000 });
       await expect(page.locator("#resultsList .vl-spacer-bottom")).toHaveCount(1, { timeout: 60_000 });

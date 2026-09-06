@@ -77,6 +77,8 @@ test.describe("persistent word decisions", () => {
     await expectEntryDecision(page, "プール", "mined");
     await expectEntryDecision(page, "静か", "later");
 
+    await page.locator("#advancedToggle").click();
+    await expect(page.locator("#advancedPanel")).toBeVisible();
     await page.locator("#hideKnown").check();
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(2);
     await expect(entryByWord(page, "気になる")).toHaveCount(0);

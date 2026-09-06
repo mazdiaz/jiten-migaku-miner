@@ -29,6 +29,8 @@ test.describe("backup and restore", () => {
       page.locator(".mining-entry", { has: page.locator(".target-word", { hasText: "静か" }) }).locator(".entry-badge-decision"),
     ).toHaveText("Later");
 
+    await page.locator("#advancedToggle").click();
+    await expect(page.locator("#advancedPanel")).toBeVisible();
     await page.locator("#sortSelect").selectOption("original");
     await page.locator("#pageSize").selectOption("25");
     await page.locator("#hideKanaOnly").check();
@@ -62,6 +64,10 @@ test.describe("backup and restore", () => {
     await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
     await expect(page.locator(".entry-badge")).toHaveCount(0);
+
+    // Reimport resets the disclosure to collapsed; reopen before interacting.
+    await page.locator("#advancedToggle").click();
+    await expect(page.locator("#advancedPanel")).toBeVisible();
 
     await page.locator("#restoreBackupInput").setInputFiles({
       name: await download.suggestedFilename(),

@@ -50,66 +50,6 @@
       <div id="errorBox" class="error-box" role="alert" hidden></div>
     </section>
 
-    <section class="panel filters-panel" aria-label="Mining filters">
-      <fieldset id="filtersFieldset" class="filters-fieldset" disabled>
-        <div class="filter-grid queue-hidden">
-          <label class="control">
-            <span>Search target</span>
-             <input id="searchInput" type="search" placeholder="Word or sentence, e.g. 気になる / プール" autocomplete="off">
-          </label>
-          <label class="control">
-            <span>Sort</span>
-            <select id="sortSelect">
-              <option value="occ-desc" selected>Media occurrences ↓</option>
-              <option value="occ-asc">Media occurrences ↑</option>
-              <option value="original">Original Jiten CSV order</option>
-            </select>
-          </label>
-          <label class="control">
-            <span>Example sentence</span>
-            <select id="sentenceFilter">
-              <option value="any" selected>Any</option>
-              <option value="has">Has sentence</option>
-              <option value="none">No sentence</option>
-            </select>
-          </label>
-          <label class="control">
-            <span>Decision</span>
-            <select id="decisionFilter">
-              <option value="all" selected>All decisions</option>
-              <option value="unreviewed">Unreviewed</option>
-              <option value="known">Known</option>
-              <option value="mined">Mined</option>
-              <option value="skip">Skipped</option>
-              <option value="later">Later</option>
-            </select>
-          </label>
-          <label class="control">
-            <span>Min occurrences</span>
-            <input id="minOccurrences" type="number" min="0" step="1" value="1" inputmode="numeric">
-          </label>
-        </div>
-        <div class="filter-row-2">
-          <label class="check-control queue-hidden"><input id="hideKnown" type="checkbox" disabled> Hide Migaku-known words</label>
-          <label class="check-control queue-hidden"><input id="hideKanaOnly" type="checkbox"> Hide kana-only words</label>
-           <label class="check-control" title="Turn off when Migaku's own furigana is enabled to avoid double readings"><input id="showFurigana" type="checkbox"> Furigana on target</label>
-           <label class="check-control"><input id="pillHighlight" type="checkbox"> Pill highlight</label>
-           <label class="check-control" title="Off = sentences left completely untouched for Migaku"><input id="showHighlight" type="checkbox"> Highlight target</label>
-           <label class="check-control"><input id="showDefinitions" type="checkbox" checked> Definitions</label>
-          <span class="filter-spacer"></span>
-          <label class="control queue-hidden" style="grid-template-columns:auto auto;align-items:center;gap:8px;">
-            <span>Per page</span>
-            <select id="pageSize" style="width:90px;">
-              <option value="25">25</option>
-              <option value="50" selected>50</option>
-              <option value="100">100</option>
-              <option value="all">All</option>
-            </select>
-          </label>
-        </div>
-      </fieldset>
-    </section>
-
     <section id="results" class="results-section" aria-live="polite" aria-label="Mining results">
       <div id="stickyToolbar" class="sticky-toolbar" hidden>
         <div class="sticky-row-1">
@@ -121,49 +61,65 @@
             <span id="stickyPage" class="page-label">Page 0 / 0</span>
             <button id="stickyNext" type="button" aria-label="Next page">→</button>
           </div>
+          <button id="advancedToggle" type="button" class="advanced-toggle" aria-expanded="false" aria-controls="advancedPanel" disabled>Filters</button>
         </div>
-        <div class="sticky-row-2">
-          <label class="control queue-hidden"><span>Sort</span>
-            <select id="stickySort">
-              <option value="occ-desc">Occ ↓</option>
-              <option value="occ-asc">Occ ↑</option>
-              <option value="original">Original</option>
-            </select>
-          </label>
-          <label class="control queue-hidden"><span>Sentence</span>
-            <select id="stickySentence">
-              <option value="any">Any</option>
-              <option value="has">Has</option>
-              <option value="none">None</option>
-            </select>
-          </label>
-          <label class="control queue-hidden"><span>Decision</span>
-            <select id="stickyDecision">
-              <option value="all">All</option>
-              <option value="unreviewed">Unreviewed</option>
-              <option value="known">Known</option>
-              <option value="mined">Mined</option>
-              <option value="skip">Skipped</option>
-              <option value="later">Later</option>
-            </select>
-          </label>
-          <label class="control queue-hidden"><span>Min occ</span>
-            <input id="stickyMin" type="number" min="0" step="1" inputmode="numeric">
-          </label>
-          <label class="check-control queue-hidden"><input id="stickyHideKnown" type="checkbox"> Known</label>
-          <label class="check-control queue-hidden"><input id="stickyHideKana" type="checkbox"> Kana-only</label>
-          <label class="check-control"><input id="stickyFurigana" type="checkbox"> Furigana</label>
-          <label class="check-control"><input id="stickyPill" type="checkbox"> Pill</label>
-          <label class="check-control"><input id="stickyHl" type="checkbox"> Highlight</label>
-          <label class="check-control"><input id="stickyDefs" type="checkbox"> Defs</label>
-          <label class="control queue-hidden"><span>Per page</span>
-            <select id="stickyPageSize">
-              <option value="25">25</option>
-              <option value="50">50</option>
-              <option value="100">100</option>
-              <option value="all">All</option>
-            </select>
-          </label>
+        <div id="advancedPanel" class="sticky-row-2" hidden>
+          <fieldset class="adv-group">
+            <legend>Filters</legend>
+            <div class="adv-controls">
+              <label class="control queue-hidden">
+                <span>Sort</span>
+                <select id="sortSelect">
+                  <option value="occ-desc" selected>Media occurrences ↓</option>
+                  <option value="occ-asc">Media occurrences ↑</option>
+                  <option value="original">Original Jiten CSV order</option>
+                </select>
+              </label>
+              <label class="control queue-hidden">
+                <span>Example sentence</span>
+                <select id="sentenceFilter">
+                  <option value="any" selected>Any</option>
+                  <option value="has">Has sentence</option>
+                  <option value="none">No sentence</option>
+                </select>
+              </label>
+              <label class="control queue-hidden">
+                <span>Decision</span>
+                <select id="decisionFilter">
+                  <option value="all" selected>All decisions</option>
+                  <option value="unreviewed">Unreviewed</option>
+                  <option value="known">Known</option>
+                  <option value="mined">Mined</option>
+                  <option value="skip">Skipped</option>
+                  <option value="later">Later</option>
+                </select>
+              </label>
+              <label class="control queue-hidden">
+                <span>Min occurrences</span>
+                <input id="minOccurrences" type="number" min="0" step="1" value="1" inputmode="numeric">
+              </label>
+              <label class="check-control queue-hidden"><input id="hideKnown" type="checkbox" disabled> Hide Migaku-known words</label>
+              <label class="check-control queue-hidden"><input id="hideKanaOnly" type="checkbox"> Hide kana-only words</label>
+            </div>
+          </fieldset>
+          <fieldset class="adv-group">
+            <legend>Display</legend>
+            <div class="adv-controls">
+              <label class="check-control" title="Turn off when Migaku's own furigana is enabled to avoid double readings"><input id="showFurigana" type="checkbox"> Furigana on target</label>
+              <label class="check-control"><input id="pillHighlight" type="checkbox"> Pill highlight</label>
+              <label class="check-control" title="Off = sentences left completely untouched for Migaku"><input id="showHighlight" type="checkbox"> Highlight target</label>
+              <label class="check-control"><input id="showDefinitions" type="checkbox" checked> Definitions</label>
+              <label class="control queue-hidden">
+                <span>Per page</span>
+                <select id="pageSize">
+                  <option value="25">25</option>
+                  <option value="50" selected>50</option>
+                  <option value="100">100</option>
+                  <option value="all">All</option>
+                </select>
+              </label>
+            </div>
+          </fieldset>
         </div>
       </div>
 
@@ -184,11 +140,6 @@
           <p id="resultStats" class="result-stats">Load a Jiten CSV to begin.</p>
         </div>
         <button id="reviewButton" type="button" class="review-button" disabled>Review unreviewed</button>
-        <div class="pager" aria-label="Top page navigation">
-          <button id="topPrev" type="button" aria-label="Previous page" disabled>←</button>
-          <span id="topPage" class="page-label">Page 0 / 0</span>
-          <button id="topNext" type="button" aria-label="Next page" disabled>→</button>
-        </div>
       </div>
 
       <div id="resultsList" class="results-list">

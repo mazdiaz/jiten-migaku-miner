@@ -109,8 +109,9 @@ interface FakeController extends MinerController {
 function createFakeController(initial?: Partial<AppState>): FakeController {
   let state: AppState = { ...createInitialAppState("memory"), ...initial };
   const listeners = new Set<Listener>();
+  const calls = { updateQuery: [] as Partial<QueryState>[] };
   const controller: FakeController = {
-    calls: { updateQuery: [] },
+    calls,
     publishState(patch) {
       state = { ...state, ...patch };
       for (const listener of listeners) listener(state);
@@ -123,7 +124,7 @@ function createFakeController(initial?: Partial<AppState>): FakeController {
     importJiten: vi.fn(async (_source: FileSource) => {}),
     importKnown: vi.fn(async (_source: FileSource) => {}),
     updateQuery(patch: Partial<QueryState>) {
-      controller.calls.updateQuery.push(patch);
+      calls.updateQuery.push(patch);
     },
     updateView: vi.fn(),
     updateViewport: vi.fn(),
@@ -165,7 +166,7 @@ function setup(initial?: Partial<AppState>): Harness {
   const renderer = createRenderer(dom);
   const unsubscribe = controller.subscribe((state) => renderer.render(state));
   const bindings = bindControls(dom, controller, {
-    onToggleImports: () => renderer.toggleImportsExpanded(),
+    onToggleAdvanced: () => renderer.toggleAdvancedPanel(),
   });
   const harness: Harness = {
     dom,
@@ -181,87 +182,81 @@ function setup(initial?: Partial<AppState>): Harness {
   return harness;
 }
 
-function datasetLine(dom: DomMap): string {
-  return dom.importSummary.querySelector(".import-dataset-line")?.textContent ?? "";
-}
-
-function knownLine(dom: DomMap): string {
-  return dom.importSummary.querySelector(".import-known-line")?.textContent ?? "";
-}
-
 beforeEach(() => {
   document.body.innerHTML = "";
 });
 
-describe("import panel collapse", () => {
-  it("collapses import grid to summary after dataset load", () => {
+describe("advanced panel disclosure", () => {
+  it("resolves the new toolbar markup via getDomMap", () => {
+    const dom = seedDom();
+    expect(dom.advancedToggle.tagName).toBe("BUTTON");
+    expect(dom.advancedPanel.id).toBe("advancedPanel");
+  });
+
+  it("keeps the panel collapsed and the toggle disabled without data", () => {
     const harness = setup();
     try {
-      harness.render({
-        dataset: dataset(),
-        status: "ready",
-        knownWords: new Set(["言葉", "犬"]),
-        knownWordsName: "known.txt",
-      });
-      expect(harness.dom.importGrid.hidden).toBe(true);
-      expect(harness.dom.importSummary.hidden).toBe(false);
-      expect(datasetLine(harness.dom)).toBe("book.csv · 3 entries");
-      expect(knownLine(harness.dom)).toBe("known.txt · 2 entries");
-      expect(harness.dom.changeFiles.hidden).toBe(false);
-      expect(harness.dom.changeFiles.getAttribute("aria-expanded")).toBe("false");
-      expect(harness.dom.changeFiles.getAttribute("aria-controls")).toBe("importGrid");
+      expect(harness.dom.advancedToggle.disabled).toBe(true);
+      expect(harness.dom.advancedPanel.hidden).toBe(true);
+      expect(harness.dom.advancedToggle.getAttribute("aria-expanded")).toBe("false");
     } finally {
       harness.dispose();
     }
   });
 
-  it("restores grid when change files clicked and collapses again on second click", () => {
+  it("enables the toggle with data and expands on click", () => {
     const harness = setup({ dataset: dataset(), status: "ready" });
     try {
-      expect(harness.dom.importGrid.hidden).toBe(true);
+      expect(harness.dom.advancedToggle.disabled).toBe(false);
+      expect(harness.dom.advancedPanel.hidden).toBe(true);
 
-      harness.dom.changeFiles.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      expect(harness.dom.importGrid.hidden).toBe(false);
-      expect(harness.dom.importSummary.hidden).toBe(true);
-      expect(harness.dom.changeFiles.hidden).toBe(false);
-      expect(harness.dom.changeFiles.getAttribute("aria-expanded")).toBe("true");
+      harness.dom.advancedToggle.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      expect(harness.dom.advancedPanel.hidden).toBe(false);
+      expect(harness.dom.advancedToggle.getAttribute("aria-expanded")).toBe("true");
 
-      harness.dom.changeFiles.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      expect(harness.dom.importGrid.hidden).toBe(true);
-      expect(harness.dom.importSummary.hidden).toBe(false);
-      expect(harness.dom.changeFiles.getAttribute("aria-expanded")).toBe("false");
+      harness.dom.advancedToggle.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      expect(harness.dom.advancedPanel.hidden).toBe(true);
+      expect(harness.dom.advancedToggle.getAttribute("aria-expanded")).toBe("false");
     } finally {
       harness.dispose();
     }
   });
 
-  it("keeps grid visible in empty state and on warnings", () => {
-    const harness = setup();
-    try {
-      harness.render({ dataset: null, status: "empty" });
-      expect(harness.dom.importGrid.hidden).toBe(false);
-      expect(harness.dom.importSummary.hidden).toBe(true);
-      expect(harness.dom.changeFiles.hidden).toBe(true);
-
-      harness.render({ dataset: dataset(), status: "error", errorMessage: "Import failed" });
-      expect(harness.dom.importGrid.hidden).toBe(false);
-      expect(harness.dom.importSummary.hidden).toBe(true);
-      expect(harness.dom.changeFiles.hidden).toBe(false);
-    } finally {
-      harness.dispose();
-    }
-  });
-
-  it("recollapses after a new import", () => {
+  it("hides the expanded panel when the dataset is cleared", () => {
     const harness = setup({ dataset: dataset(), status: "ready" });
     try {
-      harness.dom.changeFiles.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      expect(harness.dom.importGrid.hidden).toBe(false);
+      harness.dom.advancedToggle.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      expect(harness.dom.advancedPanel.hidden).toBe(false);
+
+      harness.controller.publishState({ dataset: null, status: "empty" });
+      expect(harness.dom.advancedToggle.disabled).toBe(true);
+      expect(harness.dom.advancedPanel.hidden).toBe(true);
+    } finally {
+      harness.dispose();
+    }
+  });
+
+  it("recollapses after a new dataset import", () => {
+    const harness = setup({ dataset: dataset("d1"), status: "ready" });
+    try {
+      harness.dom.advancedToggle.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      expect(harness.dom.advancedPanel.hidden).toBe(false);
 
       harness.controller.publishState({ dataset: dataset("d2"), status: "ready" });
-      expect(harness.dom.importGrid.hidden).toBe(true);
-      expect(harness.dom.importSummary.hidden).toBe(false);
-      expect(harness.dom.changeFiles.getAttribute("aria-expanded")).toBe("false");
+      expect(harness.dom.advancedPanel.hidden).toBe(true);
+      expect(harness.dom.advancedToggle.getAttribute("aria-expanded")).toBe("false");
+    } finally {
+      harness.dispose();
+    }
+  });
+
+  it("survivor filter controls stay live while the panel is collapsed", () => {
+    const harness = setup({ dataset: dataset(), status: "ready" });
+    try {
+      expect(harness.dom.advancedPanel.hidden).toBe(true);
+      harness.dom.sortSelect.value = "occ-asc";
+      harness.dom.sortSelect.dispatchEvent(new Event("change"));
+      expect(harness.controller.calls.updateQuery.at(-1)).toEqual({ sort: "occ-asc" });
     } finally {
       harness.dispose();
     }
