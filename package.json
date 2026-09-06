@@ -9,6 +9,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
+    "test:e2e:prod": "playwright test -c playwright.prod.config.ts",
+    "serve:root": "node scripts/serve-root.mjs",
     "check": "npm run typecheck && npm run test && npm run build"
   },
   "devDependencies": {
