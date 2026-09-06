@@ -72,7 +72,7 @@ Keep Task 3's lock; document the crash window.
 
 1. **Atomicity:** with fake-indexeddb, abort the `restoreUserState` transaction (e.g., inject a put failure on the last store written) and assert `knownWordSets`, `meta.activeKnownWordSetId`, `wordDecisions`, and `preferences` are all byte-identical to pre-restore state.
 2. **Happy path:** full backup → restore round trip leaves all three categories matching the backup; `knownWordSets` contains exactly one record (orphan fix).
-3. **Empty/null categories:** backup with `knownWords: null` and `preferences: null` clears the corresponding durable state in the same transaction.
+3. **Empty/null categories:** backup with `knownWords: null` and `preferences: null` clears the corresponding durable state in the same transaction. [errata 2026-09-06: implemented behavior writes DEFAULT query/view preferences (Wave-1 pinned contract); clearing was rejected to preserve restore semantics — see phase2 commit 20e2629 tests]
 4. **Fallback:** a store stub without `restoreUserState` still restores via the existing per-category path, including rollback-on-error behavior.
 5. **Memory fallback:** `storageOperation` retry after an injected IndexedDB failure routes `restoreUserState` to the memory store and restore still completes.
 6. **Duplicate decisions:** a backup with duplicate `normalizedWord` aborts the whole transaction (parity with `replaceAll`, indexed-db.ts:770-779).

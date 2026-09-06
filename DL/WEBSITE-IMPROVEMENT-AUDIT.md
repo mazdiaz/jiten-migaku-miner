@@ -85,10 +85,10 @@ Reviewed application/controller, domain, worker, storage, platform adapters, UI/
 
 ### 1. Keep Queue Mode queries queue-aware
 
-- [ ] Centralize mode-aware query dispatch for refresh, page changes, search/filter updates, and viewport requests.
-- [ ] Preserve the include-list and queue-add order for every Queue Mode query.
-- [ ] Keep normal filters and page state unchanged while queueing/mining.
-- [ ] Test large-queue paging and scrolling, not only initial queue entry.
+- [x] Centralize mode-aware query dispatch for refresh, page changes, search/filter updates, and viewport requests. (verified: queue-mode dispatch regressions / 7b43332)
+- [x] Preserve the include-list and queue-add order for every Queue Mode query. (verified: filter/page/viewport include-list regressions / 7b43332)
+- [x] Keep normal filters and page state unchanged while queueing/mining. (verified: queue path skips preference persistence — exit restores saved normal filters / 7b43332)
+- [ ] Test large-queue paging and scrolling, not only initial queue entry. (partial: paging verified / 7b43332; scroll anchoring deferred to Phase 5)
 
 **Confirmed problem:** some query/page/viewport updates take the normal query path without the queue include-list and can display unqueued words while the UI still says Queue Mode.
 
@@ -96,10 +96,10 @@ Reviewed application/controller, domain, worker, storage, platform adapters, UI/
 
 ### 2. Use one canonical word identity
 
-- [ ] Remove controller-only case folding where it conflicts with imported identity.
-- [ ] Use consistent identity for list decisions, review decisions, reset, queue add/remove, and worker matching.
-- [ ] Test real uppercase and mixed-case imported terms, including `NHK`.
-- [ ] Account for existing persisted identity semantics before changing normalization globally.
+- [x] Remove controller-only case folding where it conflicts with imported identity. (verified: NHK/mixed-case regressions at worker, controller, queue-order, DOM / 7ca6bb3)
+- [x] Use consistent identity for list decisions, review decisions, reset, queue add/remove, and worker matching. (verified: NHK/mixed-case regressions at worker, controller, queue-order, DOM / 7ca6bb3)
+- [x] Test real uppercase and mixed-case imported terms, including `NHK`. (verified: NHK/mixed-case regressions at worker, controller, queue-order, DOM / 7ca6bb3)
+- [x] Account for existing persisted identity semantics before changing normalization globally. (verified: no-migration lowercase-match design + compat analysis in task-2 report / 7ca6bb3)
 
 **Confirmed problem:** controller lowercases keys while imported dataset identity preserves case. Decisions and queue membership can fail to match the corresponding row.
 
@@ -107,12 +107,12 @@ Reviewed application/controller, domain, worker, storage, platform adapters, UI/
 
 ### 3. Make Review errors and sessions reliable
 
-- [ ] Render non-null review errors independently of review status.
-- [ ] Keep the current card and retry controls visible after failed persistence.
-- [ ] Add a modal error region with appropriate alert semantics.
-- [ ] Stop/invalidate review when the active dataset changes.
-- [ ] Capture review-session generation in async queries and decision continuations.
-- [ ] Test stop/restart and dataset replacement during delayed operations.
+- [x] Render non-null review errors independently of review status. (verified: review error alert + card retention, session generation, dataset-change stop regressions / 1a6eb69)
+- [x] Keep the current card and retry controls visible after failed persistence. (verified: review error alert + card retention, session generation, dataset-change stop regressions / 1a6eb69)
+- [x] Add a modal error region with appropriate alert semantics. (verified: review error alert + card retention, session generation, dataset-change stop regressions / 1a6eb69; role=alert region)
+- [x] Stop/invalidate review when the active dataset changes. (verified: review error alert + card retention, session generation, dataset-change stop regressions / 1a6eb69)
+- [x] Capture review-session generation in async queries and decision continuations. (verified: review error alert + card retention, session generation, dataset-change stop regressions / 1a6eb69)
+- [x] Test stop/restart and dataset replacement during delayed operations. (verified: review error alert + card retention, session generation, dataset-change stop regressions / 1a6eb69)
 
 **Confirmed problems:** failed decisions leave status `ready`, but the renderer only shows the error when status is `error`; dataset replacement can leave a stale review card visible.
 
@@ -181,10 +181,10 @@ Measurements are fixture- and layout-dependent, not universal performance thresh
 
 ### Browser-Reproduced Focus Defects
 
-- [ ] Preserve or intentionally restore focus after Queue and decision actions rerender entries.
-- [ ] When a row disappears, focus the next relevant entry or the results heading.
-- [ ] Contain keyboard focus inside Review and make background controls inert.
-- [ ] Retain return-focus behavior when Review closes.
+- [x] Preserve or intentionally restore focus after Queue and decision actions rerender entries. (verified: focus restoration tiers + review trap + inert + return-focus unit/e2e / 4a565d7)
+- [x] When a row disappears, focus the next relevant entry or the results heading. (verified: focus restoration tiers + review trap + inert + return-focus unit/e2e / 4a565d7)
+- [x] Contain keyboard focus inside Review and make background controls inert. (verified: focus restoration tiers + review trap + inert + return-focus unit/e2e / 4a565d7)
+- [x] Retain return-focus behavior when Review closes. (verified: focus restoration tiers + review trap + inert + return-focus unit/e2e / 4a565d7)
 
 **Observed:** activating Queue moves focus to `body`; Shift+Tab from the opened Review panel reaches the background `bottomNext` button.
 
