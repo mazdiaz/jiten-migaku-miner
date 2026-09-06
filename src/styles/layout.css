@@ -110,6 +110,16 @@ input[type="file"] {
 
 .clear-note { color: var(--subtle); font-size: 0.82rem; }
 
+.portability-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.portability-row .clear-button { color: var(--text); }
+
 .error-box {
   margin-top: 14px;
   padding: 13px 15px;

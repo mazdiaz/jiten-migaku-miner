@@ -6,7 +6,26 @@ import type { DomMap } from "./dom";
 export interface ControlsOptions {
   confirmClear?: (message: string) => boolean;
   confirmQueueClear?: (message: string) => boolean;
+  confirmRestore?: (message: string) => boolean;
+  downloadBackup?: (filename: string, contents: string) => void;
   onSearch?: (value: string) => void;
+}
+
+export const RESTORE_CONFIRM_MESSAGE = [
+  "Restore this backup?",
+  "",
+  "This will replace your current Migaku-known list, word decisions, and preferences.",
+  "Your imported Jiten dataset will not be deleted.",
+].join("\n");
+
+function defaultDownloadBackup(filename: string, contents: string): void {
+  const blob = new Blob([contents], { type: "application/json;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
 }
 
 export interface ControlBindings {
@@ -223,6 +242,47 @@ export function bindControls(
     if (confirmClear("Clear all saved data from this browser? Imported datasets, known words, and preferences will be removed.")) {
       void controller.clearSavedData();
     }
+  });
+
+  const confirmRestore = options.confirmRestore ?? ((message: string) => globalThis.confirm(message));
+  const downloadBackup = options.downloadBackup ?? defaultDownloadBackup;
+
+  recorder.add(dom.exportBackup, "click", () => {
+    void (async () => {
+      try {
+        const json = await controller.exportBackup();
+        const date = new Date().toISOString().slice(0, 10);
+        downloadBackup(`jiten-migaku-miner-backup-${date}.json`, json);
+        dom.backupStatus.textContent = "Backup exported.";
+      } catch (error) {
+        dom.backupStatus.textContent = `Backup could not be exported: ${error instanceof Error ? error.message : String(error)}`;
+      }
+    })();
+  });
+
+  recorder.add(dom.restoreBackup, "click", () => {
+    dom.restoreBackupInput.click();
+  });
+
+  recorder.add(dom.restoreBackupInput, "change", () => {
+    const file = dom.restoreBackupInput.files?.[0] ?? null;
+    dom.restoreBackupInput.value = "";
+    if (file === null) return;
+    void (async () => {
+      try {
+        const text = await file.text();
+        if (!confirmRestore(RESTORE_CONFIRM_MESSAGE)) {
+          dom.backupStatus.textContent = "Restore cancelled.";
+          return;
+        }
+        await controller.restoreBackup(text);
+        if (latest === null || latest.errorMessage !== null) return;
+        dom.backupStatus.textContent =
+          `Backup restored: ${latest.knownWords.size.toLocaleString()} Migaku-known words · ${latest.wordDecisions.size.toLocaleString()} decisions.`;
+      } catch {
+        dom.backupStatus.textContent = "";
+      }
+    })();
   });
 
   const REVIEW_ACTION_KEYS: Record<string, WordDecisionStatus> = {

@@ -39,6 +39,7 @@ export interface WordDecisionStore {
   list(): Promise<WordDecision[]>;
   set(decision: WordDecision): Promise<void>;
   remove(normalizedWord: string): Promise<void>;
+  replaceAll(decisions: readonly WordDecision[]): Promise<void>;
   clear?(): Promise<void> | void;
 }
 

@@ -756,6 +756,31 @@ class IndexedDbWordDecisionStore implements WordDecisionStore {
     });
   }
 
+  async replaceAll(decisions: readonly WordDecision[]): Promise<void> {
+    const records = decisions.map(cloneDecision);
+    await withDatabase(this.databaseName, async (database) => {
+      await runTransaction<void>(
+        database,
+        [WORD_DECISIONS_STORE],
+        "readwrite",
+        (transaction, resolveResult, abort) => {
+          const store = transaction.objectStore(WORD_DECISIONS_STORE);
+          store.clear();
+          const seen = new Set<string>();
+          for (const record of records) {
+            if (seen.has(record.normalizedWord)) {
+              abort(new Error(`Duplicate word decision: ${record.normalizedWord}`));
+              return;
+            }
+            seen.add(record.normalizedWord);
+            store.put(record);
+          }
+          resolveResult(undefined);
+        },
+      );
+    });
+  }
+
   async clear(): Promise<void> {
     await withDatabase(this.databaseName, async (database) => {
       await runTransaction<void>(

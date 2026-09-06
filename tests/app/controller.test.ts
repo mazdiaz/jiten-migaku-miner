@@ -2,8 +2,10 @@ import "fake-indexeddb/auto";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Entry, QueryResult, QueryState, ViewState, WordDecisionStatus } from "../../src/domain/types";
 import type { AppState, FileSource } from "../../src/app/state";
+import { DEFAULT_QUERY, DEFAULT_VIEW } from "../../src/app/state";
 import {
   createMinerController,
+  MAX_BACKUP_BYTES,
   type MinerControllerOptions,
 } from "../../src/app/controller";
 import type { WorkerClient, WorkerQueryInput } from "../../src/app/worker-client";
@@ -1283,6 +1285,253 @@ describe("MinerController review mode", () => {
     const reviewCallsBefore = worker.queryCalls.filter((call) => call.queryChannel === "review").length;
     await controller.startReview();
     expect(worker.queryCalls.filter((call) => call.queryChannel === "review").length).toBe(reviewCallsBefore);
+  });
+});
+
+describe("MinerController backup and restore", () => {
+  afterEach(() => {
+    delete (globalThis as { indexedDB?: IDBFactory }).indexedDB;
+  });
+
+  const backupQuery: QueryState = { ...query, decision: "all" };
+  const restoredQuery: QueryState = {
+    search: "犬",
+    hideKnown: true,
+    hideKanaOnly: true,
+    sentence: "has",
+    minOccurrences: 2,
+    sort: "original",
+    pageSize: 25,
+    page: 2,
+    decision: "mined",
+  };
+  const restoredView: ViewState = {
+    showFurigana: true,
+    pillHighlight: true,
+    showHighlight: false,
+    showDefinitions: false,
+  };
+
+  function backupText(overrides: Record<string, unknown> = {}): string {
+    return JSON.stringify({
+      format: "jiten-migaku-miner-backup",
+      version: 1,
+      exportedAt: "2026-09-06T00:00:00.000Z",
+      knownWords: { name: "known.txt", words: ["犬", "猫"] },
+      wordDecisions: [
+        { normalizedWord: "犬", status: "mined", updatedAt: "2026-08-01T00:00:00.000Z" },
+        { normalizedWord: "鳥", status: "later", updatedAt: "2026-08-02T00:00:00.000Z" },
+      ],
+      preferences: { query: restoredQuery, view: restoredView, page: 2 },
+      ...overrides,
+    });
+  }
+
+  async function seedForRestore(store: AppStore): Promise<void> {
+    await seedActive(store);
+    await store.knownWords.save("old-known", "old.txt", new Set(["古い"]));
+    await store.wordDecisions.set({ normalizedWord: "古い", status: "skip", updatedAt: "2026-07-01T00:00:00.000Z" });
+    await store.preferences.save({ query: { ...backupQuery, search: "古い", page: 1 }, view, page: 1 });
+  }
+
+  function restoreSetup(store: AppStore) {
+    const worker = new FakeWorkerClient();
+    const controller = createMinerController(decisionOptions(store, worker));
+    const states: Readonly<AppState>[] = [];
+    controller.subscribe((state) => states.push(state));
+    return { worker, controller, states };
+  }
+
+  it("exports known words, decisions, and preferences without dataset rows or queue state", async () => {
+    const store = createMemoryAppStore();
+    await seedForRestore(store);
+    const { controller } = restoreSetup(store);
+    await controller.init();
+
+    const json = await controller.exportBackup();
+    const parsed = JSON.parse(json) as Record<string, unknown>;
+
+    expect(parsed.format).toBe("jiten-migaku-miner-backup");
+    expect(parsed.version).toBe(1);
+    expect(parsed.exportedAt).toBe(FIXED_NOW);
+    expect(parsed.knownWords).toEqual({ name: "old.txt", words: ["古い"] });
+    expect(parsed.wordDecisions).toEqual([
+      { normalizedWord: "古い", status: "skip", updatedAt: "2026-07-01T00:00:00.000Z" },
+    ]);
+    expect(parsed.preferences).toMatchObject({ page: 1 });
+    expect(json).not.toContain("entryCount");
+    expect(json).not.toContain("normalizedWords");
+    expect(json).not.toContain("old-entry");
+  });
+
+  it("exports an empty backup when nothing is stored", async () => {
+    const store = createMemoryAppStore();
+    const { controller } = restoreSetup(store);
+    await controller.init();
+
+    const json = await controller.exportBackup();
+    const parsed = JSON.parse(json) as Record<string, unknown>;
+
+    expect(parsed.knownWords).toBeNull();
+    expect(parsed.wordDecisions).toEqual([]);
+    expect(parsed.preferences).toMatchObject({ page: 1 });
+  });
+
+  it("restores all three categories, keeps the dataset, and requeries", async () => {
+    const store = createMemoryAppStore();
+    await seedForRestore(store);
+    const { worker, controller, states } = restoreSetup(store);
+    worker.queryResult = { ...result(), page: 2, totalPages: 2 };
+    await controller.init();
+    const datasetBefore = states.at(-1)!.dataset;
+    const queryCallsBefore = worker.queryCalls.length;
+
+    await controller.restoreBackup(backupText());
+
+    const final = states.at(-1)!;
+    expect(final.knownWords).toEqual(new Set(["犬", "猫"]));
+    expect(final.knownWordsName).toBe("known.txt");
+    expect(final.wordDecisions.get("犬")).toMatchObject({ status: "mined" });
+    expect(final.wordDecisions.get("鳥")).toMatchObject({ status: "later" });
+    expect(final.wordDecisions.has("古い")).toBe(false);
+    expect(final.query).toEqual(restoredQuery);
+    expect(final.view).toEqual(restoredView);
+    expect(final.page).toBe(2);
+    expect(final.dataset).toEqual(datasetBefore);
+    expect(final.status).toBe("ready");
+    expect(final.errorMessage).toBeNull();
+    expect(worker.queryCalls.length).toBeGreaterThan(queryCallsBefore);
+    expect(worker.queryCalls.at(-1)?.decisions).toEqual([
+      ["犬", "mined"],
+      ["鳥", "later"],
+    ]);
+    expect(await store.preferences.load()).toEqual({ query: restoredQuery, view: restoredView, page: 2 });
+  });
+
+  it("clears the imported known list when knownWords is null", async () => {
+    const store = createMemoryAppStore();
+    await seedForRestore(store);
+    const { controller, states } = restoreSetup(store);
+    await controller.init();
+
+    await controller.restoreBackup(backupText({ knownWords: null }));
+
+    const final = states.at(-1)!;
+    expect(final.knownWords.size).toBe(0);
+    expect(final.knownWordsName).toBeNull();
+    expect(await store.knownWords.getActive()).toBeNull();
+  });
+
+  it("resets preferences to defaults when preferences is null", async () => {
+    const store = createMemoryAppStore();
+    await seedForRestore(store);
+    const { controller, states } = restoreSetup(store);
+    await controller.init();
+
+    await controller.restoreBackup(backupText({ preferences: null }));
+
+    const final = states.at(-1)!;
+    expect(final.query).toEqual({ ...DEFAULT_QUERY });
+    expect(final.view).toEqual({ ...DEFAULT_VIEW });
+    expect(final.page).toBe(1);
+    expect(await store.preferences.load()).toEqual({
+      query: { ...DEFAULT_QUERY },
+      view: { ...DEFAULT_VIEW },
+      page: 1,
+    });
+  });
+
+  it("performs zero writes when the backup fails to parse", async () => {
+    const store = createMemoryAppStore();
+    await seedForRestore(store);
+    const { controller, states } = restoreSetup(store);
+    await controller.init();
+    const before = states.at(-1)!;
+
+    await expect(controller.restoreBackup("{not json")).rejects.toThrow();
+
+    expect(await store.knownWords.getActive()).toMatchObject({ id: "old-known" });
+    expect(await store.wordDecisions.list()).toEqual([
+      { normalizedWord: "古い", status: "skip", updatedAt: "2026-07-01T00:00:00.000Z" },
+    ]);
+    expect(await store.preferences.load()).toMatchObject({ page: 1 });
+    expect(states.at(-1)!.knownWords).toEqual(before.knownWords);
+    expect(states.at(-1)!.wordDecisions.size).toBe(before.wordDecisions.size);
+    expect(states.at(-1)!.errorMessage).toContain("Backup could not be restored");
+  });
+
+  it("rejects oversized backups before any write", async () => {
+    const store = createMemoryAppStore();
+    await seedForRestore(store);
+    const { controller } = restoreSetup(store);
+    await controller.init();
+
+    const oversized = " ".repeat(MAX_BACKUP_BYTES + 1);
+    await expect(controller.restoreBackup(oversized)).rejects.toThrow("too large");
+    expect(await store.knownWords.getActive()).toMatchObject({ id: "old-known" });
+  });
+
+  it("rolls back all three categories when the decision replacement fails", async () => {
+    const store = createMemoryAppStore();
+    await seedForRestore(store);
+    const { controller, states } = restoreSetup(store);
+    await controller.init();
+
+    store.wordDecisions.replaceAll = async () => {
+      throw new Error("decision replacement failed");
+    };
+
+    await expect(controller.restoreBackup(backupText())).rejects.toThrow("decision replacement failed");
+
+    expect(await store.knownWords.getActive()).toMatchObject({ id: "old-known" });
+    expect(await store.wordDecisions.list()).toEqual([
+      { normalizedWord: "古い", status: "skip", updatedAt: "2026-07-01T00:00:00.000Z" },
+    ]);
+    expect(await store.preferences.load()).toMatchObject({ page: 1 });
+
+    const final = states.at(-1)!;
+    expect(final.knownWords).toEqual(new Set(["古い"]));
+    expect(final.errorMessage).toContain("decision replacement failed");
+    expect(final.status).toBe("ready");
+  });
+
+  it("rolls back and warns when the preferences write fails", async () => {
+    const store = createMemoryAppStore();
+    await seedForRestore(store);
+    const { controller, states } = restoreSetup(store);
+    await controller.init();
+
+    store.preferences.save = async () => {
+      throw new Error("preferences write failed");
+    };
+
+    await expect(controller.restoreBackup(backupText())).rejects.toThrow("preferences write failed");
+
+    expect(await store.knownWords.getActive()).toMatchObject({ id: "old-known" });
+    expect(await store.wordDecisions.list()).toEqual([
+      { normalizedWord: "古い", status: "skip", updatedAt: "2026-07-01T00:00:00.000Z" },
+    ]);
+    expect(states.at(-1)!.errorMessage).toContain("preferences write failed");
+    expect(states.at(-1)!.knownWords).toEqual(new Set(["古い"]));
+  });
+
+  it("reports rollback failures instead of reporting success", async () => {
+    const store = createMemoryAppStore();
+    await seedForRestore(store);
+    const { controller, states } = restoreSetup(store);
+    await controller.init();
+
+    store.wordDecisions.replaceAll = async () => {
+      throw new Error("decision replacement failed");
+    };
+    store.knownWords.save = async () => {
+      throw new Error("known rollback failed");
+    };
+
+    await expect(controller.restoreBackup(backupText())).rejects.toThrow();
+
+    expect(states.at(-1)!.errorMessage).toContain("Known-word rollback failed");
+    expect(states.at(-1)!.status).toBe("ready");
   });
 });
 

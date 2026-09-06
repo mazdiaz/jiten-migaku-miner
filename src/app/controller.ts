@@ -8,6 +8,7 @@ import type {
   WordDecisionStatus,
 } from "../domain/types";
 import { normalizeText } from "../domain/text";
+import { parseBackup, serializeBackup, type MinerBackupV1 } from "../domain/backup";
 import { createSessionQueueStore, type SessionQueueStore } from "../platform/session-queue";
 import { createIndexedDbAppStore } from "../storage/indexed-db";
 import { createMemoryAppStore } from "../storage/memory-store";
@@ -19,6 +20,7 @@ import {
   cloneAppState,
   snapshotAppState,
   DEFAULT_QUERY,
+  DEFAULT_VIEW,
   EMPTY_REVIEW,
   type AppState,
   type FileSource,
@@ -62,6 +64,13 @@ function defaultLegacyStorage(): Storage | null {
 
 const VIEWPORT_WINDOW_SIZE = 100;
 const QUEUE_SAFETY_THRESHOLD = 5_000;
+export const MAX_BACKUP_BYTES = 25 * 1024 * 1024;
+
+interface UserStateSnapshot {
+  known: { id: string; name: string; words: Set<string> } | null;
+  decisions: WordDecision[];
+  preferences: { query: QueryState; view: ViewState; page: number } | null;
+}
 
 function orderByQueue(items: readonly EntryWithKnown[], queue: readonly string[]): EntryWithKnown[] {
   const order = new Map(queue.map((word, index) => [word, index]));
@@ -433,6 +442,179 @@ class MinerControllerImpl implements MinerController {
     this.state.queue = { ...this.state.queue, mode: "normal" };
     this.publish();
     void this.runQuery();
+  }
+
+  async exportBackup(): Promise<string> {
+    const known = await this.storageOperation((store) => store.knownWords.getActive());
+    const knownWords = known === null
+      ? null
+      : { name: known.name, words: [...known.words] };
+    return serializeBackup({
+      exportedAt: this.now(),
+      knownWords,
+      wordDecisions: this.state.wordDecisions.values(),
+      preferences: {
+        query: { ...this.state.query, page: this.state.page },
+        view: { ...this.state.view },
+        page: this.state.page,
+      },
+    });
+  }
+
+  async restoreBackup(text: string): Promise<void> {
+    if (text.length > MAX_BACKUP_BYTES) {
+      const message = `Backup is too large: ${text.length} bytes exceeds the ${MAX_BACKUP_BYTES} byte limit`;
+      this.setState({ errorMessage: `Backup could not be restored: ${message}` });
+      throw new Error(message);
+    }
+    let backup: MinerBackupV1;
+    try {
+      backup = parseBackup(text);
+    } catch (error) {
+      this.setState({ errorMessage: `Backup could not be restored: ${errorMessage(error)}` });
+      throw error;
+    }
+
+    const snapshot = await this.storageOperation(async (store) => ({
+      known: await store.knownWords.getActive(),
+      decisions: await store.wordDecisions.list(),
+      preferences: await store.preferences.load(),
+    }));
+
+    const knownId = this.createId("known");
+    let decisionsWritten = false;
+    let preferencesWritten = false;
+    try {
+      await this.writeRestoredKnownWords(knownId, backup);
+      await this.storageOperation((store) => store.wordDecisions.replaceAll(backup.wordDecisions));
+      decisionsWritten = true;
+      await this.writeRestoredPreferences(backup);
+      preferencesWritten = true;
+    } catch (error) {
+      const rollbackWarning = await this.rollbackUserState(snapshot, {
+        knownWritten: true,
+        decisionsWritten,
+        preferencesWritten,
+      });
+      const message = rollbackWarning === null
+        ? errorMessage(error)
+        : `${errorMessage(error)} ${rollbackWarning}`;
+      this.setState({ errorMessage: `Backup could not be restored: ${message}` });
+      throw error;
+    }
+
+    this.applyRestoredState(backup);
+    // Queue contents and review session are transient; restore never injects
+    // them, and mining/review mode cannot continue over replaced decisions.
+    if (this.state.queue.mode === "queue") {
+      this.state.queue = { ...this.state.queue, mode: "normal" };
+    }
+    if (this.state.review.active) this.stopReview();
+    const dataset = this.state.dataset;
+    if (dataset === null) {
+      this.setState({ status: "empty", errorMessage: this.warningMessage });
+      await this.persistPreferences();
+      return;
+    }
+    this.setState({ status: "loading", errorMessage: this.warningMessage });
+    await this.loadAndQuery(dataset.id, dataset.entryCount);
+  }
+
+  private async writeRestoredKnownWords(knownId: string, backup: MinerBackupV1): Promise<void> {
+    if (backup.knownWords === null) {
+      const active = await this.storageOperation((store) => store.knownWords.getActive());
+      if (active === null) return;
+      await this.storageOperation(async (store) => {
+        if (store.knownWords.remove === undefined) throw new Error("Known-word store cannot remove records");
+        await store.knownWords.remove(active.id);
+      });
+      return;
+    }
+    const words = new Set(backup.knownWords.words);
+    await this.storageOperation((store) => store.knownWords.save(knownId, backup.knownWords!.name, words));
+  }
+
+  private async writeRestoredPreferences(backup: MinerBackupV1): Promise<void> {
+    const preferences = backup.preferences ?? {
+      query: { ...DEFAULT_QUERY, page: 1 },
+      view: { ...DEFAULT_VIEW },
+      page: 1,
+    };
+    await this.storageOperation((store) => store.preferences.save(preferences));
+  }
+
+  private async rollbackUserState(
+    snapshot: UserStateSnapshot,
+    written: { knownWritten: boolean; decisionsWritten: boolean; preferencesWritten: boolean },
+  ): Promise<string | null> {
+    const failures: string[] = [];
+    if (written.preferencesWritten) {
+      try {
+        if (snapshot.preferences !== null) {
+          await this.storageOperation((store) => store.preferences.save(snapshot.preferences!));
+        } else {
+          await this.storageOperation(async (store) => {
+            if (store.preferences.clear === undefined) throw new Error("Preference store cannot clear records");
+            await store.preferences.clear();
+          });
+        }
+      } catch (error) {
+        failures.push(`Preferences rollback failed: ${errorMessage(error)}`);
+      }
+    }
+    if (written.decisionsWritten) {
+      try {
+        await this.storageOperation((store) => store.wordDecisions.replaceAll(snapshot.decisions));
+      } catch (error) {
+        failures.push(`Word decision rollback failed: ${errorMessage(error)}`);
+      }
+    }
+    if (written.knownWritten) {
+      try {
+        if (snapshot.known !== null) {
+          await this.storageOperation((store) =>
+            store.knownWords.save(snapshot.known!.id, snapshot.known!.name, snapshot.known!.words)
+          );
+        } else {
+          const active = await this.storageOperation((store) => store.knownWords.getActive());
+          if (active !== null) {
+            await this.storageOperation(async (store) => {
+              if (store.knownWords.remove === undefined) throw new Error("Known-word store cannot remove records");
+              await store.knownWords.remove(active.id);
+            });
+          }
+        }
+      } catch (error) {
+        failures.push(`Known-word rollback failed: ${errorMessage(error)}`);
+      }
+    }
+    return failures.length === 0 ? null : failures.join(" ");
+  }
+
+  private applyRestoredState(backup: MinerBackupV1): void {
+    if (backup.knownWords === null) {
+      this.state.knownWords = new Set<string>();
+      this.state.knownWordsName = null;
+    } else {
+      this.state.knownWords = new Set(backup.knownWords.words);
+      this.state.knownWordsName = backup.knownWords.name;
+    }
+    this.state.wordDecisions = new Map(
+      backup.wordDecisions.map((decision) => [decision.normalizedWord, { ...decision }]),
+    );
+    const preferences = backup.preferences;
+    if (preferences === null) {
+      this.state.query = { ...DEFAULT_QUERY };
+      this.state.view = { ...DEFAULT_VIEW };
+      this.state.page = 1;
+    } else {
+      this.state.query = { ...DEFAULT_QUERY, ...preferences.query, page: preferences.page };
+      this.state.view = { ...preferences.view };
+      this.state.page = preferences.page;
+    }
+    this.viewportStart = 0;
+    this.queryGeneration += 1;
+    this.state.result = null;
   }
 
   async clearSavedData(): Promise<void> {

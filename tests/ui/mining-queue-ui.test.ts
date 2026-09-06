@@ -26,6 +26,10 @@ function seedDom(): DomMap {
   add("jitenStatus", "div");
   add("knownStatus", "div");
   add("clearData", "button");
+  add("exportBackup", "button");
+  add("restoreBackup", "button");
+  add("restoreBackupInput", "input").setAttribute("type", "file");
+  add("backupStatus", "span");
   add("errorBox", "div");
   add("filtersFieldset", "fieldset");
   add("searchInput", "input").setAttribute("type", "search");
@@ -112,6 +116,8 @@ interface FakeController extends MinerController {
     clearQueue: number;
     startQueueMode: number;
     stopQueueMode: number;
+    exportBackup: number;
+    restoreBackup: string[];
     updateQuery: Partial<QueryState>[];
   };
   publishState(patch: Partial<AppState>): void;
@@ -127,6 +133,8 @@ function createFakeController(initial?: Partial<AppState>): FakeController {
     clearQueue: 0,
     startQueueMode: 0,
     stopQueueMode: 0,
+    exportBackup: 0,
+    restoreBackup: [] as string[],
     updateQuery: [] as Partial<QueryState>[],
   };
   const controller: FakeController = {
@@ -170,6 +178,13 @@ function createFakeController(initial?: Partial<AppState>): FakeController {
       calls.stopQueueMode += 1;
     }),
     clearSavedData: vi.fn(async () => {}),
+    exportBackup: vi.fn(async () => {
+      calls.exportBackup += 1;
+      return "{}";
+    }),
+    restoreBackup: vi.fn(async (text: string) => {
+      calls.restoreBackup.push(text);
+    }),
     init: vi.fn(async () => {}),
   };
   return controller;
