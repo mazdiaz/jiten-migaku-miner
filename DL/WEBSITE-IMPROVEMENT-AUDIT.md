@@ -53,7 +53,7 @@ Reviewed application/controller, domain, worker, storage, platform adapters, UI/
 ### 3. Bound every IndexedDB chunk read to its dataset
 
 - [x] Preserve the dataset upper bound on every chunk-pagination batch. (verified: never reads another dataset's chunks after the first pagination batch / bc11d75)
-- [x] Add a regression combining multiple datasets with at least 32 stored chunks. (verified: never reads another dataset's chunks after the first pagination batch — 40 chunks across 2 datasets / bc11d75)
+- [x] Add a regression combining multiple datasets with at least 32 stored chunks. (verified: never reads another dataset's chunks after the first pagination batch - 40 chunks across 2 datasets / bc11d75)
 
 **Confirmed problem:** after the first 32 chunks, the pagination range becomes an unbounded lower bound and can read another dataset's rows.
 
