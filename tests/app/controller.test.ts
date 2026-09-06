@@ -1279,6 +1279,47 @@ describe("MinerController word decisions", () => {
   });
 });
 
+describe("MinerController preference persistence", () => {
+  afterEach(() => {
+    delete (globalThis as { indexedDB?: IDBFactory }).indexedDB;
+  });
+
+  it("a clear racing a decision-triggered persist leaves the preference store empty", async () => {
+    const inner = createMemoryAppStore();
+    const delayed = createDelayedAppStore(inner);
+    const worker = new FakeWorkerClient();
+    const controller = createMinerController({
+      store: delayed.store,
+      worker,
+      legacyStorage: null,
+      sessionQueueStore: createSessionQueueStore(null),
+      now: () => FIXED_NOW,
+    });
+    await seedActive(inner);
+    await controller.init();
+
+    // Gate the preference write the decision's re-query triggers so the
+    // in-flight persist overlaps the clear.
+    delayed.gate("preferences.save");
+    const decision = controller.setWordDecision("古い", "known");
+    await delayed.started("preferences.save");
+
+    // Let the clear run to completion while the persist is still gated. In
+    // the lock-free controller the clear finishes here and the released save
+    // then lands post-clear, repopulating the store with cleared-era
+    // defaults; under the user-state lock the clear cannot overtake the
+    // in-flight write.
+    const cleared = controller.clearSavedData();
+    await flushMicrotasks(30);
+    delayed.release("preferences.save");
+    await Promise.all([decision, cleared]);
+
+    // The stale default-snapshot write must not survive the clear: the
+    // preference store ends empty, not repopulated with cleared-era values.
+    expect(await inner.preferences.load()).toBeNull();
+  });
+});
+
 describe("MinerController review mode", () => {
   afterEach(() => {
     delete (globalThis as { indexedDB?: IDBFactory }).indexedDB;
@@ -1569,6 +1610,50 @@ describe("MinerController review mode", () => {
     expect(review.initialTotal).toBe(3);
     expect(review.remaining).toBe(3);
     expect(review.current?.normalizedWord).toBe("A");
+  });
+
+  it("a restarted review session does not inherit busy from an in-flight decision", async () => {
+    const inner = createMemoryAppStore();
+    const delayed = createDelayedAppStore(inner);
+    const worker = new FakeWorkerClient();
+    installPool(worker, reviewPool());
+    const controller = createMinerController({
+      store: delayed.store,
+      worker,
+      legacyStorage: null,
+      sessionQueueStore: createSessionQueueStore(null),
+      now: () => FIXED_NOW,
+    });
+    const states: Readonly<AppState>[] = [];
+    controller.subscribe((state) => states.push(state));
+    await seedActive(inner);
+    await controller.init();
+    await controller.startReview();
+    expect(states.at(-1)!.review.current?.normalizedWord).toBe("A");
+
+    // Hold the old session's decision write open across a stop/start cycle.
+    delayed.gate("wordDecisions.set");
+    const stale = controller.reviewDecision("known");
+    await delayed.started("wordDecisions.set");
+
+    controller.stopReview();
+    await controller.startReview();
+    expect(states.at(-1)!.review.status).toBe("ready");
+
+    // Triage on the new session must be accepted immediately — the busy flag
+    // belongs to the superseded generation, not this one.
+    const fresh = controller.reviewDecision("mined");
+    await flushMicrotasks();
+    expect(states.at(-1)!.review.status).toBe("loading");
+
+    delayed.release("wordDecisions.set");
+    await Promise.all([stale, fresh]);
+
+    const review = states.at(-1)!.review;
+    expect(review.active).toBe(true);
+    expect(review.processed).toBe(1);
+    expect(review.current?.normalizedWord).toBe("B");
+    expect(await inner.wordDecisions.get("a")).toMatchObject({ status: "mined" });
   });
 
   it("abandons a superseded review query after restart", async () => {

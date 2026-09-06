@@ -114,12 +114,24 @@ export function bindControls(
   // (c) nothing left to focus -> the results heading.
   // A decision action rerenders the list twice (decision publish, then the
   // async query result); the second rebuild destroys the node the first pass
-  // focused, so the applied intent is remembered and re-applied on later
-  // renders while focus has fallen back to <body>.
+  // focused, so the applied intent is remembered and re-applied on the
+  // rebuild while focus has fallen back to <body>. That re-application is
+  // one-shot: after it lands (or after the user focuses anything anywhere),
+  // the intent is cleared so a later render cannot steal focus with it.
   const applyPendingFocus = (): void => {
     const focusLost = document.activeElement === document.body || document.activeElement === null;
+    // Focus is somewhere the user chose (not <body>): any remembered intent
+    // is stale — drop it instead of keeping it for a later body-fallback.
+    if (!focusLost && pendingFocus === null) {
+      focusIntent = null;
+      return;
+    }
     const pending = pendingFocus ?? (focusLost ? focusIntent : null);
     if (pending === null) return;
+    // A fresh click intent survives its first application (the async query
+    // rebuild destroys the node it landed on); an intent re-applied after
+    // focus fell back to <body> is the one-shot restore — spending it.
+    const restoring = pendingFocus === null;
     if (pendingFocus !== null) {
       focusIntent = pending;
       pendingFocus = null;
@@ -128,6 +140,10 @@ export function bindControls(
     const buttons = dom.resultsList.querySelectorAll<HTMLButtonElement>("button[data-word]");
     const matchesWord = (button: HTMLButtonElement): boolean =>
       normalizeWord(button.dataset.word ?? "") === wanted;
+    const focusTarget = (target: HTMLElement): void => {
+      target.focus();
+      if (restoring) focusIntent = null;
+    };
 
     for (const button of buttons) {
       if (!matchesWord(button)) continue;
@@ -135,13 +151,13 @@ export function bindControls(
         ? button.dataset.queueAction === "toggle"
         : button.dataset.decisionAction === pending.action;
       if (sameAction && !button.disabled) {
-        button.focus();
+        focusTarget(button);
         return;
       }
     }
     for (const button of buttons) {
       if (matchesWord(button) && button.dataset.decisionAction !== undefined && !button.disabled) {
-        button.focus();
+        focusTarget(button);
         return;
       }
     }
@@ -150,12 +166,12 @@ export function bindControls(
       for (const article of dom.resultsList.querySelectorAll("article")) {
         const button = article.querySelector<HTMLButtonElement>("button[data-decision-action]");
         if (button !== null && !button.disabled && afterWords.has(normalizeWord(button.dataset.word ?? ""))) {
-          button.focus();
+          focusTarget(button);
           return;
         }
       }
     }
-    dom.resultsHeading.focus();
+    focusTarget(dom.resultsHeading);
   };
 
   const unsubscribe = controller.subscribe((state) => {

@@ -74,7 +74,7 @@ function seedDom(): DomMap {
   ]);
 
   add("results", "section");
-  add("resultsHeading", "h2");
+  add("resultsHeading", "h2").setAttribute("tabindex", "-1");
   add("resultStats", "p");
   add("resultsList", "div");
   add("reviewButton", "button");
@@ -475,6 +475,95 @@ describe("post-action focus restoration", () => {
       const next = harness.dom.resultsList.querySelector<HTMLButtonElement>('[data-decision-action="known"]');
       expect(next?.dataset.word).toBe("いぬ");
       expect(document.activeElement).toBe(next);
+    } finally {
+      harness.dispose();
+    }
+  });
+
+  it("focuses the results heading when the last entry disappears with no successor", () => {
+    const harness = setup({
+      ...datasetReady(),
+      query: { ...createInitialAppState("memory").query, decision: "unreviewed" },
+      ...listResult([makeEntry()]),
+    });
+    try {
+      const known = decisionButton(harness.dom.resultsList, "known");
+      known.focus();
+      known.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+      // The last unreviewed row disappears under the unreviewed filter and no
+      // successor entry remains: tier (c) lands focus on the results heading.
+      harness.controller.publishState({
+        wordDecisions: new Map([["言葉", decision("言葉", "known")]]),
+        ...listResult([]),
+      });
+
+      expect(harness.dom.resultsList.querySelector("article")).toBeNull();
+      expect(document.activeElement).toBe(harness.dom.resultsHeading);
+    } finally {
+      harness.dispose();
+    }
+  });
+
+  it("does not re-apply a stale focus intent on a later unrelated render", () => {
+    const decided = listResult([makeEntry({ decision: "known", known: true, knownByDecision: true })]);
+    const harness = setup({ ...datasetReady(), ...listResult([makeEntry()]) });
+    try {
+      const known = decisionButton(harness.dom.resultsList, "known");
+      known.focus();
+      known.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      expect(harness.controller.setWordDecision).toHaveBeenCalledWith("言葉", "known");
+
+      // Decision publish rebuild: tier (a) lands and the intent is remembered
+      // for the async query rebuild that follows.
+      harness.controller.publishState({
+        wordDecisions: new Map([["言葉", decision("言葉", "known")]]),
+        ...decided,
+      });
+      expect(document.activeElement).toBe(decisionButton(harness.dom.resultsList, "known"));
+
+      // Async query rebuild destroys the focused node; the remembered intent
+      // restores focus exactly once.
+      harness.controller.publishState({ ...decided });
+      expect(document.activeElement).toBe(decisionButton(harness.dom.resultsList, "known"));
+
+      // A later unrelated render must not steal focus back to the entry: the
+      // one-shot intent is spent, so focus falls back to <body>.
+      harness.controller.publishState({ ...decided });
+      expect(document.activeElement).not.toBe(decisionButton(harness.dom.resultsList, "known"));
+      expect(document.activeElement).toBe(document.body);
+    } finally {
+      harness.dispose();
+    }
+  });
+
+  it("drops the focus intent once the user moves focus anywhere", () => {
+    const decided = listResult([makeEntry({ decision: "known", known: true, knownByDecision: true })]);
+    const harness = setup({ ...datasetReady(), ...listResult([makeEntry()]) });
+    try {
+      const known = decisionButton(harness.dom.resultsList, "known");
+      known.focus();
+      known.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+      // First rebuild applies tier (a) and remembers the intent.
+      harness.controller.publishState({
+        wordDecisions: new Map([["言葉", decision("言葉", "known")]]),
+        ...decided,
+      });
+      expect(document.activeElement).toBe(decisionButton(harness.dom.resultsList, "known"));
+
+      // The user moves focus into the search box; a render while focus lives
+      // there must drop the stored intent instead of keeping it for a later
+      // body-fallback steal.
+      harness.dom.stickySearch.focus();
+      harness.controller.publishState({ ...decided });
+      expect(document.activeElement).toBe(harness.dom.stickySearch);
+
+      // Even when focus later falls back to <body>, the dropped intent must
+      // not re-apply.
+      harness.dom.stickySearch.blur();
+      harness.controller.publishState({ ...decided });
+      expect(document.activeElement).toBe(document.body);
     } finally {
       harness.dispose();
     }

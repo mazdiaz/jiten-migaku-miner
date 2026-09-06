@@ -114,7 +114,12 @@ class MinerControllerImpl implements MinerController {
   private importLock: Promise<unknown> = Promise.resolve();
   private userStateLock: Promise<unknown> = Promise.resolve();
   private userStateEpoch = 0;
-  private reviewBusy = false;
+  // Generation that owns the in-flight review decision, or null when idle.
+  // Busy is only consulted within its own generation: a session restarted
+  // mid-decision (stopReview bumps reviewGeneration) does not inherit the
+  // superseded session's busy flag, and the stale decision's finally cannot
+  // clear a newer generation's flag.
+  private reviewBusyGeneration: number | null = null;
   // Bumped whenever a review session ends (stopReview or dataset change);
   // in-flight continuations compare their captured value to detect staleness.
   private reviewGeneration = 0;
@@ -221,7 +226,8 @@ class MinerControllerImpl implements MinerController {
         // The dataset changed; a stale review card must not survive the commit.
         if (this.state.review.active) this.stopReview();
         this.setState({ status: "ready", errorMessage: this.warningMessage });
-        await this.persistPreferences();
+        // Already inside withUserStateLock: the lock-free form (see site map).
+        await this.persistPreferencesUnlocked();
         return true;
       }));
       if (committed) {
@@ -379,10 +385,15 @@ class MinerControllerImpl implements MinerController {
 
   async reviewDecision(status: WordDecisionStatus): Promise<void> {
     const review = this.state.review;
-    if (!review.active || review.status !== "ready" || review.current === null || this.reviewBusy) return;
+    if (
+      !review.active
+      || review.status !== "ready"
+      || review.current === null
+      || this.reviewBusyGeneration === this.reviewGeneration
+    ) return;
     const generation = this.reviewGeneration;
     const word = review.current.normalizedWord;
-    this.reviewBusy = true;
+    this.reviewBusyGeneration = generation;
     this.state.review = { ...review, status: "loading", errorMessage: null };
     this.publish();
 
@@ -406,7 +417,7 @@ class MinerControllerImpl implements MinerController {
       };
       this.publish();
     } finally {
-      this.reviewBusy = false;
+      if (this.reviewBusyGeneration === generation) this.reviewBusyGeneration = null;
     }
   }
 
@@ -557,11 +568,12 @@ class MinerControllerImpl implements MinerController {
       const dataset = this.state.dataset;
       if (dataset === null) {
         this.setState({ status: "empty", errorMessage: this.warningMessage });
-        await this.persistPreferences();
+        // Already inside withUserStateLock: the lock-free form (see site map).
+        await this.persistPreferencesUnlocked();
         return;
       }
       this.setState({ status: "loading", errorMessage: this.warningMessage });
-      await this.loadAndQuery(dataset.id, dataset.entryCount);
+      await this.loadAndQuery(dataset.id, dataset.entryCount, { callerHoldsUserStateLock: true });
     });
   }
 
@@ -1035,20 +1047,24 @@ class MinerControllerImpl implements MinerController {
     await this.runQuery();
   }
 
-  private async loadAndQuery(datasetId: string, expectedEntryCount: number): Promise<void> {
+  private async loadAndQuery(
+    datasetId: string,
+    expectedEntryCount: number,
+    options: { callerHoldsUserStateLock?: boolean } = {},
+  ): Promise<void> {
     try {
       const loaded = await this.readDatasetChunks(datasetId);
       if (loaded.entryCount !== expectedEntryCount) {
         throw new Error(`Dataset entry count did not match metadata: expected ${expectedEntryCount}, found ${loaded.entryCount}`);
       }
       await this.worker.loadDataset(datasetId, copiedEntryChunks(loaded.values));
-      await this.runQuery();
+      await this.runQuery(options);
     } catch (error) {
       this.setState({ status: "error", errorMessage: errorMessage(error) });
     }
   }
 
-  private async runQuery(options: { silent?: boolean } = {}): Promise<void> {
+  private async runQuery(options: { silent?: boolean; callerHoldsUserStateLock?: boolean } = {}): Promise<void> {
     // Single mode-aware dispatch point: every caller becomes queue-aware, so
     // filters/paging/viewport edits during Queue Mode cannot leak unqueued
     // words into the queue view.
@@ -1059,7 +1075,7 @@ class MinerControllerImpl implements MinerController {
     const dataset = this.state.dataset;
     if (dataset === null) {
       this.setState({ status: "empty", errorMessage: this.warningMessage });
-      await this.persistPreferences();
+      await this.persistPreferences(options);
       return;
     }
 
@@ -1083,14 +1099,33 @@ class MinerControllerImpl implements MinerController {
       this.state.page = page;
       this.state.query = { ...this.state.query, page };
       this.setState({ status: "ready", errorMessage: this.warningMessage });
-      if (!options.silent) await this.persistPreferences();
+      if (!options.silent) await this.persistPreferences(options);
     } catch (error) {
       if (generation !== this.queryGeneration) return;
       this.setState({ status: "error", errorMessage: errorMessage(error) });
     }
   }
 
-  private async persistPreferences(): Promise<void> {
+  private async persistPreferences(options: { callerHoldsUserStateLock?: boolean } = {}): Promise<void> {
+    // Capture the epoch BEFORE acquiring the lock: if a clear or restore
+    // wins the lock first, this persist was triggered against state that has
+    // since been replaced, and the stale write is skipped inside.
+    const triggerEpoch = this.userStateEpoch;
+    if (options.callerHoldsUserStateLock) {
+      await this.persistPreferencesUnlocked(triggerEpoch);
+      return;
+    }
+    await this.withUserStateLock(() => this.persistPreferencesUnlocked(triggerEpoch));
+  }
+
+  // Lock-free form for callers already INSIDE withUserStateLock (import
+  // commit sections, restoreBackup, and the query paths they drive).
+  // withUserStateLock is not reentrant — routing those callers through the
+  // public persistPreferences would self-deadlock.
+  private async persistPreferencesUnlocked(triggerEpoch: number = this.userStateEpoch): Promise<void> {
+    // The epoch cannot change while the caller holds userStateLock, so a
+    // mismatch means the trigger snapshot predates a committed clear/restore.
+    if (triggerEpoch !== this.userStateEpoch) return;
     const epoch = this.userStateEpoch;
     try {
       await this.storageOperation((store) => store.preferences.save({
