@@ -96,9 +96,9 @@ Reviewed application/controller, domain, worker, storage, platform adapters, UI/
 
 ### 2. Use one canonical word identity
 
-- [x] Remove controller-only case folding where it conflicts with imported identity. (verified: NHK/mixed-case regressions at worker, controller, queue-order, DOM / 7ca6bb3)
-- [x] Use consistent identity for list decisions, review decisions, reset, queue add/remove, and worker matching. (verified: NHK/mixed-case regressions at worker, controller, queue-order, DOM / 7ca6bb3)
-- [x] Test real uppercase and mixed-case imported terms, including `NHK`. (verified: NHK/mixed-case regressions at worker, controller, queue-order, DOM / 7ca6bb3)
+- [x] Remove controller-only case folding where it conflicts with imported identity. (verified: NHK/mixed-case regressions at worker, controller, queue-order, DOM / 7ca6bb3; UI unqueue click regression for mixed-case entry vs lowercase queue key / ae32335)
+- [x] Use consistent identity for list decisions, review decisions, reset, queue add/remove, and worker matching. (verified: NHK/mixed-case regressions at worker, controller, queue-order, DOM / 7ca6bb3; UI unqueue click regression for mixed-case entry vs lowercase queue key / ae32335)
+- [x] Test real uppercase and mixed-case imported terms, including `NHK`. (verified: NHK/mixed-case regressions at worker, controller, queue-order, DOM / 7ca6bb3; UI unqueue click regression for mixed-case entry vs lowercase queue key / ae32335)
 - [x] Account for existing persisted identity semantics before changing normalization globally. (verified: no-migration lowercase-match design + compat analysis in task-2 report / 7ca6bb3)
 
 **Confirmed problem:** controller lowercases keys while imported dataset identity preserves case. Decisions and queue membership can fail to match the corresponding row.
