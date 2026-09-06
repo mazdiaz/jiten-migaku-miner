@@ -50,13 +50,20 @@ function validBackupJson(): string {
   });
 }
 
-function expectBackupError(code: string, action: () => unknown): void {
+function mutatedBackup(mutate: (backup: any) => void): string {
+  const backup = JSON.parse(validBackupJson());
+  mutate(backup);
+  return JSON.stringify(backup);
+}
+
+function expectBackupError(code: string, fragment: RegExp, action: () => unknown): void {
   try {
     action();
     expect.fail(`expected BackupError with code ${code}`);
   } catch (error) {
     expect(error).toBeInstanceOf(BackupError);
     expect((error as BackupError).code).toBe(code);
+    expect((error as BackupError).message).toMatch(fragment);
   }
 }
 
@@ -164,170 +171,181 @@ describe("parseBackup", () => {
     expect(backup.preferences?.query.decision).toBe("mined");
   });
 
-  const invalidCases: Array<{ name: string; text: string; code: string }> = [
-    { name: "invalid JSON", text: "{not json", code: "invalid-json" },
-    { name: "JSON array root", text: "[]", code: "invalid-format" },
-    { name: "empty object", text: "{}", code: "invalid-format" },
+  const invalidCases: Array<{ name: string; text: string; code: string; fragment: RegExp }> = [
+    { name: "invalid JSON", text: "{not json", code: "invalid-json", fragment: /not valid JSON/ },
+    { name: "JSON array root", text: "[]", code: "invalid-format", fragment: /must be a JSON object/ },
+    {
+      name: "missing format",
+      text: mutatedBackup((backup) => {
+        delete backup.format;
+      }),
+      code: "invalid-format",
+      fragment: /Backup format must be/,
+    },
     {
       name: "wrong format string",
-      text: JSON.stringify({ format: "wrong", version: 1 }),
+      text: mutatedBackup((backup) => {
+        backup.format = "wrong";
+      }),
       code: "invalid-format",
+      fragment: /Backup format must be/,
     },
     {
       name: "unsupported version",
-      text: JSON.stringify({ format: BACKUP_FORMAT, version: 99 }),
+      text: mutatedBackup((backup) => {
+        backup.version = 99;
+      }),
       code: "unsupported-version",
+      fragment: /Unsupported backup version/,
     },
     {
       name: "missing version",
-      text: JSON.stringify({ format: BACKUP_FORMAT }),
+      text: mutatedBackup((backup) => {
+        delete backup.version;
+      }),
       code: "unsupported-version",
+      fragment: /Unsupported backup version/,
     },
     {
-      name: "knownWords malformed object",
-      text: JSON.stringify({ format: BACKUP_FORMAT, version: 1, knownWords: { name: "k" } }),
+      name: "knownWords not an object",
+      text: mutatedBackup((backup) => {
+        backup.knownWords = "nope";
+      }),
       code: "invalid-shape",
+      fragment: /knownWords must be an object or null/,
     },
     {
       name: "knownWords words not array",
-      text: JSON.stringify({
-        format: BACKUP_FORMAT,
-        version: 1,
-        knownWords: { name: "k", words: "nope" },
+      text: mutatedBackup((backup) => {
+        backup.knownWords = { name: "k", words: "nope" };
       }),
       code: "invalid-shape",
+      fragment: /knownWords\.words must be an array/,
     },
     {
       name: "knownWords word not string",
-      text: JSON.stringify({
-        format: BACKUP_FORMAT,
-        version: 1,
-        knownWords: { name: "k", words: [42] },
+      text: mutatedBackup((backup) => {
+        backup.knownWords = { name: "k", words: [42] };
       }),
       code: "invalid-shape",
+      fragment: /knownWords\.words\[0\] must be a non-empty string/,
     },
     {
       name: "decisions not array",
-      text: JSON.stringify({ format: BACKUP_FORMAT, version: 1, wordDecisions: {} }),
+      text: mutatedBackup((backup) => {
+        backup.wordDecisions = {};
+      }),
       code: "invalid-shape",
+      fragment: /wordDecisions must be an array/,
     },
     {
       name: "decision missing normalizedWord",
-      text: JSON.stringify({
-        format: BACKUP_FORMAT,
-        version: 1,
-        wordDecisions: [{ status: "known", updatedAt: EXPORTED_AT }],
+      text: mutatedBackup((backup) => {
+        backup.wordDecisions = [{ status: "known", updatedAt: EXPORTED_AT }];
       }),
       code: "invalid-shape",
+      fragment: /wordDecisions\[0\]\.normalizedWord must be a non-empty string/,
     },
     {
       name: "decision empty normalizedWord",
-      text: JSON.stringify({
-        format: BACKUP_FORMAT,
-        version: 1,
-        wordDecisions: [{ normalizedWord: "", status: "known", updatedAt: EXPORTED_AT }],
+      text: mutatedBackup((backup) => {
+        backup.wordDecisions = [{ normalizedWord: "", status: "known", updatedAt: EXPORTED_AT }];
       }),
       code: "invalid-shape",
+      fragment: /wordDecisions\[0\]\.normalizedWord must be a non-empty string/,
     },
     {
       name: "decision invalid status",
-      text: JSON.stringify({
-        format: BACKUP_FORMAT,
-        version: 1,
-        wordDecisions: [{ normalizedWord: "躊躇う", status: "maybe", updatedAt: EXPORTED_AT }],
+      text: mutatedBackup((backup) => {
+        backup.wordDecisions = [{ normalizedWord: "躊躇う", status: "maybe", updatedAt: EXPORTED_AT }];
       }),
       code: "invalid-shape",
+      fragment: /wordDecisions\[0\]\.status must be one of/,
     },
     {
       name: "decision missing updatedAt",
-      text: JSON.stringify({
-        format: BACKUP_FORMAT,
-        version: 1,
-        wordDecisions: [{ normalizedWord: "躊躇う", status: "mined" }],
+      text: mutatedBackup((backup) => {
+        backup.wordDecisions = [{ normalizedWord: "躊躇う", status: "mined" }];
       }),
       code: "invalid-shape",
+      fragment: /wordDecisions\[0\]\.updatedAt must be a non-empty string/,
     },
     {
       name: "duplicate decision normalizedWord",
-      text: JSON.stringify({
-        format: BACKUP_FORMAT,
-        version: 1,
-        wordDecisions: [
+      text: mutatedBackup((backup) => {
+        backup.wordDecisions = [
           { normalizedWord: "跳ぶ", status: "mined", updatedAt: EXPORTED_AT },
           { normalizedWord: "跳ぶ", status: "skip", updatedAt: EXPORTED_AT },
-        ],
+        ];
       }),
       code: "invalid-shape",
+      fragment: /duplicate normalizedWord/,
     },
     {
       name: "invalid query sort",
-      text: JSON.stringify({
-        format: BACKUP_FORMAT,
-        version: 1,
-        preferences: { query: { ...query, sort: "random" }, view, page: 1 },
+      text: mutatedBackup((backup) => {
+        backup.preferences.query.sort = "random";
       }),
       code: "invalid-shape",
+      fragment: /preferences\.query\.sort must be/,
     },
     {
       name: "invalid decision filter",
-      text: JSON.stringify({
-        format: BACKUP_FORMAT,
-        version: 1,
-        preferences: { query: { ...query, decision: "sometimes" }, view, page: 1 },
+      text: mutatedBackup((backup) => {
+        backup.preferences.query.decision = "sometimes";
       }),
       code: "invalid-shape",
+      fragment: /preferences\.query\.decision must be/,
     },
     {
       name: "negative minOccurrences",
-      text: JSON.stringify({
-        format: BACKUP_FORMAT,
-        version: 1,
-        preferences: { query: { ...query, minOccurrences: -1 }, view, page: 1 },
+      text: mutatedBackup((backup) => {
+        backup.preferences.query.minOccurrences = -1;
       }),
       code: "invalid-shape",
+      fragment: /preferences\.query\.minOccurrences must be a nonnegative/,
     },
     {
       name: "invalid page size",
-      text: JSON.stringify({
-        format: BACKUP_FORMAT,
-        version: 1,
-        preferences: { query: { ...query, pageSize: 0 }, view, page: 1 },
+      text: mutatedBackup((backup) => {
+        backup.preferences.query.pageSize = 0;
       }),
       code: "invalid-shape",
+      fragment: /preferences\.query\.pageSize must be a positive integer/,
     },
     {
       name: "non-finite page",
-      text: JSON.stringify({
-        format: BACKUP_FORMAT,
-        version: 1,
-        preferences: { query, view, page: Number.NaN },
+      text: mutatedBackup((backup) => {
+        backup.preferences.page = null;
       }),
       code: "invalid-shape",
+      fragment: /preferences\.page must be a positive integer/,
     },
     {
       name: "view missing boolean",
-      text: JSON.stringify({
-        format: BACKUP_FORMAT,
-        version: 1,
-        preferences: { query, view: { ...view, showDefinitions: "yes" }, page: 1 },
+      text: mutatedBackup((backup) => {
+        backup.preferences.view.showDefinitions = "yes";
       }),
       code: "invalid-shape",
+      fragment: /preferences\.view\.showDefinitions must be a boolean/,
     },
   ];
 
   for (const invalid of invalidCases) {
     it(`rejects ${invalid.name}`, () => {
-      expectBackupError(invalid.code, () => parseBackup(invalid.text));
+      expectBackupError(invalid.code, invalid.fragment, () => parseBackup(invalid.text));
     });
   }
 
   it("rejects non-object JSON roots with a clear message", () => {
-    expectBackupError("invalid-format", () => parseBackup("42"));
+    expectBackupError("invalid-format", /must be a JSON object/, () => parseBackup("42"));
   });
 
   it("reports the offending version in unsupported-version errors", () => {
     try {
-      parseBackup(JSON.stringify({ format: BACKUP_FORMAT, version: 7 }));
+      parseBackup(mutatedBackup((backup) => {
+        backup.version = 7;
+      }));
       expect.fail("expected throw");
     } catch (error) {
       expect((error as BackupError).message).toContain("7");
