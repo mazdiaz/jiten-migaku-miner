@@ -8,6 +8,14 @@ export default defineConfig({
       name: "chromium",
       use: { ...devices["Desktop Chrome"] },
     },
+    {
+      name: "firefox",
+      use: { ...devices["Desktop Firefox"] },
+    },
+    {
+      name: "webkit",
+      use: { ...devices["Desktop Safari"] },
+    },
   ],
   use: {
     baseURL: "http://127.0.0.1:8920",
@@ -15,6 +23,6 @@ export default defineConfig({
   webServer: {
     command: "npm run dev -- --host 127.0.0.1 --port 8920",
     url: "http://127.0.0.1:8920/",
-    reuseExistingServer: true,
+    reuseExistingServer: !process.env.CI,
   },
 });

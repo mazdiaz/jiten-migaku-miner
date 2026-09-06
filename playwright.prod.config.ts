@@ -8,6 +8,14 @@ export default defineConfig({
       name: "production",
       use: { ...devices["Desktop Chrome"] },
     },
+    {
+      name: "production-firefox",
+      use: { ...devices["Desktop Firefox"] },
+    },
+    {
+      name: "production-webkit",
+      use: { ...devices["Desktop Safari"] },
+    },
   ],
   use: {
     baseURL: "http://127.0.0.1:8931",

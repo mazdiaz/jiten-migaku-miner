@@ -4,7 +4,7 @@ A local-first, offline-capable miner for Jiten vocabulary exports and Migaku kno
 
 ## Requirements
 
-- Node.js 20 or newer (development, build, tests)
+- Node.js 22.12 or newer (development, build, tests)
 - Python 3 or newer (only for the `start-miner.bat` static file server)
 - A browser with Web Workers, IndexedDB, and `:has()` CSS support (current Chrome, Edge, Firefox, Safari)
 
@@ -42,7 +42,7 @@ Then open `http://127.0.0.1:8920/dist/`.
 | `npm run test:e2e:prod` | Playwright production-serving suite against the real build output |
 | `npm run check` | Typecheck + full unit suite + production build |
 
-Playwright browsers: run `npx playwright install chromium` once after installing dependencies.
+Playwright browsers: run `npx playwright install chromium firefox webkit` once after installing dependencies.
 
 ## Compatibility
 

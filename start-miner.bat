@@ -4,7 +4,7 @@ chcp 65001 >nul
 cd /d "%~dp0"
 where npm >nul 2>nul
 if errorlevel 1 (
-  echo Node.js/npm not found. Install Node.js 20 or newer.
+  echo Node.js/npm not found. Install Node.js 22.12 or newer.
   pause
   exit /b 1
 )
