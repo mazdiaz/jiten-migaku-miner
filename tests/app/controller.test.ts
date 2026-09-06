@@ -12,6 +12,7 @@ import type { WorkerClient, WorkerQueryInput } from "../../src/app/worker-client
 import { createFileSource } from "../../src/platform/file-source";
 import { createFolderSource } from "../../src/platform/folder-source";
 import { createSessionQueueStore } from "../../src/platform/session-queue";
+import { serializeBackup } from "../../src/domain/backup";
 import { createMemoryAppStore } from "../../src/storage/memory-store";
 import type {
   DatasetMetadata,
@@ -247,6 +248,106 @@ function flakyAppStore(inner: AppStore, shouldFail: () => boolean): AppStore {
       save: guard(inner.preferences.save.bind(inner.preferences)),
     },
     clearAll: guard(inner.clearAll.bind(inner)),
+  };
+}
+
+function createDelayedAppStore(inner: AppStore): {
+  store: AppStore;
+  started(method: string): Promise<void>;
+  release(method: string): void;
+  gate(method: string): void;
+  failNext(method: string): void;
+} {
+  interface GateState {
+    blocking: boolean;
+    failNext: boolean;
+    startedWaiters: Array<() => void>;
+    releaseWaiter: (() => void) | null;
+  }
+  const gates = new Map<string, GateState>();
+  const gateState = (method: string): GateState => {
+    const existing = gates.get(method);
+    if (existing !== undefined) return existing;
+    const created: GateState = {
+      blocking: false,
+      failNext: false,
+      startedWaiters: [],
+      releaseWaiter: null,
+    };
+    gates.set(method, created);
+    return created;
+  };
+  const gate = (method: string): void => {
+    gateState(method).blocking = true;
+  };
+  const failNext = (method: string): void => {
+    gateState(method).failNext = true;
+  };
+  const started = (method: string): Promise<void> =>
+    new Promise((resolve) => {
+      gateState(method).startedWaiters.push(resolve);
+    });
+  const release = (method: string): void => {
+    const state = gates.get(method);
+    if (state === undefined) return;
+    const waiter = state.releaseWaiter;
+    state.releaseWaiter = null;
+    waiter?.();
+  };
+  // Methods are bound to their owner objects; detaching them would lose `this`
+  // and turn every call into a spurious fallback-triggering failure.
+  const delay = <A extends unknown[], R>(method: string, operation: (...args: A) => Promise<R>) =>
+    async (...args: A): Promise<R> => {
+      const state = gates.get(method);
+      if (state !== undefined && (state.blocking || state.failNext)) {
+        const shouldFail = state.failNext;
+        state.failNext = false;
+        if (state.blocking) {
+          state.blocking = false;
+          for (const waiter of state.startedWaiters.splice(0)) waiter();
+          await new Promise<void>((resolve) => {
+            state.releaseWaiter = resolve;
+          });
+        }
+        if (shouldFail) throw new Error(`${method} failed as requested`);
+      }
+      return operation(...args);
+    };
+  const delayIterable = <A extends unknown[], R>(operation: (...args: A) => AsyncIterable<R>) =>
+    async function* (...args: A): AsyncGenerator<R> {
+      yield* operation(...args);
+    };
+  return {
+    store: {
+      datasets: {
+        stage: delay("datasets.stage", inner.datasets.stage.bind(inner.datasets)),
+        activate: delay("datasets.activate", inner.datasets.activate.bind(inner.datasets)),
+        getActive: delay("datasets.getActive", inner.datasets.getActive.bind(inner.datasets)),
+        list: delay("datasets.list", inner.datasets.list.bind(inner.datasets)),
+        readChunks: delayIterable(inner.datasets.readChunks.bind(inner.datasets)),
+        remove: delay("datasets.remove", inner.datasets.remove.bind(inner.datasets)),
+      },
+      knownWords: {
+        save: delay("knownWords.save", inner.knownWords.save.bind(inner.knownWords)),
+        getActive: delay("knownWords.getActive", inner.knownWords.getActive.bind(inner.knownWords)),
+      },
+      wordDecisions: {
+        get: delay("wordDecisions.get", inner.wordDecisions.get.bind(inner.wordDecisions)),
+        list: delay("wordDecisions.list", inner.wordDecisions.list.bind(inner.wordDecisions)),
+        set: delay("wordDecisions.set", inner.wordDecisions.set.bind(inner.wordDecisions)),
+        remove: delay("wordDecisions.remove", inner.wordDecisions.remove.bind(inner.wordDecisions)),
+        replaceAll: delay("wordDecisions.replaceAll", inner.wordDecisions.replaceAll.bind(inner.wordDecisions)),
+      },
+      preferences: {
+        load: delay("preferences.load", inner.preferences.load.bind(inner.preferences)),
+        save: delay("preferences.save", inner.preferences.save.bind(inner.preferences)),
+      },
+      clearAll: delay("clearAll", inner.clearAll.bind(inner)),
+    },
+    started,
+    release,
+    gate,
+    failNext,
   };
 }
 
@@ -1600,6 +1701,117 @@ describe("MinerController backup and restore", () => {
 
     expect(states.at(-1)!.errorMessage).toContain("Known-word rollback failed");
     expect(states.at(-1)!.status).toBe("ready");
+  });
+});
+
+describe("MinerController user-state serialization", () => {
+  afterEach(() => {
+    delete (globalThis as { indexedDB?: IDBFactory }).indexedDB;
+  });
+
+  function delayedSetup(store: ReturnType<typeof createMemoryAppStore> = createMemoryAppStore()) {
+    const delayed = createDelayedAppStore(store);
+    const worker = new FakeWorkerClient();
+    const controller = createMinerController({
+      store: delayed.store,
+      worker,
+      legacyStorage: null,
+      sessionQueueStore: createSessionQueueStore(null),
+      now: () => FIXED_NOW,
+    });
+    const states: Readonly<AppState>[] = [];
+    controller.subscribe((state) => states.push(state));
+    return { inner: store, delayed, worker, controller, states };
+  }
+
+  it("clear waits for an in-flight decision write and leaves no decisions durable", async () => {
+    const { inner, delayed, controller } = delayedSetup();
+    await controller.init();
+
+    delayed.gate("wordDecisions.set");
+    const decisionPromise = controller.setWordDecision("新しい", "known");
+    await delayed.started("wordDecisions.set");
+
+    const clearPromise = controller.clearSavedData();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    delayed.release("wordDecisions.set");
+    await Promise.all([decisionPromise, clearPromise]);
+
+    expect(await inner.wordDecisions.list()).toEqual([]);
+    expect(await delayed.store.wordDecisions.list()).toEqual([]);
+  });
+
+  it("restore is atomic relative to queued decisions; rollback is not overwritten", async () => {
+    const { inner, delayed, controller, states } = delayedSetup();
+    await seedActive(inner);
+    await controller.init();
+
+    await controller.setWordDecision("古い", "skip");
+    const backup = serializeBackup({
+      exportedAt: "2026-09-06T00:00:00.000Z",
+      knownWords: null,
+      wordDecisions: [
+        { normalizedWord: "透過", status: "known", updatedAt: "2026-09-06T00:00:00.000Z" },
+      ],
+      preferences: { query: { ...query, page: 1 }, view, page: 1 },
+    });
+
+    delayed.gate("preferences.save");
+    delayed.failNext("preferences.save");
+    const restorePromise = controller.restoreBackup(backup);
+    await delayed.started("preferences.save");
+
+    const queuedDecision = controller.setWordDecision("新しい", "mined");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    delayed.release("preferences.save");
+    await expect(restorePromise).rejects.toThrow("preferences.save failed as requested");
+    await queuedDecision;
+
+    const durable = (await inner.wordDecisions.list())
+      .map((decision) => `${decision.status}:${decision.normalizedWord}`)
+      .sort();
+    expect(durable).toEqual(["mined:新しい", "skip:古い"]);
+    const final = states.at(-1)!;
+    expect(final.wordDecisions.get("新しい")).toMatchObject({ status: "mined" });
+    expect(final.wordDecisions.has("透過")).toBe(false);
+  });
+
+  it("stale continuations skip publication after clear", async () => {
+    const { inner, delayed, worker, controller, states } = delayedSetup();
+    await controller.init();
+
+    delayed.gate("wordDecisions.set");
+    const decisionPromise = controller.setWordDecision("新しい", "known");
+    await delayed.started("wordDecisions.set");
+
+    const clearPromise = controller.clearSavedData();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    delayed.release("wordDecisions.set");
+    await Promise.all([decisionPromise, clearPromise]);
+
+    const afterWriteRace = states.at(-1)!;
+    expect(afterWriteRace.wordDecisions.size).toBe(0);
+    expect(afterWriteRace.result).toBeNull();
+    expect(afterWriteRace.status).toBe("empty");
+    expect(afterWriteRace.review.active).toBe(false);
+    expect(afterWriteRace.errorMessage).toBeNull();
+    expect(await inner.wordDecisions.list()).toEqual([]);
+
+    let resolveQuery: ((value: QueryResult) => void) | undefined;
+    const queryGate = new Promise<QueryResult>((resolve) => { resolveQuery = resolve; });
+    worker.queryHandler = async () => queryGate;
+    const blockedDecision = controller.setWordDecision("猫", "known");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    await controller.clearSavedData();
+
+    resolveQuery?.(result());
+    await blockedDecision;
+    const final = states.at(-1)!;
+    expect(final.wordDecisions.size).toBe(0);
+    expect(final.result).toBeNull();
+    expect(final.status).toBe("empty");
+    expect(final.errorMessage).toBeNull();
   });
 });
 
