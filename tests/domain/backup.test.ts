@@ -33,6 +33,23 @@ function decision(word: string, status: WordDecision["status"], updatedAt = EXPO
   return { normalizedWord: word, status, updatedAt };
 }
 
+function validBackupJson(): string {
+  return JSON.stringify({
+    format: "jiten-migaku-miner-backup",
+    version: 1,
+    exportedAt: "2026-09-06T00:00:00.000Z",
+    knownWords: { name: "Migaku known words", words: ["新しい", "透過"] },
+    wordDecisions: [
+      { normalizedWord: "新しい", status: "known", updatedAt: "2026-09-05T00:00:00.000Z" },
+    ],
+    preferences: {
+      query: { search: "", hideKnown: false, hideKanaOnly: false, sentence: "any", minOccurrences: 1, sort: "occ-desc", pageSize: 50, page: 1, decision: "all" },
+      view: { showFurigana: false, pillHighlight: false, showHighlight: false, showDefinitions: true },
+      page: 1,
+    },
+  });
+}
+
 function expectBackupError(code: string, action: () => unknown): void {
   try {
     action();
@@ -315,6 +332,37 @@ describe("parseBackup", () => {
     } catch (error) {
       expect((error as BackupError).message).toContain("7");
     }
+  });
+});
+
+describe("parseBackup canonical identities", () => {
+  it("rejects whitespace-only decision identities", () => {
+    const backup = JSON.parse(validBackupJson());
+    backup.wordDecisions.push({ normalizedWord: "   ", status: "known", updatedAt: "2026-09-05T00:00:00.000Z" });
+    expect(() => parseBackup(JSON.stringify(backup))).toThrow(/must not be empty/);
+  });
+
+  it("rejects noncanonical decision identities", () => {
+    const backup = JSON.parse(validBackupJson());
+    backup.wordDecisions.push({ normalizedWord: " 新しい ", status: "known", updatedAt: "2026-09-05T00:00:00.000Z" });
+    expect(() => parseBackup(JSON.stringify(backup))).toThrow(/canonical/);
+  });
+
+  it("rejects duplicates that differ only by normalization", () => {
+    const backup = JSON.parse(validBackupJson());
+    backup.wordDecisions.push({ normalizedWord: "新しい", status: "mined", updatedAt: "2026-09-05T00:00:00.000Z" });
+    expect(() => parseBackup(JSON.stringify(backup))).toThrow(/duplicate/);
+  });
+
+  it("every accepted backup survives a serialize/parse round-trip", () => {
+    const parsed = parseBackup(validBackupJson());
+    const serialized = serializeBackup({
+      exportedAt: parsed.exportedAt,
+      knownWords: parsed.knownWords,
+      wordDecisions: parsed.wordDecisions,
+      preferences: parsed.preferences,
+    });
+    expect(parseBackup(serialized)).toEqual(parsed);
   });
 });
 

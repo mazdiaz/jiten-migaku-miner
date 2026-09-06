@@ -88,14 +88,23 @@ function validateKnownWords(value: unknown): MinerBackupV1["knownWords"] {
   const name = requiredString(value.name, "knownWords.name");
   if (!Array.isArray(value.words)) fail("invalid-shape", "knownWords.words must be an array");
   for (const [index, word] of value.words.entries()) {
-    if (typeof word !== "string") fail("invalid-shape", `knownWords.words[${index}] must be a string`);
+    if (typeof word !== "string" || normalizeText(word).length === 0) {
+      fail("invalid-shape", `knownWords.words[${index}] must be a non-empty string`);
+    }
   }
   return { name, words: [...(value.words as string[])] };
 }
 
 function validateDecision(value: unknown, index: number): WordDecision {
   if (!isRecord(value)) fail("invalid-shape", `wordDecisions[${index}] must be an object`);
-  const normalizedWord = requiredString(value.normalizedWord, `wordDecisions[${index}].normalizedWord`);
+  const rawWord = requiredString(value.normalizedWord, `wordDecisions[${index}].normalizedWord`);
+  const normalizedWord = normalizeText(rawWord);
+  if (normalizedWord.length === 0) {
+    fail("invalid-shape", `wordDecisions[${index}].normalizedWord must not be empty or whitespace-only`);
+  }
+  if (normalizedWord !== rawWord) {
+    fail("invalid-shape", `wordDecisions[${index}].normalizedWord must be canonical: ${JSON.stringify(rawWord)}`);
+  }
   const status = value.status;
   if (typeof status !== "string" || !DECISION_STATUSES.includes(status as WordDecisionStatus)) {
     fail("invalid-shape", `wordDecisions[${index}].status must be one of: ${DECISION_STATUSES.join(", ")}`);
