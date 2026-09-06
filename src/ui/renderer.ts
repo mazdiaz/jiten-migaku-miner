@@ -32,6 +32,9 @@ function renderReviewSurface(dom: DomMap, state: Readonly<AppState>): void {
   const review = state.review;
   dom.reviewOverlay.hidden = !review.active;
   document.body.classList.toggle("review-open", review.active);
+  // Inert the background shell so background controls are unfocusable while
+  // the modal review overlay is open; the overlay lives outside main.app-shell.
+  document.querySelector("main.app-shell")?.toggleAttribute("inert", review.active);
   dom.reviewButton.disabled = state.dataset === null || state.status === "loading" || review.active;
 
   const triageButtons = [dom.reviewKnown, dom.reviewMined, dom.reviewSkip, dom.reviewLater];

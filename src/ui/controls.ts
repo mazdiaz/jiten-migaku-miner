@@ -62,6 +62,14 @@ function isTypingTarget(target: EventTarget | null): boolean {
   return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || element.isContentEditable;
 }
 
+interface PendingFocus {
+  word: string;
+  action: string;
+  after: string[];
+}
+
+const normalizeWord = (value: string): string => value.trim().toLocaleLowerCase();
+
 export function bindControls(
   dom: DomMap,
   controller: MinerController,
@@ -73,11 +81,84 @@ export function bindControls(
   const onSearch = options.onSearch;
   let latest: Readonly<AppState> | null = null;
   let reviewWasActive = false;
+  let pendingFocus: PendingFocus | null = null;
+  let focusIntent: PendingFocus | null = null;
+
+  const captureFollowingWords = (clicked: HTMLButtonElement): string[] => {
+    const article = clicked.closest("article");
+    if (article === null) return [];
+    const following: string[] = [];
+    let sibling = article.nextElementSibling;
+    while (sibling !== null) {
+      if (sibling instanceof HTMLElement) {
+        const word = sibling.querySelector<HTMLButtonElement>("button[data-word]")?.dataset.word;
+        if (word !== undefined && word !== "") following.push(word);
+      }
+      sibling = sibling.nextElementSibling;
+    }
+    return following;
+  };
+
+  // Focus restoration tiers after a results-list action rerenders the list:
+  // (a) same word still rendered -> its same-action button (queue toggles map
+  //     to action "queue" -> [data-queue-action="toggle"]); data-word keeps the
+  //     entry's raw case while queue words are lowercase, so compare normalized.
+  // (a') same word entry, same-action button disabled (Reset after reset) ->
+  //     the entry's first enabled decision button.
+  // (b) row removed -> first decision button of the next still-rendered entry.
+  // (c) nothing left to focus -> the results heading.
+  // A decision action rerenders the list twice (decision publish, then the
+  // async query result); the second rebuild destroys the node the first pass
+  // focused, so the applied intent is remembered and re-applied on later
+  // renders while focus has fallen back to <body>.
+  const applyPendingFocus = (): void => {
+    const focusLost = document.activeElement === document.body || document.activeElement === null;
+    const pending = pendingFocus ?? (focusLost ? focusIntent : null);
+    if (pending === null) return;
+    if (pendingFocus !== null) {
+      focusIntent = pending;
+      pendingFocus = null;
+    }
+    const wanted = normalizeWord(pending.word);
+    const buttons = dom.resultsList.querySelectorAll<HTMLButtonElement>("button[data-word]");
+    const matchesWord = (button: HTMLButtonElement): boolean =>
+      normalizeWord(button.dataset.word ?? "") === wanted;
+
+    for (const button of buttons) {
+      if (!matchesWord(button)) continue;
+      const sameAction = pending.action === "queue"
+        ? button.dataset.queueAction === "toggle"
+        : button.dataset.decisionAction === pending.action;
+      if (sameAction && !button.disabled) {
+        button.focus();
+        return;
+      }
+    }
+    for (const button of buttons) {
+      if (matchesWord(button) && button.dataset.decisionAction !== undefined && !button.disabled) {
+        button.focus();
+        return;
+      }
+    }
+    const afterWords = new Set(pending.after.map(normalizeWord));
+    if (afterWords.size > 0) {
+      for (const article of dom.resultsList.querySelectorAll("article")) {
+        const button = article.querySelector<HTMLButtonElement>("button[data-decision-action]");
+        if (button !== null && !button.disabled && afterWords.has(normalizeWord(button.dataset.word ?? ""))) {
+          button.focus();
+          return;
+        }
+      }
+    }
+    dom.resultsHeading.focus();
+  };
+
   const unsubscribe = controller.subscribe((state) => {
     if (reviewWasActive && !state.review.active) dom.reviewButton.focus();
     else if (!reviewWasActive && state.review.active) dom.reviewPanel.focus();
     reviewWasActive = state.review.active;
     latest = state;
+    if (!state.review.active) applyPendingFocus();
   });
 
   const importJiten = (file: Pick<File, "name" | "text">): void => {
@@ -220,6 +301,7 @@ export function bindControls(
     const queueButton = target.closest<HTMLButtonElement>("[data-queue-action]");
     if (queueButton !== null && !queueButton.disabled) {
       const word = queueButton.dataset.word ?? "";
+      pendingFocus = { word, action: "queue", after: captureFollowingWords(queueButton) };
       if (queueButton.dataset.queueAction === "remove") {
         controller.removeQueued(word);
       } else if (latest?.queue.normalizedWords.includes(word) === true) {
@@ -235,6 +317,7 @@ export function bindControls(
     const word = button.dataset.word ?? "";
     const action = button.dataset.decisionAction;
     if (action !== "known" && action !== "mined" && action !== "skip" && action !== "later" && action !== "unreviewed") return;
+    pendingFocus = { word, action, after: captureFollowingWords(button) };
     void controller.setWordDecision(word, action satisfies WordDecisionStatus | "unreviewed");
   });
 
@@ -311,9 +394,60 @@ export function bindControls(
     recorder.add(button, "click", () => submitReviewDecision(status));
   }
 
+  const reviewFocusables = (): HTMLElement[] => {
+    const nodes = dom.reviewPanel.querySelectorAll<HTMLElement>(
+      "button, [href], input, select, textarea, [tabindex]",
+    );
+    const isRendered = (node: HTMLElement): boolean => {
+      let current: HTMLElement | null = node;
+      while (current !== null && current !== document.body) {
+        if (current.hidden) return false;
+        current = current.parentElement;
+      }
+      return true;
+    };
+    return [...nodes].filter((node) =>
+      isRendered(node)
+      && node.getAttribute("tabindex") !== "-1"
+      && !(node instanceof HTMLButtonElement && node.disabled)
+      && !(node instanceof HTMLInputElement && node.disabled)
+      && !(node instanceof HTMLSelectElement && node.disabled)
+      && !(node instanceof HTMLTextAreaElement && node.disabled),
+    );
+  };
+
+  // Focus trap for the review overlay: Tab/Shift+Tab wrap within the panel's
+  // focusables instead of escaping into the inert background shell. Runs before
+  // the modifier guard so Shift+Tab (shiftKey=true) is still trapped.
+  const trapReviewTab = (keyboard: KeyboardEvent): void => {
+    const focusables = reviewFocusables();
+    if (focusables.length === 0) {
+      keyboard.preventDefault();
+      return;
+    }
+    const active = document.activeElement;
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    if (first === undefined || last === undefined) return;
+    const inCycle = active instanceof HTMLElement && focusables.includes(active);
+    const wrapsBackward = !inCycle || active === first;
+    const wrapsForward = !inCycle || active === last;
+    if (keyboard.shiftKey && wrapsBackward) {
+      keyboard.preventDefault();
+      last.focus();
+    } else if (!keyboard.shiftKey && wrapsForward) {
+      keyboard.preventDefault();
+      first.focus();
+    }
+  };
+
   const handleKeydown = (event: Event): void => {
     const keyboard = event as KeyboardEvent;
     if (latest === null || keyboard.defaultPrevented) return;
+    if (latest.review.active && keyboard.key === "Tab") {
+      trapReviewTab(keyboard);
+      return;
+    }
     if (keyboard.ctrlKey || keyboard.metaKey || keyboard.altKey || keyboard.shiftKey) return;
     if (isTypingTarget(keyboard.target)) return;
 

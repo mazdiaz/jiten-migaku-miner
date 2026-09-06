@@ -173,7 +173,7 @@
 
       <div class="results-head queue-hidden">
         <div>
-          <h2 id="resultsHeading">Mining entries</h2>
+          <h2 id="resultsHeading" tabindex="-1">Mining entries</h2>
           <p id="resultStats" class="result-stats">Load a Jiten CSV to begin.</p>
         </div>
         <button id="reviewButton" type="button" class="review-button" disabled>Review unreviewed</button>
@@ -195,8 +195,9 @@
       </div>
       <p class="shortcut-note">Shortcuts: → / N next · ← / P previous · Home top · End bottom. Disabled while typing in a control.</p>
     </section>
+  </main>
 
-    <div id="reviewOverlay" class="review-overlay" role="dialog" aria-modal="true" aria-labelledby="reviewHeading" hidden>
+  <div id="reviewOverlay" class="review-overlay" role="dialog" aria-modal="true" aria-labelledby="reviewHeading" hidden>
       <div id="reviewPanel" class="review-panel" tabindex="-1">
         <div class="review-header">
           <h2 id="reviewHeading">Review</h2>
@@ -216,8 +217,7 @@
         </div>
         <p class="review-shortcut-note">Shortcuts: K known · M mined · S skip · L later · Esc exit.</p>
       </div>
-    </div>
-  </main>
+  </div>
 
   <script type="module" src="/src/main.ts"></script>
 </body>

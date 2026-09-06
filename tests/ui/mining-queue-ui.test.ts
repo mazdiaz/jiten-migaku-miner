@@ -320,6 +320,36 @@ describe("entry queue controls", () => {
     expect(harness.controller.calls.stopQueueMode).toBe(1);
   });
 
+  it("queue toggle keeps focus after the rerender", () => {
+    const harness = setup({
+      ...datasetState(),
+      result: {
+        items: [makeEntry()],
+        page: 1, totalPages: 1, totalEntries: 1, startIndex: 1, endIndex: 1,
+        pageSize: 50, knownCount: 0, windowed: false,
+      },
+    });
+
+    const button = harness.dom.resultsList.querySelector<HTMLButtonElement>("[data-queue-action]")!;
+    button.focus();
+    button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(harness.controller.calls.toggleQueued).toEqual(["言葉"]);
+
+    harness.controller.publishState({
+      ...queueState(["言葉"]),
+      result: {
+        items: [makeEntry()],
+        page: 1, totalPages: 1, totalEntries: 1, startIndex: 1, endIndex: 1,
+        pageSize: 50, knownCount: 0, windowed: false,
+      },
+    });
+
+    const updated = harness.dom.resultsList.querySelector<HTMLButtonElement>("[data-queue-action]")!;
+    expect(updated.getAttribute("aria-pressed")).toBe("true");
+    expect(updated.textContent).toBe("✓ Queued");
+    expect(document.activeElement).toBe(updated);
+  });
+
   it("decision buttons still call the controller and sentence DOM stays button-free", () => {
     const harness = setup();
     const view = { ...createInitialAppState("memory").view, showHighlight: true };

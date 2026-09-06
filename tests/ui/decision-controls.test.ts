@@ -92,7 +92,8 @@ function seedDom(): DomMap {
   const completeCopy = document.createElement("p");
   completeCopy.textContent = "No unreviewed candidates remain for the current filters.";
   reviewComplete.appendChild(completeCopy);
-  intoPanel("reviewReturn", "button");
+  const reviewReturn = add("reviewReturn", "button");
+  reviewComplete.appendChild(reviewReturn);
   intoPanel("reviewExit", "button");
   intoPanel("reviewKnown", "button");
   intoPanel("reviewMined", "button");
@@ -115,6 +116,10 @@ function seedDom(): DomMap {
   add("bottomPrev", "button");
   add("bottomNext", "button");
   add("bottomPage", "span");
+
+  const appShell = document.createElement("main");
+  appShell.className = "app-shell";
+  document.body.appendChild(appShell);
 
   return getDomMap();
 }
@@ -240,6 +245,32 @@ function makeEntry(overrides: Partial<EntryWithKnown> = {}): EntryWithKnown {
 
 function decision(word: string, status: WordDecision["status"]): WordDecision {
   return { normalizedWord: word, status, updatedAt: "2026-09-05T00:00:00.000Z" };
+}
+
+function datasetReady(): Partial<AppState> {
+  return {
+    dataset: {
+      id: "d1", name: "book.csv", sourceType: "file", sourceName: "book.csv",
+      headers: ["Word"], entryCount: 3, createdAt: "x", updatedAt: "x", schemaVersion: 1,
+    },
+    status: "ready",
+  };
+}
+
+function listResult(items: EntryWithKnown[]): Partial<AppState> {
+  return {
+    result: {
+      items,
+      page: 1,
+      totalPages: 1,
+      totalEntries: items.length,
+      startIndex: 1,
+      endIndex: items.length,
+      pageSize: 50,
+      knownCount: 0,
+      windowed: false,
+    },
+  };
 }
 
 interface Harness {
@@ -398,6 +429,60 @@ describe("per-entry decision actions", () => {
       renderEntryNode(makeEntry({ knownByMigaku: true }), 1, createInitialAppState("memory").view),
     );
     expect(dom.resultsList.querySelector(".entry-badge-migaku")?.textContent).toBe("Migaku known");
+  });
+});
+
+describe("post-action focus restoration", () => {
+  it("decision click keeps focus on the same action when entry stays", () => {
+    const harness = setup({ ...datasetReady(), ...listResult([makeEntry()]) });
+    try {
+      const known = decisionButton(harness.dom.resultsList, "known");
+      known.focus();
+      known.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      expect(harness.controller.setWordDecision).toHaveBeenCalledWith("言葉", "known");
+
+      // Decision lands: entry stays under the "all" filter, nodes are rebuilt.
+      harness.controller.publishState({
+        wordDecisions: new Map([["言葉", decision("言葉", "known")]]),
+        ...listResult([makeEntry({ decision: "known", known: true, knownByDecision: true })]),
+      });
+
+      const updated = decisionButton(harness.dom.resultsList, "known");
+      expect(updated.getAttribute("aria-pressed")).toBe("true");
+      expect(document.activeElement).toBe(updated);
+    } finally {
+      harness.dispose();
+    }
+  });
+
+  it("decision click moves focus to the next entry when the row disappears", () => {
+    const harness = setup({
+      ...datasetReady(),
+      query: { ...createInitialAppState("memory").query, decision: "unreviewed" },
+      ...listResult([
+        makeEntry(),
+        makeEntry({ id: "e2", originalIndex: 1, word: "いぬ", normalizedWord: "いぬ" }),
+      ]),
+    });
+    try {
+      const first = decisionButton(harness.dom.resultsList, "known");
+      first.focus();
+      first.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+      // Known word no longer matches the "unreviewed" filter: row is gone.
+      harness.controller.publishState({
+        wordDecisions: new Map([["言葉", decision("言葉", "known")]]),
+        ...listResult([
+          makeEntry({ id: "e2", originalIndex: 1, word: "いぬ", normalizedWord: "いぬ" }),
+        ]),
+      });
+
+      const next = harness.dom.resultsList.querySelector<HTMLButtonElement>('[data-decision-action="known"]');
+      expect(next?.dataset.word).toBe("いぬ");
+      expect(document.activeElement).toBe(next);
+    } finally {
+      harness.dispose();
+    }
   });
 });
 
@@ -634,6 +719,42 @@ describe("review mode ui", () => {
       document.dispatchEvent(new KeyboardEvent("keydown", { key: "n", bubbles: true }));
       document.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
       expect(harness.controller.calls.updateQuery).toEqual([]);
+    } finally {
+      harness.dispose();
+    }
+  });
+
+  it("review trap contains Tab and Shift+Tab inside the panel", () => {
+    const harness = setup(reviewState({ current: makeEntry() }));
+    try {
+      harness.dom.reviewLater.focus();
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true }));
+      expect(document.activeElement).toBe(harness.dom.reviewExit);
+
+      harness.dom.reviewExit.focus();
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true }));
+      expect(document.activeElement).toBe(harness.dom.reviewLater);
+    } finally {
+      harness.dispose();
+    }
+  });
+
+  it("background is inert while review is open and inert clears on close", () => {
+    const harness = setup({ ...datasetReady(), ...reviewState({ current: makeEntry() }) });
+    const appShell = document.querySelector("main.app-shell");
+    expect(appShell).not.toBeNull();
+    try {
+      expect(appShell?.hasAttribute("inert")).toBe(true);
+
+      harness.controller.publishState({
+        ...datasetReady(),
+        review: {
+          active: false, initialTotal: 0, processed: 0, remaining: 0,
+          current: null, status: "idle", errorMessage: null,
+        },
+      });
+      expect(appShell?.hasAttribute("inert")).toBe(false);
+      expect(document.activeElement).toBe(harness.dom.reviewButton);
     } finally {
       harness.dispose();
     }

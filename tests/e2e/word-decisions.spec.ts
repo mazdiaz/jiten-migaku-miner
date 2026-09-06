@@ -119,4 +119,36 @@ test.describe("persistent word decisions", () => {
     await expectEntryDecision(page, "プール", "unreviewed");
     await expectEntryDecision(page, "静か", "unreviewed");
   });
+
+  test("keyboard focus survives decisions and review", async ({ page }) => {
+    await page.goto("/");
+    await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
+    await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
+
+    // Keyboard: activate the first entry's Known button with Enter; focus
+    // must land back on the same (rebuilt) action button, not on <body>.
+    const known = decisionButton(page, "気になる", "known");
+    await known.focus();
+    await page.keyboard.press("Enter");
+    await expect(known).toHaveAttribute("aria-pressed", "true");
+    await expect(known).toBeFocused();
+
+    // Keyboard: open review; focus moves into the panel.
+    await page.locator("#reviewButton").focus();
+    await page.keyboard.press("Enter");
+    await expect(page.locator("#reviewOverlay")).toBeVisible();
+    await expect(page.locator("#reviewPanel")).toBeFocused();
+    await expect(page.locator("#reviewKnown")).toBeEnabled();
+
+    // Shift+Tab from the first control wraps to the last control and never
+    // escapes into the background app shell.
+    await page.locator("#reviewExit").focus();
+    await page.keyboard.press("Shift+Tab");
+    await expect(page.locator("#reviewLater")).toBeFocused();
+
+    // Escape closes the overlay and returns focus to the review button.
+    await page.keyboard.press("Escape");
+    await expect(page.locator("#reviewOverlay")).toBeHidden();
+    await expect(page.locator("#reviewButton")).toBeFocused();
+  });
 });
