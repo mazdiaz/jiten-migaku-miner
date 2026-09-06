@@ -178,7 +178,7 @@ describe("renderEntryNode structure", () => {
     expect(article.querySelector(".entry-definitions")?.getAttribute("lang")).toBeNull();
   });
 
-  it("sets the surface index for repeated highlighted segments", () => {
+  it("does not set surface index when highlighting is off", () => {
     const article = renderEntryNode(
       makeEntry({ sentenceRaw: "**\u8A00\u8449**\u304C**\u8A00\u8449**\u3060\u3002" }),
       1,
