@@ -361,7 +361,9 @@ input:focus, select:focus, button:focus-visible {
 .results-head h2 { margin: 0; font-size: 1.05rem; }
 
 /* Keep the focused/scrolled-to results heading clear of the sticky toolbar.
-   140px covers the toolbar at 375px width with the filters row expanded. */
+   140px clears the collapsed toolbar at 375px. With the filters panel expanded
+   the heading can sit under the toolbar; scroll to recover.
+   Follow-up: conditional scroll-margin when #advancedToggle[aria-expanded='true']. */
 #resultsHeading { scroll-margin-top: 140px; }
 
 .result-stats { margin: 4px 0 0; color: var(--muted); font-size: 0.9rem; }
