@@ -240,8 +240,9 @@ function buildEntryHeader(entry: EntryWithKnown, view: ViewState, number: number
 }
 
 // Definitions render as a full-width row after the sentence, not inside the
-// header: the header stays number/target/occurrences/badges only. Truncation
-// logic + title are preserved (Task 5 replaces the title with a disclosure).
+// header: the header stays number/target/occurrences/badges only. When more
+// than three definitions exist, the preview is followed by a native
+// details/summary disclosure (keyboard operable, no title tooltip).
 function buildEntryDefinitions(entry: EntryWithKnown, view: ViewState): HTMLElement | null {
   if (!entry.definitions || !view.showDefinitions) return null;
   const parts = entry.definitions.split(",").map((part) => part.trim()).filter(Boolean);
@@ -252,8 +253,15 @@ function buildEntryDefinitions(entry: EntryWithKnown, view: ViewState): HTMLElem
   definitions.className = "entry-definitions";
   definitions.textContent = truncated ? `${shown}, …` : shown;
   if (truncated) {
-    definitions.title = entry.definitions;
-    definitions.style.cursor = "help";
+    const details = document.createElement("details");
+    details.className = "entry-defs-details";
+    const summary = document.createElement("summary");
+    summary.textContent = "Show full definition";
+    const full = document.createElement("div");
+    full.className = "entry-defs-full";
+    full.textContent = entry.definitions;
+    details.append(summary, full);
+    definitions.appendChild(details);
   }
   return definitions;
 }

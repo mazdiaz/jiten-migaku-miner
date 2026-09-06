@@ -87,6 +87,10 @@ h1 {
   transform: translateY(-1px);
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .dropzone { transition: none; }
+}
+
 .dropzone-title { font-weight: 800; }
 .dropzone-copy { margin: 0; color: var(--muted); font-size: 0.92rem; }
 .file-status { color: var(--success); font-size: 0.88rem; min-height: 1.3em; overflow-wrap: anywhere; }
@@ -355,6 +359,11 @@ input:focus, select:focus, button:focus-visible {
 }
 
 .results-head h2 { margin: 0; font-size: 1.05rem; }
+
+/* Keep the focused/scrolled-to results heading clear of the sticky toolbar.
+   140px covers the toolbar at 375px width with the filters row expanded. */
+#resultsHeading { scroll-margin-top: 140px; }
+
 .result-stats { margin: 4px 0 0; color: var(--muted); font-size: 0.9rem; }
 
 .pager {

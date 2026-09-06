@@ -149,11 +149,31 @@ describe("renderEntryNode structure", () => {
     expect(article.querySelector(".entry-definitions")).not.toBeNull();
   });
 
-  it("keeps definition truncation with a title fallback", () => {
+  it("renders full-definition disclosure for truncated definitions", () => {
     const article = renderEntryNode(makeEntry(), 1, view);
     const definitions = article.querySelector<HTMLElement>(".entry-definitions");
-    expect(definitions?.textContent).toBe("word, term, expression, …");
-    expect(definitions?.getAttribute("title")).toBe("word, term, expression, phrase");
+    expect(definitions?.textContent).toContain("word, term, expression, …");
+    const details = definitions?.querySelector<HTMLDetailsElement>("details.entry-defs-details");
+    expect(details).not.toBeNull();
+    expect(details?.open).toBe(false);
+    expect(details?.querySelector("summary")?.textContent).toBe("Show full definition");
+    expect(details?.querySelector(".entry-defs-full")?.textContent).toBe("word, term, expression, phrase");
+    expect(definitions?.getAttribute("title")).toBeNull();
+  });
+
+  it("renders no disclosure for non-truncated definitions", () => {
+    const article = renderEntryNode(makeEntry({ definitions: "word, term" }), 1, view);
+    const definitions = article.querySelector<HTMLElement>(".entry-definitions");
+    expect(definitions?.textContent).toBe("word, term");
+    expect(definitions?.querySelector("details")).toBeNull();
+    expect(definitions?.getAttribute("title")).toBeNull();
+  });
+
+  it("tags lang=ja on the target and sentence but not the definitions", () => {
+    const article = renderEntryNode(makeEntry(), 1, view);
+    expect(article.querySelector(".target-word")?.getAttribute("lang")).toBe("ja");
+    expect(article.querySelector(".sentence")?.getAttribute("lang")).toBe("ja");
+    expect(article.querySelector(".entry-definitions")?.getAttribute("lang")).toBeNull();
   });
 });
 

@@ -6,7 +6,7 @@
   --surface-3: #242936;
   --text: #f2f4f8;
   --muted: #9ea6b5;
-  --subtle: #737c8e;
+  --subtle: #8a94a8;
   --border: #303644;
   --border-strong: #465064;
   --accent: #8ba7ff;
@@ -21,6 +21,10 @@
 * { box-sizing: border-box; }
 
 html { scroll-behavior: smooth; }
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+}
 
 body {
   margin: 0;

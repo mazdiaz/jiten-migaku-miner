@@ -22,14 +22,14 @@
         <button id="changeFiles" type="button" class="clear-button" aria-expanded="false" aria-controls="importGrid" hidden>Change Files</button>
       </div>
       <div class="import-grid" id="importGrid">
-        <div id="jitenDropzone" class="dropzone" tabindex="0">
+        <div id="jitenDropzone" class="dropzone">
           <div class="dropzone-title">Jiten CSV</div>
           <p class="dropzone-copy">Drop one media vocabulary CSV here.</p>
           <label class="file-picker" for="jitenInput">Choose CSV</label>
           <input id="jitenInput" type="file" accept=".csv,text/csv">
           <div id="jitenStatus" class="file-status">No CSV loaded</div>
         </div>
-        <div id="knownDropzone" class="dropzone" tabindex="0">
+        <div id="knownDropzone" class="dropzone">
           <div class="dropzone-title">Migaku Known Words</div>
           <p class="dropzone-copy">Optional plain-text export, one entry per line.</p>
           <label class="file-picker" for="knownInput">Choose TXT</label>
@@ -54,11 +54,11 @@
       <div id="errorBox" class="error-box" role="alert" hidden></div>
     </section>
 
-    <section id="results" class="results-section" aria-live="polite" aria-label="Mining results">
+    <section id="results" class="results-section" aria-label="Mining results">
       <div id="stickyToolbar" class="sticky-toolbar" hidden>
         <div class="sticky-row-1">
           <div id="stickyTitle" class="sticky-title">Jiten media</div>
-          <input id="stickySearch" class="sticky-search queue-hidden" type="search" placeholder="Search target…" autocomplete="off">
+          <input id="stickySearch" class="sticky-search queue-hidden" type="search" placeholder="Search target…" autocomplete="off" aria-label="Search mining results">
           <button id="queueToggle" type="button" class="queue-button" aria-pressed="false" disabled>Queue (0)</button>
           <div class="pager queue-hidden" aria-label="Sticky page navigation">
             <button id="stickyPrev" type="button" aria-label="Previous page">←</button>
@@ -142,7 +142,7 @@
       <div class="results-head queue-hidden">
         <div>
           <h2 id="resultsHeading" tabindex="-1">Mining entries</h2>
-          <p id="resultStats" class="result-stats">Load a Jiten CSV to begin.</p>
+          <p id="resultStats" class="result-stats" aria-live="polite">Load a Jiten CSV to begin.</p>
         </div>
         <button id="reviewButton" type="button" class="review-button" disabled>Review unreviewed</button>
       </div>
@@ -156,7 +156,7 @@
         <span id="bottomPage" class="page-label">Page 0 / 0</span>
         <button id="bottomNext" type="button" aria-label="Next page" disabled>→</button>
       </div>
-      <p class="shortcut-note">Shortcuts: → / N next · ← / P previous · Home top · End bottom. Disabled while typing in a control.</p>
+      <p class="shortcut-note">Shortcuts: → / N next · ← / P previous · Home top · End bottom. Work when focus is outside the toolbar; disabled while typing.</p>
     </section>
   </main>
 
@@ -167,7 +167,7 @@
           <span id="reviewProgress" class="review-progress" aria-live="polite"></span>
           <button id="reviewExit" type="button" class="review-exit">Exit review</button>
         </div>
-        <div id="reviewContent" class="review-content" lang="ja"></div>
+        <div id="reviewContent" class="review-content"></div>
         <div id="reviewComplete" class="review-complete" hidden>
           <p>No unreviewed candidates remain for the current filters.</p>
           <button id="reviewReturn" type="button" class="review-action">Return to list</button>

@@ -47,6 +47,21 @@
   overflow-wrap: anywhere;
 }
 
+/* Native disclosure for truncated definition lists. */
+.entry-defs-details { display: inline-block; margin-top: 2px; }
+
+.entry-defs-details summary {
+  color: var(--subtle);
+  font-size: 0.85rem;
+  cursor: pointer;
+  user-select: none;
+}
+
+.entry-defs-details summary:hover,
+.entry-defs-details summary:focus-visible { color: var(--muted); }
+
+.entry-defs-full { margin-top: 4px; }
+
 .occurrence-count {
   flex: 0 0 auto;
   color: var(--muted);

@@ -193,13 +193,6 @@ export function bindControls(
       if (file) loader(file);
       input.value = "";
     });
-    recorder.add(dropzone, "keydown", (event) => {
-      const keyboard = event as KeyboardEvent;
-      if (keyboard.key === "Enter" || keyboard.key === " ") {
-        event.preventDefault();
-        input.click();
-      }
-    });
     recorder.add(input, "change", () => {
       const file = input.files?.[0];
       if (file) loader(file);
@@ -241,10 +234,19 @@ export function bindControls(
     });
   };
 
+  // Moving focus to the results heading after a page change gives keyboard
+  // users a stable anchor just above the refreshed list. scroll-margin-top on
+  // the heading clears the sticky toolbar; focus uses preventScroll so it does
+  // not fight the scroll-margin-aware scrollIntoView.
+  const focusResultsHeading = (): void => {
+    dom.resultsHeading.scrollIntoView({ block: "start" });
+    dom.resultsHeading.focus({ preventScroll: true });
+  };
+
   const bindPagerButton = (button: HTMLButtonElement, delta: number): void => {
     recorder.add(button, "click", () => {
       controller.changePage(delta);
-      dom.resultsHeading.scrollIntoView({ block: "start" });
+      focusResultsHeading();
     });
   };
 
@@ -448,7 +450,10 @@ export function bindControls(
       return;
     }
     if (keyboard.ctrlKey || keyboard.metaKey || keyboard.altKey || keyboard.shiftKey) return;
-    if (isTypingTarget(keyboard.target)) return;
+    if (
+      isTypingTarget(keyboard.target)
+      || (keyboard.target instanceof Element && keyboard.target.closest("#stickyToolbar") !== null)
+    ) return;
 
     if (latest.review.active) {
       const action = REVIEW_ACTION_KEYS[keyboard.key.toLowerCase()];
@@ -471,11 +476,11 @@ export function bindControls(
     if (keyboard.key === "ArrowRight" || keyboard.key === "n") {
       keyboard.preventDefault();
       controller.changePage(1);
-      dom.resultsHeading.scrollIntoView({ block: "start" });
+      focusResultsHeading();
     } else if (keyboard.key === "ArrowLeft" || keyboard.key === "p") {
       keyboard.preventDefault();
       controller.changePage(-1);
-      dom.resultsHeading.scrollIntoView({ block: "start" });
+      focusResultsHeading();
     } else if (keyboard.key === "Home") {
       keyboard.preventDefault();
       dom.resultsHeading.scrollIntoView({ block: "start" });
