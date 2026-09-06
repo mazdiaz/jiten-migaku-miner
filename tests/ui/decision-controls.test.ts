@@ -584,7 +584,7 @@ describe("sentence integrity with decision controls", () => {
     const highlight = decidedSentence?.querySelector(".target-highlight");
     expect(highlight?.textContent).toBe("言葉");
     expect(decidedSentence?.querySelectorAll("button")).toHaveLength(0);
-    expect(decidedSentence?.querySelectorAll(".entry-decision, .entry-badge")).toHaveLength(0);
+    expect(decidedSentence?.querySelectorAll(".entry-decision, .entry-badge, .entry-actions")).toHaveLength(0);
     expect(decidedSentence?.textContent).toContain("が好き。");
   });
 });
