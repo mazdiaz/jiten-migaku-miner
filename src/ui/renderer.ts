@@ -115,10 +115,17 @@ function renderSentence(entry: EntryWithKnown, view: ViewState): HTMLElement {
   const sentence = document.createElement("p");
   sentence.className = "sentence";
   const showFurigana = Boolean(view.showFurigana);
-  for (const segment of parseHighlightSegments(entry.sentenceRaw)) {
+  const segments = parseHighlightSegments(entry.sentenceRaw);
+  segments.forEach((segment, index) => {
     if (segment.highlighted && view.showHighlight) {
+      // Occurrence ordinal among identical-text segments: the adapter marks
+      // the nth match of the surface, so repeated targets stay reconciled.
+      const ordinal = segments
+        .slice(0, index)
+        .filter((prior) => prior.text === segment.text).length;
       sentence.dataset.surface = segment.text;
       sentence.dataset.word = entry.word;
+      sentence.dataset.surfaceIndex = String(ordinal);
       const span = document.createElement("span");
       span.className = "target-highlight";
       if (showFurigana && entry.furiganaRuns.length > 0) {
@@ -130,7 +137,7 @@ function renderSentence(entry: EntryWithKnown, view: ViewState): HTMLElement {
     } else {
       sentence.appendChild(document.createTextNode(segment.text));
     }
-  }
+  });
   return sentence;
 }
 

@@ -63,12 +63,28 @@ function isParsedSentence(sentence: Element): boolean {
   );
 }
 
-function markSentence(sentence: Element, surface: string, word: string): void {
+function markSentence(sentence: HTMLElement, surface: string, word: string): void {
   unwrapThWraps(sentence);
   if (!isParsedSentence(sentence)) return;
 
   const { leaves, text } = collectVisibleText(sentence);
-  let index = text.indexOf(surface);
+  const ordinalRaw = Number(sentence.dataset.surfaceIndex ?? 0);
+  const ordinal = Number.isFinite(ordinalRaw) ? ordinalRaw : 0;
+  let index = -1;
+  if (surface) {
+    let cursor = text.indexOf(surface);
+    let seen = 0;
+    while (cursor !== -1) {
+      if (seen === ordinal) {
+        index = cursor;
+        break;
+      }
+      seen += 1;
+      cursor = text.indexOf(surface, cursor + 1);
+    }
+    // Defensive: fewer occurrences than the ordinal asks for -> first match.
+    if (index === -1 && seen > 0) index = text.indexOf(surface);
+  }
   let target = surface;
   if (index === -1 && word) {
     let stem = "";

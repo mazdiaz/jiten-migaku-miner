@@ -175,6 +175,31 @@ describe("renderEntryNode structure", () => {
     expect(article.querySelector(".sentence")?.getAttribute("lang")).toBe("ja");
     expect(article.querySelector(".entry-definitions")?.getAttribute("lang")).toBeNull();
   });
+
+  it("sets the surface index for repeated highlighted segments", () => {
+    const article = renderEntryNode(
+      makeEntry({ sentenceRaw: "**\u8A00\u8449**\u304C**\u8A00\u8449**\u3060\u3002" }),
+      1,
+      view,
+    );
+    const sentenceNode = article.querySelector<HTMLElement>(".sentence");
+    expect(sentenceNode?.dataset.surfaceIndex).toBeUndefined();
+  });
+
+  it("sets the surface index for repeated highlighted segments", () => {
+    const highlighted = { ...view, showHighlight: true };
+    const once = renderEntryNode(makeEntry(), 1, highlighted);
+    expect(once.querySelector<HTMLElement>(".sentence")?.dataset.surfaceIndex).toBe("0");
+
+    const article = renderEntryNode(
+      makeEntry({ sentenceRaw: "**\u8A00\u8449**\u304C**\u8A00\u8449**\u3060\u3002" }),
+      1,
+      highlighted,
+    );
+    const sentenceNode = article.querySelector<HTMLElement>(".sentence");
+    expect(sentenceNode?.dataset.surface).toBe("\u8A00\u8449");
+    expect(sentenceNode?.dataset.surfaceIndex).toBe("1");
+  });
 });
 
 describe("renderReviewEntryNode structure", () => {

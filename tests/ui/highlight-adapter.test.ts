@@ -138,6 +138,91 @@ describe("highlight adapter", () => {
     adapter.destroy();
   });
 
+  it("marks the intended occurrence of a repeated target", () => {
+    const root = document.createElement("div");
+    const node = sentence("\u8A00\u8449", "\u8A00\u8449", [
+      plain("\u8A00\u8449\u306F"),
+      targetSpan("\u8A00\u8449"),
+      text("\u304C\u597D\u304D\u3002"),
+    ]);
+    node.dataset.surfaceIndex = "1";
+    root.appendChild(node);
+    const adapter = createHighlightAdapter(root);
+
+    adapter.reconcile(root);
+
+    const wrappers = [...node.querySelectorAll("span.th-wrap")];
+    expect(wrappers).toHaveLength(1);
+    expect(wrappers[0]?.textContent).toBe("\u8A00\u8449");
+    expect(wrappers[0]?.closest(".target-highlight")).not.toBeNull();
+    adapter.destroy();
+  });
+
+  it("defaults to the first occurrence without a surface index", () => {
+    const root = document.createElement("div");
+    const node = sentence("\u8A00\u8449", "\u8A00\u8449", [
+      plain("\u8A00\u8449\u306F"),
+      targetSpan("\u8A00\u8449"),
+      text("\u304C\u597D\u304D\u3002"),
+    ]);
+    root.appendChild(node);
+    const adapter = createHighlightAdapter(root);
+
+    adapter.reconcile(root);
+
+    const wrappers = [...node.querySelectorAll("span.th-wrap")];
+    expect(wrappers).toHaveLength(1);
+    expect(wrappers[0]?.textContent).toBe("\u8A00\u8449");
+    expect(wrappers[0]?.closest(".target-highlight")).toBeNull();
+    adapter.destroy();
+  });
+
+  it("marks the correct base-text occurrence with ruby present", () => {
+    const root = document.createElement("div");
+    const ruby = document.createElement("ruby");
+    const rb = document.createElement("rb");
+    rb.textContent = "\u8A00\u8449";
+    const rt = document.createElement("rt");
+    rt.textContent = "\u3053\u3068\u3070";
+    ruby.append(rb, rt);
+    const node = sentence("\u8A00\u8449", "\u8A00\u8449", [text("\u8A00\u8449\u306F"), ruby, text("\u3002")]);
+    node.dataset.surfaceIndex = "1";
+    root.appendChild(node);
+    const adapter = createHighlightAdapter(root);
+
+    adapter.reconcile(root);
+
+    const wrappers = [...node.querySelectorAll("span.th-wrap")];
+    expect(wrappers).toHaveLength(1);
+    expect(wrappers[0]?.textContent).toBe("\u8A00\u8449");
+    expect(wrappers[0]?.closest("ruby")).not.toBeNull();
+    expect(wrappers[0]?.querySelector("rt")).toBeNull();
+    adapter.destroy();
+  });
+
+  it("reconciles extension-split text nodes idempotently at ordinal one", () => {
+    const root = document.createElement("div");
+    const node = sentence("\u8A00\u8449", "\u8A00\u8449", [
+      plain("\u8A00\u8449\u306F"),
+      targetSpan(text("\u8A00")),
+      text("\u8449"),
+      text("\u304C\u597D\u304D\u3002"),
+    ]);
+    node.dataset.surfaceIndex = "1";
+    root.appendChild(node);
+    const adapter = createHighlightAdapter(root);
+
+    adapter.reconcile(root);
+    adapter.reconcile(root);
+
+    const wrappers = [...node.querySelectorAll("span.th-wrap")];
+    expect(wrappers.map((wrapper) => wrapper.textContent).join("")).toBe("\u8A00\u8449");
+    expect(wrappers[0]?.closest(".target-highlight")).not.toBeNull();
+    expect(wrappers.some((wrapper) => wrapper.parentElement?.classList.contains("th-wrap"))).toBe(false);
+    expect(node.textContent).toBe("\u8A00\u8449\u306F\u8A00\u8449\u304C\u597D\u304D\u3002");
+    adapter.destroy();
+  });
+
   it("repeated reconciliation does not nest wrappers or duplicate classes", () => {
     const root = document.createElement("div");
     const node = sentence("気になる", "気になる", [

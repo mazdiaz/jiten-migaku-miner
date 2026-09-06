@@ -12,7 +12,9 @@ export function canonicalWord(word: string): string {
 }
 
 export function parseCsv(text: string): string[][] {
-  const source = String(text ?? "");
+  // Strip one leading BOM: it must not reach the tokenizer, or it contaminates
+  // both plain ("\uFEFFWord") and quoted ('"\uFEFFWord"') first headers.
+  const source = String(text ?? "").replace(/^\uFEFF/, "");
   const rows: string[][] = [];
   let row: string[] = [];
   let field = "";

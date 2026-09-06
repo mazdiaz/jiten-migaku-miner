@@ -168,6 +168,20 @@ describe("text domain functions", () => {
     ]);
   });
 
+  it("strips a leading BOM before a plain first header", () => {
+    expect(parseCsv("\uFEFFWord,Occurences\nx,2\n")).toEqual([
+      ["Word", "Occurences"],
+      ["x", "2"],
+    ]);
+  });
+
+  it("parses a BOM before a quoted first header", () => {
+    const parsed = parseJitenCsv('\uFEFF"Word",Occurences\n"猫",2\n');
+
+    expect(parsed.headers).toEqual(["Word", "Occurences"]);
+    expect(parsed.entries[0]?.word).toBe("猫");
+  });
+
   it("parses known words from fixture and ignores empty lines", () => {
     expect(parseKnownWords(`${knownWordsFixture}\r\n\n`)).toEqual(new Set(["プール"]));
   });
