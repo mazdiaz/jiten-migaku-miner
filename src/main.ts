@@ -6,6 +6,7 @@ import { createMinerController } from "./app/controller";
 import { createQueryController } from "./app/query-controller";
 import type { AppState } from "./app/state";
 import { DEFAULT_VIEW } from "./app/state";
+import { canonicalWord } from "./domain/text";
 import { createFolderSource } from "./platform/folder-source";
 import { bindControls } from "./ui/controls";
 import { getDomMap } from "./ui/dom";
@@ -40,7 +41,7 @@ async function bootstrap(): Promise<void> {
   const virtualList = createVirtualList(
     dom.resultsList,
     (entry, index) => renderEntryNode(entry, index + 1, latest?.view ?? DEFAULT_VIEW, {
-      queued: latest?.queue.normalizedWords.includes(entry.normalizedWord) ?? false,
+      queued: latest?.queue.normalizedWords.includes(canonicalWord(entry.normalizedWord)) ?? false,
       queueMode: latest?.queue.mode === "queue",
     }),
     { onRequestWindow: (start) => queryController.setViewportStart(start) },

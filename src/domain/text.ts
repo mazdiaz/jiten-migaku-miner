@@ -5,6 +5,12 @@ export function normalizeText(value: unknown): string {
   return String(value ?? "").trim().normalize("NFC");
 }
 
+// Queue membership, worker search, and controller decisions all key words by
+// their canonical lowercase identity; raw entries keep original case ("NHK").
+export function canonicalWord(word: string): string {
+  return normalizeText(word).toLocaleLowerCase();
+}
+
 export function parseCsv(text: string): string[][] {
   const source = String(text ?? "");
   const rows: string[][] = [];

@@ -1,4 +1,4 @@
-import { parseHighlightSegments } from "../domain/text";
+import { canonicalWord, parseHighlightSegments } from "../domain/text";
 import type { EntryWithKnown, QueryResult, ViewState, WordDecisionStatus } from "../domain/types";
 import type { AppState } from "../app/state";
 import type { DomMap } from "./dom";
@@ -345,7 +345,7 @@ export function createRenderer(dom: DomMap): Renderer {
     items.forEach((entry, index) => fragment.appendChild(
       renderEntryNode(entry, startIndex + index, state.view, {
         queueMode,
-        queued: queued.has(entry.normalizedWord.toLocaleLowerCase()),
+        queued: queued.has(canonicalWord(entry.normalizedWord)),
       }),
     ));
     dom.resultsList.appendChild(fragment);

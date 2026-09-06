@@ -278,6 +278,25 @@ describe("entry queue controls", () => {
     expect(harness.controller.calls.toggleQueued).toEqual([]);
   });
 
+  it("unqueues a mixed-case word whose queue key is lowercase", () => {
+    const harness = setup(queueState(["nhk"]));
+    harness.dom.resultsList.appendChild(
+      renderEntryNode(
+        makeEntry({ word: "NHK", normalizedWord: "NHK" }),
+        1,
+        createInitialAppState("memory").view,
+        { queued: true },
+      ),
+    );
+
+    const button = harness.dom.resultsList.querySelector<HTMLButtonElement>("[data-queue-action]")!;
+    expect(button.textContent).toBe("✓ Queued");
+    expect(button.getAttribute("aria-pressed")).toBe("true");
+    button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(harness.controller.calls.removeQueued).toEqual(["NHK"]);
+    expect(harness.controller.calls.toggleQueued).toEqual([]);
+  });
+
   it("renders the pressed queued state for a mixed-case entry with a lowercase queue key", () => {
     const dom = seedDom();
     const renderer = createRenderer(dom);

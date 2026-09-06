@@ -1,3 +1,4 @@
+import { canonicalWord } from "../domain/text";
 import type { QueryState, ViewState, WordDecisionStatus } from "../domain/types";
 import type { AppState, FileSource, MinerController } from "../app/state";
 import { createFileSource } from "../platform/file-source";
@@ -304,7 +305,7 @@ export function bindControls(
       pendingFocus = { word, action: "queue", after: captureFollowingWords(queueButton) };
       if (queueButton.dataset.queueAction === "remove") {
         controller.removeQueued(word);
-      } else if (latest?.queue.normalizedWords.includes(word) === true) {
+      } else if (latest?.queue.normalizedWords.includes(canonicalWord(word)) === true) {
         controller.removeQueued(word);
       } else {
         controller.toggleQueued(word);
