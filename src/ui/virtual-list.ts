@@ -33,6 +33,7 @@ export function createVirtualList(
   let total = 0;
   let currentStart = -1;
   let rowHeight = minRowHeight;
+  let lastSpacerTop = 0;
   let disposed = false;
 
   const spacerHeight = (rows: number): string => `${Math.max(0, rows) * rowHeight}px`;
@@ -43,6 +44,19 @@ export function createVirtualList(
     const visibleTop = Math.max(0, -rect.top);
     const desired = Math.max(0, Math.floor(visibleTop / rowHeight) - overscan);
     if (desired !== currentStart) options.onRequestWindow?.(desired);
+  };
+
+  const compensateScroll = (delta: number): void => {
+    if (delta === 0) return;
+    try {
+      const win = typeof window === "object" && window !== null
+        ? window as unknown as { scrollY?: unknown; scrollTo?: unknown }
+        : null;
+      if (win === null || typeof win.scrollTo !== "function" || typeof win.scrollY !== "number") return;
+      (win.scrollTo as (x: number, y: number) => void)(0, (win.scrollY as number) + delta);
+    } catch {
+      return;
+    }
   };
 
   scrollTarget.addEventListener("scroll", handleScroll, { passive: true });
@@ -80,6 +94,7 @@ export function createVirtualList(
 
       root.textContent = "";
       root.append(spacerTop, container, spacerBottom);
+      lastSpacerTop = safeStart * rowHeight;
 
       let measured = 0;
       for (const child of [...container.children]) {
@@ -88,10 +103,13 @@ export function createVirtualList(
       }
       if (measured > 0) {
         const average = measured / container.children.length;
-        if (average > rowHeight) {
+        if (Math.abs(average - rowHeight) / rowHeight > 0.05) {
+          const newTop = safeStart * average;
+          compensateScroll(newTop - lastSpacerTop);
           rowHeight = average;
           spacerTop.style.height = spacerHeight(safeStart);
           spacerBottom.style.height = spacerHeight(total - safeStart - mounted.length);
+          lastSpacerTop = newTop;
         }
       }
     },
@@ -103,6 +121,7 @@ export function createVirtualList(
       root.textContent = "";
       total = 0;
       currentStart = -1;
+      lastSpacerTop = 0;
     },
   };
 }

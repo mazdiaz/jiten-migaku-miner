@@ -175,3 +175,89 @@ describe("virtual list", () => {
     list.destroy();
   });
 });
+
+describe("virtual list scroll anchoring", () => {
+  interface ScrollStub {
+    calls: Array<[number, number]>;
+  }
+
+  function stubWindowScroll(initialY: number): ScrollStub {
+    const calls: Array<[number, number]> = [];
+    Object.defineProperty(window, "scrollY", {
+      value: initialY,
+      configurable: true,
+      writable: true,
+    });
+    window.scrollTo = ((x: number, y: number) => {
+      calls.push([x, y]);
+      Object.defineProperty(window, "scrollY", {
+        value: y,
+        configurable: true,
+        writable: true,
+      });
+    }) as typeof window.scrollTo;
+    return { calls };
+  }
+
+  function measuredItems(height: number) {
+    return (entryValue: EntryWithKnown, index: number): HTMLElement => {
+      const node = itemNode(entryValue, index);
+      node.getBoundingClientRect = () => ({ height } as DOMRect);
+      return node;
+    };
+  }
+
+  it("compensates scroll when the estimate grows at a deep start", () => {
+    const root = document.createElement("div");
+    const requested: number[] = [];
+    const { calls } = stubWindowScroll(5_000 * 96);
+    const list = createVirtualList(root, measuredItems(200), {
+      onRequestWindow: (start) => requested.push(start),
+    });
+
+    list.setTotal(100_000);
+    list.setWindow(5_000, entries(100));
+
+    expect(spacerHeights(root).top).toBe(5_000 * 200);
+    expect(calls).toEqual([[0, 5_000 * 200]]);
+    expect(window.scrollY).toBe(5_000 * 200);
+    expect(requested).toEqual([]);
+    list.destroy();
+  });
+
+  it("compensates scroll when the estimate shrinks at a deep start", () => {
+    const root = document.createElement("div");
+    const requested: number[] = [];
+    const { calls } = stubWindowScroll(5_000 * 96);
+    const list = createVirtualList(root, measuredItems(40), {
+      onRequestWindow: (start) => requested.push(start),
+    });
+
+    list.setTotal(100_000);
+    list.setWindow(5_000, entries(100));
+
+    expect(spacerHeights(root).top).toBe(5_000 * 40);
+    expect(calls).toEqual([[0, 5_000 * 40]]);
+    expect(window.scrollY).toBe(5_000 * 40);
+    expect(requested).toEqual([]);
+    list.destroy();
+  });
+
+  it("keeps the estimate when measured average is within 5% hysteresis", () => {
+    const root = document.createElement("div");
+    const requested: number[] = [];
+    const { calls } = stubWindowScroll(5_000 * 96);
+    const list = createVirtualList(root, measuredItems(100), {
+      onRequestWindow: (start) => requested.push(start),
+    });
+
+    list.setTotal(100_000);
+    list.setWindow(5_000, entries(100));
+
+    expect(spacerHeights(root).top).toBe(5_000 * 96);
+    expect(calls).toEqual([]);
+    expect(window.scrollY).toBe(5_000 * 96);
+    expect(requested).toEqual([]);
+    list.destroy();
+  });
+});
