@@ -1796,6 +1796,37 @@ describe("MinerController user-state serialization", () => {
     expect(final.wordDecisions.has("透過")).toBe(false);
   });
 
+  it("known-import failure landing after a completed restore does not overwrite restored state", async () => {
+    const { inner, delayed, controller, states } = delayedSetup();
+    await seedActive(inner);
+    await controller.init();
+
+    const backup = serializeBackup({
+      exportedAt: "2026-09-06T00:00:00.000Z",
+      knownWords: null,
+      wordDecisions: [
+        { normalizedWord: "透過", status: "known", updatedAt: "2026-09-06T00:00:00.000Z" },
+      ],
+      preferences: { query: { ...query, page: 1 }, view, page: 1 },
+    });
+
+    delayed.gate("wordDecisions.replaceAll");
+    const importPromise = controller.importKnown({ name: "known.csv", text: async () => "新しい" });
+    const restorePromise = controller.restoreBackup(backup);
+    await delayed.started("wordDecisions.replaceAll");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    delayed.failNext("knownWords.save");
+    delayed.release("wordDecisions.replaceAll");
+    await Promise.all([restorePromise, importPromise]);
+
+    const final = states.at(-1)!;
+    expect(final.knownWords).toEqual(new Set());
+    expect(final.wordDecisions.has("透過")).toBe(true);
+    expect(final.status).toBe("ready");
+    expect(final.errorMessage).toBeNull();
+    expect(await inner.knownWords.getActive()).toBeNull();
+  });
+
   it("stale continuations skip publication after clear", async () => {
     const { inner, delayed, worker, controller, states } = delayedSetup();
     await controller.init();

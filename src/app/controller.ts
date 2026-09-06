@@ -253,6 +253,7 @@ class MinerControllerImpl implements MinerController {
 
   async importKnown(source: FileSource): Promise<void> {
     const generation = ++this.importGeneration;
+    const epoch = this.userStateEpoch;
     this.setState({ status: "loading", errorMessage: null });
 
     try {
@@ -303,7 +304,7 @@ class MinerControllerImpl implements MinerController {
       if (!saved) return;
       await this.runQuery();
     } catch (error) {
-      if (generation !== this.importGeneration) return;
+      if (generation !== this.importGeneration || epoch !== this.userStateEpoch) return;
       this.setState({ status: "error", errorMessage: errorMessage(error) });
     }
   }
