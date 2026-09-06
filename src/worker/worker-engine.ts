@@ -263,6 +263,9 @@ export class WorkerEngine {
       original: sortedIndexes(dataset.entries, "original"),
     };
     dataset.complete = true;
+    // Map.set on an existing key keeps the original insertion position;
+    // delete-then-set moves the dataset to the most-recent LRU slot.
+    this.datasets.delete(datasetId);
     this.datasets.set(datasetId, dataset);
     this.staging.delete(datasetId);
     this.loadRequests.delete(requestId);
@@ -313,7 +316,8 @@ export class WorkerEngine {
         decisionByIndex = cache.decisionByIndex;
         knownCount = cache.knownCount;
       } else {
-        const scan = await this.scanDataset(request, dataset, knownWords, decisions);        if (scan === null || this.isCancelled(request.requestId)) return;
+        const scan = await this.scanDataset(request, dataset, knownWords, decisions);
+        if (scan === null || this.isCancelled(request.requestId)) return;
         orderedIndexes = scan.orderedIndexes;
         knownByMigakuByIndex = scan.knownByMigakuByIndex;
         decisionByIndex = scan.decisionByIndex;

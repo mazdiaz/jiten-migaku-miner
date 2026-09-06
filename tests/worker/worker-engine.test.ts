@@ -714,6 +714,28 @@ describe("WorkerEngine", () => {
     }
   });
 
+  it("reloading a dataset refreshes LRU recency so the true oldest dataset is evicted", async () => {
+    const engine = new WorkerEngine();
+    loadDataset(engine, "dataset-a", [entry(0, "a")]);
+    loadDataset(engine, "dataset-b", [entry(1, "b")]);
+    loadDataset(engine, "dataset-c", [entry(2, "c")]);
+    loadDataset(engine, "dataset-a", [entry(3, "a-reloaded")]);
+    loadDataset(engine, "dataset-d", [entry(4, "d")]);
+
+    await expect(
+      engine.query(queryRequest({ requestId: "evicted-b", datasetId: "dataset-b" }), () => {}),
+    ).rejects.toMatchObject({ code: "dataset-not-found" });
+
+    for (const datasetId of ["dataset-a", "dataset-c", "dataset-d"]) {
+      const responses: WorkerResponse[] = [];
+      await engine.query(
+        queryRequest({ requestId: `kept-${datasetId}`, datasetId }),
+        (response) => responses.push(response),
+      );
+      expect(responses).toHaveLength(1);
+    }
+  });
+
   it("repeated dataset imports keep the complete dataset count bounded", async () => {
     const engine = new WorkerEngine();
     for (let index = 1; index <= 5; index += 1) {
