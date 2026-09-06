@@ -24,6 +24,16 @@ function seedDom(): DomMap {
   add("knownDropzone", "div");
   add("jitenStatus", "div");
   add("knownStatus", "div");
+  const importSummary = add("importSummary", "div");
+  for (const className of ["import-dataset-line", "import-known-line"]) {
+    const line = document.createElement("span");
+    line.className = className;
+    importSummary.appendChild(line);
+  }
+  const changeFiles = add("changeFiles", "button");
+  changeFiles.setAttribute("aria-expanded", "false");
+  changeFiles.setAttribute("aria-controls", "importGrid");
+  add("importGrid", "div");
   add("clearData", "button");
   add("exportBackup", "button");
   add("restoreBackup", "button");

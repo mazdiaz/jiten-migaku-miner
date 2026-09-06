@@ -45,6 +45,29 @@ h1 {
   gap: 14px;
 }
 
+.import-grid[hidden] { display: none; }
+
+.import-summary-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 14px;
+}
+
+.import-summary {
+  display: grid;
+  gap: 3px;
+  font-size: 0.94rem;
+}
+
+.import-summary[hidden] { display: none; }
+
+.import-summary .import-dataset-line { font-weight: 700; }
+.import-summary .import-known-line { color: var(--muted); font-size: 0.88rem; }
+
+#changeFiles { color: var(--text); }
+
 .dropzone {
   position: relative;
   display: grid;

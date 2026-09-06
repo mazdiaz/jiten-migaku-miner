@@ -61,7 +61,10 @@ async function bootstrap(): Promise<void> {
     }
     lastQueueKey = queueKey;
   });
-  bindControls(dom, controller, { onSearch: (value) => queryController.search(value) });
+  bindControls(dom, controller, {
+    onSearch: (value) => queryController.search(value),
+    onToggleImports: () => renderer.toggleImportsExpanded(),
+  });
   await controller.init();
   if (latest !== null) await discoverFolderSources(controller, latest);
 }

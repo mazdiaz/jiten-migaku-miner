@@ -52,6 +52,34 @@ test.describe("canonical miner", () => {
     await expect(page.locator(".target-highlight")).toHaveCount(0);
   });
 
+  test("collapses the import panel to a summary after load and expands on demand", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.locator("#importGrid")).toBeVisible();
+    await expect(page.locator("#importSummary")).toBeHidden();
+    await expect(page.locator("#changeFiles")).toBeHidden();
+
+    await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
+    await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
+
+    await expect(page.locator("#importGrid")).toBeHidden();
+    await expect(page.locator("#importSummary")).toBeVisible();
+    await expect(page.locator("#importSummary")).toContainText("jiten-small");
+    await expect(page.locator("#importSummary")).toContainText("3 entries");
+    await expect(page.locator("#importSummary")).toContainText("No known list");
+    await expect(page.locator("#changeFiles")).toBeVisible();
+    await expect(page.locator("#changeFiles")).toHaveAttribute("aria-expanded", "false");
+    await expect(page.locator("#changeFiles")).toHaveAttribute("aria-controls", "importGrid");
+
+    const firstEntry = await page.locator(".mining-entry").first().boundingBox();
+    expect(firstEntry?.y ?? Number.POSITIVE_INFINITY).toBeLessThan(900);
+
+    await page.locator("#changeFiles").click();
+    await expect(page.locator("#importGrid")).toBeVisible();
+    await expect(page.locator("#jitenDropzone")).toBeVisible();
+    await expect(page.locator("#importSummary")).toBeHidden();
+    await expect(page.locator("#changeFiles")).toHaveAttribute("aria-expanded", "true");
+  });
+
   test("searches words and mirrors the sticky search box", async ({ page }) => {
     await page.goto("/");
     await page.locator("#jitenInput").setInputFiles(SMALL_CSV);

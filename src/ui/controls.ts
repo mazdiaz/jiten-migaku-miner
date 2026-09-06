@@ -10,6 +10,7 @@ export interface ControlsOptions {
   confirmRestore?: (message: string) => boolean;
   downloadBackup?: (filename: string, contents: string) => void;
   onSearch?: (value: string) => void;
+  onToggleImports?: () => void;
 }
 
 export const RESTORE_CONFIRM_MESSAGE = [
@@ -80,6 +81,7 @@ export function bindControls(
   const confirmClear = options.confirmClear ?? ((message: string) => globalThis.confirm(message));
   const confirmQueueClear = options.confirmQueueClear ?? ((message: string) => globalThis.confirm(message));
   const onSearch = options.onSearch;
+  const onToggleImports = options.onToggleImports;
   let latest: Readonly<AppState> | null = null;
   let reviewWasActive = false;
   let pendingFocus: PendingFocus | null = null;
@@ -246,6 +248,10 @@ export function bindControls(
 
   bindDropzone(dom.jitenDropzone, dom.jitenInput, importJiten);
   bindDropzone(dom.knownDropzone, dom.knownInput, importKnown);
+
+  recorder.add(dom.changeFiles, "click", () => {
+    onToggleImports?.();
+  });
 
   bindSearch(dom.searchInput);
   bindSearch(dom.stickySearch);

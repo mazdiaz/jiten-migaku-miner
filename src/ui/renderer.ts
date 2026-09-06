@@ -5,6 +5,7 @@ import type { DomMap } from "./dom";
 
 export interface Renderer {
   render(state: Readonly<AppState>): void;
+  toggleImportsExpanded(): void;
 }
 
 const DECISION_LABELS: Record<WordDecisionStatus, string> = {
@@ -305,6 +306,15 @@ export function renderReviewEntryNode(entry: EntryWithKnown, view: ViewState): H
 }
 
 export function createRenderer(dom: DomMap): Renderer {
+  // Import-panel expansion is renderer-internal UI state (not AppState):
+  // collapsed-by-default after a clean load, expandable via the Change Files
+  // button. The flag resets whenever the import identity (dataset id +
+  // known-words name) changes, so a new import re-collapses the panel.
+  let importsExpanded = false;
+  let importsKey: string | null = null;
+  let importsKeySeen = false;
+  let lastState: Readonly<AppState> | null = null;
+
   const setPager = (result: QueryResult | null): void => {
     const page = result?.page ?? 0;
     const totalPages = result?.totalPages ?? 0;
@@ -390,48 +400,84 @@ export function createRenderer(dom: DomMap): Renderer {
     document.body.classList.toggle("queue-mode", state.queue.mode === "queue");
   };
 
+  const renderImportPanel = (state: Readonly<AppState>): void => {
+    const importKey = state.dataset === null ? null : `${state.dataset.id}::${state.knownWordsName ?? ""}`;
+    if (!importsKeySeen || importKey !== importsKey) {
+      importsKey = importKey;
+      importsKeySeen = true;
+      importsExpanded = false;
+    }
+
+    const collapsed = state.dataset !== null && state.errorMessage === null && !importsExpanded;
+    dom.importGrid.hidden = collapsed;
+    dom.importSummary.hidden = !collapsed;
+    if (collapsed) {
+      const datasetLine = dom.importSummary.querySelector<HTMLElement>(".import-dataset-line");
+      const knownLineEl = dom.importSummary.querySelector<HTMLElement>(".import-known-line");
+      if (datasetLine !== null) {
+        datasetLine.textContent = `${state.dataset.sourceName} · ${state.dataset.entryCount.toLocaleString()} entries`;
+      }
+      if (knownLineEl !== null) {
+        knownLineEl.textContent = state.knownWordsName === null
+          ? "No known list"
+          : `${state.knownWordsName} · ${state.knownWords.size.toLocaleString()} entries`;
+      }
+    }
+    dom.changeFiles.hidden = state.dataset === null;
+    dom.changeFiles.setAttribute("aria-expanded", collapsed ? "false" : "true");
+  };
+
+  const renderState = (state: Readonly<AppState>): void => {
+    lastState = state;
+    const hasData = state.dataset !== null && state.dataset.entryCount > 0;
+    syncControls(state, hasData);
+
+    renderImportPanel(state);
+
+    if (state.errorMessage === null) {
+      dom.errorBox.textContent = "";
+      dom.errorBox.hidden = true;
+    } else {
+      dom.errorBox.textContent = state.errorMessage;
+      dom.errorBox.hidden = false;
+    }
+
+    dom.stickyToolbar.hidden = !hasData;
+    dom.stickyTitle.textContent = state.dataset === null
+      ? "Jiten media"
+      : state.dataset.name.replace(/\.csv$/i, "");
+
+    dom.jitenStatus.textContent = state.dataset === null
+      ? "No CSV loaded"
+      : `${state.dataset.sourceName} ✓`;
+    dom.knownStatus.textContent = state.knownWordsName === null
+      ? "Optional · no list loaded"
+      : `${state.knownWordsName} ✓ · ${state.knownWords.size.toLocaleString()} entries`;
+    dom.knownStatus.classList.toggle("optional", state.knownWordsName === null);
+
+    dom.resultStats.textContent = !hasData
+      ? "Load a Jiten CSV to begin."
+      : `Loaded ${state.dataset.entryCount.toLocaleString()} · ${(state.result?.totalEntries ?? 0).toLocaleString()} currently shown${state.knownWords.size > 0 ? ` · ${(state.result?.knownCount ?? 0).toLocaleString()} match Migaku known words` : ""}`;
+
+    setPager(state.result);
+    renderItems(state, hasData);
+    renderReviewSurface(dom, state);
+
+    const queueMode = state.queue.mode === "queue";
+    dom.queueHeader.hidden = !queueMode;
+    if (queueMode) {
+      dom.queueHeading.textContent = `Mining Queue — ${state.queue.normalizedWords.length} words`;
+      dom.queueStats.textContent = state.queue.normalizedWords.length === 0
+        ? QUEUE_COMPLETE_MESSAGE
+        : "Work through each queued word, then exit to return to the full list.";
+    }
+  };
+
   return {
-    render(state: Readonly<AppState>): void {
-      const hasData = state.dataset !== null && state.dataset.entryCount > 0;
-      syncControls(state, hasData);
-
-      if (state.errorMessage === null) {
-        dom.errorBox.textContent = "";
-        dom.errorBox.hidden = true;
-      } else {
-        dom.errorBox.textContent = state.errorMessage;
-        dom.errorBox.hidden = false;
-      }
-
-      dom.stickyToolbar.hidden = !hasData;
-      dom.stickyTitle.textContent = state.dataset === null
-        ? "Jiten media"
-        : state.dataset.name.replace(/\.csv$/i, "");
-
-      dom.jitenStatus.textContent = state.dataset === null
-        ? "No CSV loaded"
-        : `${state.dataset.sourceName} ✓`;
-      dom.knownStatus.textContent = state.knownWordsName === null
-        ? "Optional · no list loaded"
-        : `${state.knownWordsName} ✓ · ${state.knownWords.size.toLocaleString()} entries`;
-      dom.knownStatus.classList.toggle("optional", state.knownWordsName === null);
-
-      dom.resultStats.textContent = !hasData
-        ? "Load a Jiten CSV to begin."
-        : `Loaded ${state.dataset.entryCount.toLocaleString()} · ${(state.result?.totalEntries ?? 0).toLocaleString()} currently shown${state.knownWords.size > 0 ? ` · ${(state.result?.knownCount ?? 0).toLocaleString()} match Migaku known words` : ""}`;
-
-      setPager(state.result);
-      renderItems(state, hasData);
-      renderReviewSurface(dom, state);
-
-      const queueMode = state.queue.mode === "queue";
-      dom.queueHeader.hidden = !queueMode;
-      if (queueMode) {
-        dom.queueHeading.textContent = `Mining Queue — ${state.queue.normalizedWords.length} words`;
-        dom.queueStats.textContent = state.queue.normalizedWords.length === 0
-          ? QUEUE_COMPLETE_MESSAGE
-          : "Work through each queued word, then exit to return to the full list.";
-      }
+    render: renderState,
+    toggleImportsExpanded(): void {
+      importsExpanded = !importsExpanded;
+      if (lastState !== null) renderState(lastState);
     },
   };
 }

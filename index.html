@@ -14,7 +14,14 @@
     </header>
 
     <section class="panel import-panel" aria-label="Import files">
-      <div class="import-grid">
+      <div class="import-summary-row">
+        <div id="importSummary" class="import-summary" hidden>
+          <span class="import-dataset-line"></span>
+          <span class="import-known-line"></span>
+        </div>
+        <button id="changeFiles" type="button" class="clear-button" aria-expanded="false" aria-controls="importGrid" hidden>Change Files</button>
+      </div>
+      <div class="import-grid" id="importGrid">
         <div id="jitenDropzone" class="dropzone" tabindex="0">
           <div class="dropzone-title">Jiten CSV</div>
           <p class="dropzone-copy">Drop one media vocabulary CSV here.</p>

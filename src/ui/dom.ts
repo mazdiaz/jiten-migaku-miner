@@ -5,6 +5,9 @@ export interface DomMap {
   readonly knownDropzone: HTMLElement;
   readonly jitenStatus: HTMLElement;
   readonly knownStatus: HTMLElement;
+  readonly importSummary: HTMLElement;
+  readonly changeFiles: HTMLButtonElement;
+  readonly importGrid: HTMLElement;
   readonly clearData: HTMLButtonElement;
   readonly exportBackup: HTMLButtonElement;
   readonly restoreBackup: HTMLButtonElement;
@@ -86,6 +89,9 @@ export function getDomMap(): DomMap {
     knownDropzone: byId<HTMLElement>("knownDropzone"),
     jitenStatus: byId<HTMLElement>("jitenStatus"),
     knownStatus: byId<HTMLElement>("knownStatus"),
+    importSummary: byId<HTMLElement>("importSummary"),
+    changeFiles: byId<HTMLButtonElement>("changeFiles"),
+    importGrid: byId<HTMLElement>("importGrid"),
     clearData: byId<HTMLButtonElement>("clearData"),
     exportBackup: byId<HTMLButtonElement>("exportBackup"),
     restoreBackup: byId<HTMLButtonElement>("restoreBackup"),
