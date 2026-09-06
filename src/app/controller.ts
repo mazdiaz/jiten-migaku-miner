@@ -991,8 +991,7 @@ class MinerControllerImpl implements MinerController {
     });
     if (epoch !== this.userStateEpoch) return;
     this.publish();
-    if (this.state.queue.mode === "queue") await this.runQueueQuery();
-    else await this.runQuery();
+    await this.runQuery();
   }
 
   private async loadAndQuery(datasetId: string, expectedEntryCount: number): Promise<void> {
@@ -1009,6 +1008,13 @@ class MinerControllerImpl implements MinerController {
   }
 
   private async runQuery(options: { silent?: boolean } = {}): Promise<void> {
+    // Single mode-aware dispatch point: every caller becomes queue-aware, so
+    // filters/paging/viewport edits during Queue Mode cannot leak unqueued
+    // words into the queue view.
+    if (this.state.queue.mode === "queue" && this.state.dataset !== null) {
+      await this.runQueueQuery();
+      return;
+    }
     const dataset = this.state.dataset;
     if (dataset === null) {
       this.setState({ status: "empty", errorMessage: this.warningMessage });

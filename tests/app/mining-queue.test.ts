@@ -190,6 +190,10 @@ function lastState(controller: ReturnType<typeof createMinerController>): Readon
   return captured;
 }
 
+async function flushMicrotasks(rounds = 6): Promise<void> {
+  for (let index = 0; index < rounds; index += 1) await Promise.resolve();
+}
+
 describe("mining queue controller operations", () => {
   it("adds, dedupes, removes, and clears in insertion order", async () => {
     const env = await setup();
@@ -384,6 +388,66 @@ describe("queue mode", () => {
     expect(queueQuery?.includeNormalizedWords).toHaveLength(5_001);
     expect(queueQuery?.query.pageSize).toBe(50);
     expect(queueQuery?.queryChannel).toBe("queue");
+  });
+
+  it("keeps the queue include-list when filters update during queue mode", async () => {
+    const env = await setup();
+    const controller = createMinerController(env.options());
+    await controller.init();
+    controller.toggleQueued("A");
+    env.worker.queryHandler = async (request) =>
+      result((request.includeNormalizedWords ?? []).map((word, index) => withKnown(entry(word, word, index))));
+
+    await controller.startQueueMode();
+    controller.updateQuery({ search: "b" });
+    await flushMicrotasks();
+
+    const fired = env.worker.queryCalls.at(-1);
+    expect(fired?.queryChannel).toBe("queue");
+    expect(fired?.includeNormalizedWords).toEqual(["a"]);
+    expect(lastState(controller).result?.items.map((item) => item.normalizedWord)).toEqual(["a"]);
+  });
+
+  it("stays queue-aware when changePage requeries during queue mode", async () => {
+    const env = await setup();
+    const controller = createMinerController(env.options());
+    await controller.init();
+    controller.toggleQueued("A");
+    controller.toggleQueued("B");
+    env.worker.queryHandler = async (request) => ({
+      ...result((request.includeNormalizedWords ?? []).map((word, index) => withKnown(entry(word, word, index)))),
+      totalPages: 2,
+    });
+
+    await controller.startQueueMode();
+    controller.changePage(1);
+    await flushMicrotasks();
+
+    const fired = env.worker.queryCalls.at(-1);
+    expect(fired?.queryChannel).toBe("queue");
+    expect(fired?.includeNormalizedWords).toEqual(["a", "b"]);
+    expect(lastState(controller).result?.items.map((item) => item.normalizedWord)).toEqual(["a", "b"]);
+  });
+
+  it("keeps the queue include-list when the viewport updates during queue mode", async () => {
+    const env = await setup();
+    const controller = createMinerController(env.options());
+    await controller.init();
+    controller.toggleQueued("A");
+    controller.toggleQueued("B");
+    env.worker.queryHandler = async (request) =>
+      result((request.includeNormalizedWords ?? []).map((word, index) => withKnown(entry(word, word, index))));
+
+    await controller.startQueueMode();
+    controller.updateQuery({ pageSize: "all" });
+    await flushMicrotasks();
+    controller.updateViewport(1);
+    await flushMicrotasks();
+
+    const fired = env.worker.queryCalls.at(-1);
+    expect(fired?.queryChannel).toBe("queue");
+    expect(fired?.includeNormalizedWords).toEqual(["a", "b"]);
+    expect(lastState(controller).result?.items.map((item) => item.normalizedWord)).toEqual(["a", "b"]);
   });
 });
 
