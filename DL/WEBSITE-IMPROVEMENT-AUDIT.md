@@ -208,10 +208,10 @@ Actual screen-reader announcement behavior still needs assistive-technology test
 
 ### 1. Preserve virtual-scroll position
 
-- [ ] Preserve visible item and pixel offset when measured heights change.
-- [ ] Handle shrinking rows as well as growth.
-- [ ] Test deep scrolling with variable sentence lengths, furigana, definition toggles, and viewport resizing.
-- [ ] Keep mounted DOM bounded throughout.
+- [x] Preserve visible item and pixel offset when measured heights change. (verified: estimate-change compensation regressions incl. shrink + hysteresis / 86b5e3f)
+- [x] Handle shrinking rows as well as growth. (verified: estimate-change compensation regressions incl. shrink + hysteresis / 86b5e3f)
+- [x] Test deep scrolling with variable sentence lengths, furigana, definition toggles, and viewport resizing. (verified: estimate-change unit regressions + perf e2e deep scroll past row 40,000 on a 100k import / 86b5e3f; viewport-resize-specific case relies on unchanged ratio-based handler math, no dedicated resize regression)
+- [x] Keep mounted DOM bounded throughout. (verified: maxNodes slice unchanged + existing perf spec 100k DOM count assertions / 86b5e3f)
 
 **Confirmed problem:** replacing the global average row-height estimate changes all preceding spacers without anchoring the visible content. At row 50,000, changing the estimate from 100px to 200px adds 5,000,000px above mounted rows.
 
@@ -219,11 +219,11 @@ Actual screen-reader announcement behavior still needs assistive-technology test
 
 ### 2. Improve worker query/cache lifecycle
 
-- [ ] Cache ordered filtered indexes independently of pagination mode.
-- [ ] Decorate only the requested numeric page rather than copying every matched entry before slicing.
-- [ ] Validate dataset generation before publishing query-cache results.
-- [ ] Add dataset unload or bounded retention for completed datasets.
-- [ ] Test overlapping query/replacement operations and repeated large imports.
+- [x] Cache ordered filtered indexes independently of pagination mode. (verified: numeric-page scan-count regression / fe69d0d)
+- [x] Decorate only the requested numeric page rather than copying every matched entry before slicing. (verified: page-slice correctness + loop bound ≤ pageSize / fe69d0d)
+- [x] Validate dataset generation before publishing query-cache results. (verified: stale-query-after-replacement regression / fe69d0d)
+- [x] Add dataset unload or bounded retention for completed datasets. (verified: LRU-3 eviction + reload-recency regressions / fe69d0d c9d30cb)
+- [x] Test overlapping query/replacement operations and repeated large imports. (verified: replacement suppression + 5-load bounded regressions / fe69d0d)
 
 **Confirmed problems:** numeric pagination copies all matches; an old in-flight query can publish stale indexes after replacement; loaded datasets accumulate until worker disposal.
 
@@ -231,9 +231,9 @@ Actual screen-reader announcement behavior still needs assistive-technology test
 
 ### 3. Handle asynchronous worker failure promptly
 
-- [ ] Attach rejection handling immediately when dataset loading begins.
-- [ ] Stop or race iterator consumption against operation failure.
-- [ ] Test worker failure while awaiting the next asynchronous chunk.
+- [x] Attach rejection handling immediately when dataset loading begins. (verified: prompt-rejection without unhandledrejection + iterator-stop regressions / 357ca0e)
+- [x] Stop or race iterator consumption against operation failure. (verified: prompt-rejection without unhandledrejection + iterator-stop regressions / 357ca0e)
+- [x] Test worker failure while awaiting the next asynchronous chunk. (verified: prompt-rejection without unhandledrejection + iterator-stop regressions / 357ca0e)
 
 **Confirmed problem:** internal load promises can reject before a handler is attached, emitting unhandled rejection despite the caller catching `loadDataset()`.
 
@@ -241,9 +241,9 @@ Actual screen-reader announcement behavior still needs assistive-technology test
 
 ### 4. Fix parsing and target reconciliation
 
-- [ ] Strip a leading BOM before CSV tokenization, including quoted first headers. Reference: `src/domain/text.ts:9`.
-- [ ] Preserve the intended target offset/range when reconciling highlighting instead of choosing the first sentence-wide text match. Reference: `src/ui/highlight-adapter.ts:95`.
-- [ ] Add repeated-target tests with ruby and extension-split text nodes.
+- [x] Strip a leading BOM before CSV tokenization, including quoted first headers. Reference: `src/domain/text.ts:9`. (verified: BOM plain+quoted header regressions / ab06456)
+- [x] Preserve the intended target offset/range when reconciling highlighting instead of choosing the first sentence-wide text match. Reference: `src/ui/highlight-adapter.ts:95`. (verified: occurrence-ordinal reconciliation regressions / ab06456)
+- [x] Add repeated-target tests with ruby and extension-split text nodes. (verified: ruby + idempotent re-reconcile regressions / ab06456)
 
 ### Optional Technical Improvements
 
@@ -251,6 +251,7 @@ Actual screen-reader announcement behavior still needs assistive-technology test
 - [ ] Match worker responses to pending operation types and validate dataset identity and payload shape.
 - [ ] Review newest-file discovery's first-20-candidate limit against its documented guarantee.
 - [ ] Add defensive snapshot tests before treating nested controller state as immutable.
+(deferred: excluded from wave 4 scope by plan; tracked for wave 5+)
 
 No framework rewrite is recommended. Prefer focused changes over broad restructuring.
 
