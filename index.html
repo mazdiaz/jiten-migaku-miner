@@ -147,6 +147,35 @@
         <button id="reviewButton" type="button" class="review-button" disabled>Review unreviewed</button>
       </div>
 
+      <section id="coveragePanel" class="coverage-panel queue-hidden" aria-label="Tracked vocabulary coverage" hidden>
+        <button id="coverageToggle" type="button" class="coverage-toggle" aria-expanded="false" aria-controls="coverageBody">
+          <span class="coverage-toggle-label">Tracked vocabulary coverage:</span>
+          <span id="coverageSummary" class="coverage-summary">N/A</span>
+        </button>
+        <div id="coverageBody" class="coverage-body" hidden>
+          <h3 class="coverage-title">Tracked vocabulary occurrence coverage</h3>
+          <dl class="coverage-stats">
+            <div class="coverage-stat">
+              <dt>Known unique words</dt>
+              <dd id="coverageUniqueWords"></dd>
+            </div>
+            <div class="coverage-stat">
+              <dt>Known occurrences</dt>
+              <dd id="coverageKnownOccurrences"></dd>
+            </div>
+            <div class="coverage-stat">
+              <dt>Coverage</dt>
+              <dd id="coveragePercent"></dd>
+            </div>
+          </dl>
+          <h4 class="coverage-targets-heading">Priority path</h4>
+          <ul id="coverageTargets" class="coverage-targets"></ul>
+          <p class="coverage-note">Based on occurrence counts in this Jiten export. This is not guaranteed raw-text comprehension coverage.</p>
+          <p id="coverageError" class="coverage-error" role="alert" hidden></p>
+          <button id="coverageFocus" type="button" class="coverage-focus">Focus highest-value unknowns</button>
+        </div>
+      </section>
+
       <div id="resultsList" class="results-list">
         <div class="empty-state">Load a Jiten CSV above.</div>
       </div>

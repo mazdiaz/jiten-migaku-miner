@@ -12,6 +12,7 @@ export interface ControlsOptions {
   onSearch?: (value: string) => void;
   onToggleImports?: () => void;
   onToggleAdvanced?: () => void;
+  onToggleCoverage?: () => void;
 }
 
 export const RESTORE_CONFIRM_MESSAGE = [
@@ -84,6 +85,7 @@ export function bindControls(
   const onSearch = options.onSearch;
   const onToggleImports = options.onToggleImports;
   const onToggleAdvanced = options.onToggleAdvanced;
+  const onToggleCoverage = options.onToggleCoverage;
   let latest: Readonly<AppState> | null = null;
   let reviewWasActive = false;
   let pendingFocus: PendingFocus | null = null;
@@ -275,6 +277,18 @@ export function bindControls(
 
   recorder.add(dom.advancedToggle, "click", () => {
     onToggleAdvanced?.();
+  });
+
+  recorder.add(dom.coverageToggle, "click", () => {
+    onToggleCoverage?.();
+  });
+
+  // Focus highest-value unknowns: ONLY hideKnown + occ-desc + page 1. All
+  // other filters (sentence, kana-only, min occurrences, search, decision)
+  // are preserved by the controller's patch merge; the decision filter is
+  // deliberately never touched so Mined/Later/Skip stay visible.
+  recorder.add(dom.coverageFocus, "click", () => {
+    controller.updateQuery({ hideKnown: true, sort: "occ-desc", page: 1 });
   });
 
   bindSearch(dom.stickySearch);

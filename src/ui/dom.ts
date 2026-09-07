@@ -32,6 +32,16 @@ export interface DomMap {
   readonly resultsHeading: HTMLElement;
   readonly resultStats: HTMLElement;
   readonly resultsList: HTMLElement;
+  readonly coveragePanel: HTMLElement;
+  readonly coverageToggle: HTMLButtonElement;
+  readonly coverageSummary: HTMLElement;
+  readonly coverageBody: HTMLElement;
+  readonly coverageUniqueWords: HTMLElement;
+  readonly coverageKnownOccurrences: HTMLElement;
+  readonly coveragePercent: HTMLElement;
+  readonly coverageTargets: HTMLElement;
+  readonly coverageError: HTMLElement;
+  readonly coverageFocus: HTMLButtonElement;
   readonly reviewButton: HTMLButtonElement;
   readonly reviewOverlay: HTMLElement;
   readonly reviewPanel: HTMLElement;
@@ -102,6 +112,16 @@ export function getDomMap(): DomMap {
     resultsHeading: byId<HTMLElement>("resultsHeading"),
     resultStats: byId<HTMLElement>("resultStats"),
     resultsList: byId<HTMLElement>("resultsList"),
+    coveragePanel: byId<HTMLElement>("coveragePanel"),
+    coverageToggle: byId<HTMLButtonElement>("coverageToggle"),
+    coverageSummary: byId<HTMLElement>("coverageSummary"),
+    coverageBody: byId<HTMLElement>("coverageBody"),
+    coverageUniqueWords: byId<HTMLElement>("coverageUniqueWords"),
+    coverageKnownOccurrences: byId<HTMLElement>("coverageKnownOccurrences"),
+    coveragePercent: byId<HTMLElement>("coveragePercent"),
+    coverageTargets: byId<HTMLElement>("coverageTargets"),
+    coverageError: byId<HTMLElement>("coverageError"),
+    coverageFocus: byId<HTMLButtonElement>("coverageFocus"),
     reviewButton: byId<HTMLButtonElement>("reviewButton"),
     reviewOverlay: byId<HTMLElement>("reviewOverlay"),
     reviewPanel: byId<HTMLElement>("reviewPanel"),

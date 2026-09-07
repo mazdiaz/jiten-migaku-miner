@@ -123,6 +123,24 @@ function seedDom(): DomMap {
   appShell.className = "app-shell";
   document.body.appendChild(appShell);
 
+  const coveragePanel = add("coveragePanel", "section");
+  const coverageToggle = add("coverageToggle", "button");
+  const coverageLabel = document.createElement("span");
+  coverageLabel.textContent = "Tracked vocabulary coverage:";
+  const coverageSummary = add("coverageSummary", "span");
+  coverageToggle.append(coverageLabel, coverageSummary);
+  coveragePanel.appendChild(coverageToggle);
+  const coverageBody = add("coverageBody", "div");
+  coverageBody.hidden = true;
+  coveragePanel.appendChild(coverageBody);
+  for (const id of ["coverageUniqueWords", "coverageKnownOccurrences", "coveragePercent", "coverageTargets"]) {
+    coverageBody.appendChild(add(id, "div"));
+  }
+  const coverageError = add("coverageError", "p");
+  coverageError.hidden = true;
+  coverageBody.appendChild(coverageError);
+  coverageBody.appendChild(add("coverageFocus", "button"));
+
   return getDomMap();
 }
 
@@ -506,7 +524,7 @@ describe("post-action focus restoration", () => {
   });
 
   it("does not re-apply a stale focus intent on a later unrelated render", () => {
-    const decided = listResult([makeEntry({ decision: "known", known: true, knownByDecision: true })]);
+    const decidedResult = () => listResult([makeEntry({ decision: "known", known: true, knownByDecision: true })]);
     const harness = setup({ ...datasetReady(), ...listResult([makeEntry()]) });
     try {
       const known = decisionButton(harness.dom.resultsList, "known");
@@ -518,18 +536,21 @@ describe("post-action focus restoration", () => {
       // for the async query rebuild that follows.
       harness.controller.publishState({
         wordDecisions: new Map([["言葉", decision("言葉", "known")]]),
-        ...decided,
+        ...decidedResult(),
       });
       expect(document.activeElement).toBe(decisionButton(harness.dom.resultsList, "known"));
 
-      // Async query rebuild destroys the focused node; the remembered intent
-      // restores focus exactly once.
-      harness.controller.publishState({ ...decided });
+      // An identical-content publish (e.g. a coverage refresh) skips the list
+      // rebuild entirely, so the focused button survives untouched.
+      harness.controller.publishState({ ...decidedResult() });
       expect(document.activeElement).toBe(decisionButton(harness.dom.resultsList, "known"));
 
-      // A later unrelated render must not steal focus back to the entry: the
-      // one-shot intent is spent, so focus falls back to <body>.
-      harness.controller.publishState({ ...decided });
+      // A later render that genuinely rebuilds the list (content changed)
+      // must not steal focus back to the entry: the one-shot intent is spent,
+      // so focus falls back to <body>.
+      harness.controller.publishState({
+        ...listResult([makeEntry({ id: "entry-9", originalIndex: 9, decision: "known", known: true, knownByDecision: true })]),
+      });
       expect(document.activeElement).not.toBe(decisionButton(harness.dom.resultsList, "known"));
       expect(document.activeElement).toBe(document.body);
     } finally {

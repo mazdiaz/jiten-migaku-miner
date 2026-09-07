@@ -7,6 +7,7 @@ export interface Renderer {
   render(state: Readonly<AppState>): void;
   toggleImportsExpanded(): void;
   toggleAdvancedPanel(): void;
+  toggleCoveragePanel(): void;
 }
 
 const DECISION_LABELS: Record<WordDecisionStatus, string> = {
@@ -322,7 +323,24 @@ export function createRenderer(dom: DomMap): Renderer {
   // dataset identity changes so each import starts collapsed.
   let advancedExpanded = false;
   let advancedDatasetId: string | null = null;
+  // Coverage-panel expansion follows the same pattern: collapsed by default,
+  // toggled by #coverageToggle, reset on dataset identity change.
+  let coverageExpanded = false;
+  let coverageDatasetId: string | null = null;
+  // Identity of the last non-windowed list render: null until the first
+  // render, then the (result, view, queue) signature that produced the
+  // currently mounted rows. Result snapshots are cloned per publish, so the
+  // result is compared by content signature, not reference.
+  let itemsRendered: { resultSig: string; viewSig: string; queueSig: string } | null = null;
   let lastState: Readonly<AppState> | null = null;
+
+  const resultSignature = (result: Readonly<AppState>["result"]): string => {
+    if (result === null) return "null";
+    const items = result.items
+      .map((item) => `${item.id}·${item.decision}·${item.known}·${item.knownByMigaku}·${item.knownByDecision}·${item.occurrences}`)
+      .join(",");
+    return `${result.page}/${result.totalPages}/${result.totalEntries}/${result.startIndex}/${result.endIndex}/${String(result.pageSize)}/${result.knownCount}/${result.windowed}|${items}`;
+  };
 
   const setPager = (result: QueryResult | null): void => {
     const page = result?.page ?? 0;
@@ -339,6 +357,25 @@ export function createRenderer(dom: DomMap): Renderer {
     if (state.result?.windowed === true && state.result.totalEntries > 0) {
       return;
     }
+    // Rebuild only when a render input actually changed. Coverage-only
+    // publishes (loading/ready/error) share the same result content, view,
+    // and queue; rebuilding anyway would detach the focused action button
+    // after the focus-restoration intent has been spent, dropping focus to
+    // <body> (and racing list clicks mid-rebuild).
+    const viewSig = JSON.stringify(state.view);
+    const queueSig = `${state.queue.mode}|${state.queue.normalizedWords.join("\n")}`;
+    const resultSig = resultSignature(state.result);
+    const rendered = itemsRendered;
+    if (
+      rendered !== null
+      && rendered.resultSig === resultSig
+      && rendered.viewSig === viewSig
+      && rendered.queueSig === queueSig
+      && dom.resultsList.childElementCount > 0
+    ) {
+      return;
+    }
+    itemsRendered = { resultSig, viewSig, queueSig };
     dom.resultsList.textContent = "";
     if (!hasData) {
       const empty = document.createElement("div");
@@ -407,6 +444,61 @@ export function createRenderer(dom: DomMap): Renderer {
     document.body.classList.toggle("queue-mode", state.queue.mode === "queue");
   };
 
+  const formatCoveragePercent = (value: number | null): string =>
+    value === null ? "N/A" : `${value.toFixed(2)}%`;
+
+  // Coverage panel: visible only with an active dataset; stats render from
+  // state.coverage while null (idle/loading/zero-total) shows N/A. Errors are
+  // nonfatal — a line inside the panel, never touching the results surface.
+  const renderCoveragePanel = (state: Readonly<AppState>, hasData: boolean): void => {
+    const datasetId = state.dataset?.id ?? null;
+    if (datasetId !== coverageDatasetId) {
+      coverageDatasetId = datasetId;
+      coverageExpanded = false;
+    }
+    dom.coveragePanel.hidden = !hasData;
+    const bodyVisible = hasData && coverageExpanded;
+    dom.coverageBody.hidden = !bodyVisible;
+    dom.coverageToggle.disabled = !hasData;
+    dom.coverageToggle.setAttribute("aria-expanded", coverageExpanded && hasData ? "true" : "false");
+
+    const stats = state.coverage;
+    dom.coverageSummary.textContent = formatCoveragePercent(stats?.coveragePercent ?? null);
+
+    if (!bodyVisible) return;
+
+    dom.coverageUniqueWords.textContent = stats === null
+      ? "—"
+      : `${stats.knownUniqueWords.toLocaleString()} / ${stats.totalUniqueWords.toLocaleString()}`;
+    dom.coverageKnownOccurrences.textContent = stats === null
+      ? "—"
+      : `${stats.knownTrackedOccurrences.toLocaleString()} / ${stats.totalTrackedOccurrences.toLocaleString()}`;
+    dom.coveragePercent.textContent = formatCoveragePercent(stats?.coveragePercent ?? null);
+
+    dom.coverageTargets.textContent = "";
+    for (const target of stats?.targets ?? []) {
+      const row = document.createElement("li");
+      row.className = "coverage-target";
+      const label = document.createElement("span");
+      label.className = "coverage-target-label";
+      label.textContent = `${target.targetPercent.toFixed(1)}%`;
+      const value = document.createElement("span");
+      value.className = "coverage-target-value";
+      value.textContent = target.reached
+        ? "reached"
+        : `+${target.additionalWords.toLocaleString()} ${target.additionalWords === 1 ? "word" : "words"}`;
+      row.append(label, value);
+      dom.coverageTargets.appendChild(row);
+    }
+
+    const coverageFailed = state.coverageStatus === "error";
+    dom.coverageError.hidden = !coverageFailed;
+    if (coverageFailed) {
+      dom.coverageError.textContent = `Coverage unavailable: ${state.coverageErrorMessage ?? "unknown error"}`;
+    }
+    dom.coverageFocus.disabled = !hasData;
+  };
+
   const renderImportPanel = (state: Readonly<AppState>): void => {
     const importKey = state.dataset === null ? null : `${state.dataset.id}::${state.knownWordsName ?? ""}`;
     if (!importsKeySeen || importKey !== importsKey) {
@@ -467,6 +559,7 @@ export function createRenderer(dom: DomMap): Renderer {
       : `Loaded ${state.dataset.entryCount.toLocaleString()} · ${(state.result?.totalEntries ?? 0).toLocaleString()} currently shown${state.knownWords.size > 0 ? ` · ${(state.result?.knownCount ?? 0).toLocaleString()} match Migaku known words` : ""}`;
 
     setPager(state.result);
+    renderCoveragePanel(state, hasData);
     renderItems(state, hasData);
     renderReviewSurface(dom, state);
 
@@ -488,6 +581,10 @@ export function createRenderer(dom: DomMap): Renderer {
     },
     toggleAdvancedPanel(): void {
       advancedExpanded = !advancedExpanded;
+      if (lastState !== null) renderState(lastState);
+    },
+    toggleCoveragePanel(): void {
+      coverageExpanded = !coverageExpanded;
       if (lastState !== null) renderState(lastState);
     },
   };

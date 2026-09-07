@@ -98,6 +98,24 @@ function seedDom(): DomMap {
   add("bottomNext", "button");
   add("bottomPage", "span");
 
+  const coveragePanel = add("coveragePanel", "section");
+  const coverageToggle = add("coverageToggle", "button");
+  const coverageLabel = document.createElement("span");
+  coverageLabel.textContent = "Tracked vocabulary coverage:";
+  const coverageSummary = add("coverageSummary", "span");
+  coverageToggle.append(coverageLabel, coverageSummary);
+  coveragePanel.appendChild(coverageToggle);
+  const coverageBody = add("coverageBody", "div");
+  coverageBody.hidden = true;
+  coveragePanel.appendChild(coverageBody);
+  for (const id of ["coverageUniqueWords", "coverageKnownOccurrences", "coveragePercent", "coverageTargets"]) {
+    coverageBody.appendChild(add(id, "div"));
+  }
+  const coverageError = add("coverageError", "p");
+  coverageError.hidden = true;
+  coverageBody.appendChild(coverageError);
+  coverageBody.appendChild(add("coverageFocus", "button"));
+
   return getDomMap();
 }
 
