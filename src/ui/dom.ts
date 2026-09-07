@@ -13,6 +13,7 @@ export interface DomMap {
   readonly restoreBackup: HTMLButtonElement;
   readonly restoreBackupInput: HTMLInputElement;
   readonly backupStatus: HTMLElement;
+  readonly backupFreshness: HTMLElement;
   readonly errorBox: HTMLElement;
   readonly advancedToggle: HTMLButtonElement;
   readonly advancedPanel: HTMLElement;
@@ -97,6 +98,7 @@ export function getDomMap(): DomMap {
     restoreBackup: byId<HTMLButtonElement>("restoreBackup"),
     restoreBackupInput: byId<HTMLInputElement>("restoreBackupInput"),
     backupStatus: byId<HTMLElement>("backupStatus"),
+    backupFreshness: byId<HTMLElement>("backupFreshness"),
     errorBox: byId<HTMLElement>("errorBox"),
     advancedToggle: byId<HTMLButtonElement>("advancedToggle"),
     advancedPanel: byId<HTMLElement>("advancedPanel"),

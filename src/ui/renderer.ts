@@ -109,6 +109,31 @@ export function formatDecisionSummary(
   return `Decisions: ${parts.join(" · ")} · Migaku-known: ${knownWordsCount.toLocaleString()}`;
 }
 
+export const NO_EXPORT_MESSAGE = "No export this session";
+// Audit: copy must not imply the exported download was retained — the line
+// itself stays neutral and this tooltip carries the caveat.
+export const BACKUP_FRESHNESS_TITLE = "Exporting does not guarantee the downloaded file was kept.";
+
+// Backup freshness line copy: absolute short time only (HH:MM) when the
+// export happened earlier today, short date + time otherwise. Simple absolute
+// format by ruling — no relative "3 minutes ago" churn. Locale pinned to
+// en-US to match the app's hardcoded English copy and keep output stable.
+export function formatBackupFreshness(
+  lastExportAt: string | null,
+  changesSinceExport: number,
+  now: Date = new Date(),
+): string {
+  if (lastExportAt === null) return NO_EXPORT_MESSAGE;
+  const exported = new Date(lastExportAt);
+  const time = exported.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
+  const sameDay = exported.getFullYear() === now.getFullYear()
+    && exported.getMonth() === now.getMonth()
+    && exported.getDate() === now.getDate();
+  const stamp = sameDay ? time : `${exported.toLocaleDateString("en-US", { month: "short", day: "numeric" })}, ${time}`;
+  const changes = `${changesSinceExport.toLocaleString()} ${changesSinceExport === 1 ? "change" : "changes"}`;
+  return `Last export: ${stamp} · ${changes} since export`;
+}
+
 function renderReviewSurface(dom: DomMap, state: Readonly<AppState>): void {
   const review = state.review;
   dom.reviewOverlay.hidden = !review.active;
@@ -689,6 +714,13 @@ export function createRenderer(dom: DomMap): Renderer {
       ? "Optional · no list loaded"
       : `${state.knownWordsName} ✓ · ${state.knownWords.size.toLocaleString()} entries`;
     dom.knownStatus.classList.toggle("optional", state.knownWordsName === null);
+
+    // Backup freshness line in the Data area: session-only signal, always
+    // visible (the no-export message is itself informative). Title re-set
+    // here so the no-retention caveat survives even if the static HTML
+    // attribute is dropped.
+    dom.backupFreshness.title = BACKUP_FRESHNESS_TITLE;
+    dom.backupFreshness.textContent = formatBackupFreshness(state.lastExportAt, state.changesSinceExport);
 
     dom.resultStats.textContent = !hasData
       ? "Load a Jiten CSV to begin."

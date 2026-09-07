@@ -349,6 +349,9 @@ class MinerControllerImpl implements MinerController {
         });
       });
       if (!saved) return;
+      // A committed known-word import is a counted change (post-lock, so a
+      // stale/superseded import that returned false never lands here).
+      this.countChangeSinceExport();
       await this.runQuery();
       await this.requestCoverage();
     } catch (error) {
@@ -536,14 +539,27 @@ class MinerControllerImpl implements MinerController {
     void this.runQuery();
   }
 
+  // Backup freshness (session-only): bump after any logical durable user-state
+  // mutation the user would back up for safety. RULING: count decision
+  // mutations (applyWordDecision — undo re-applies through the same path, so
+  // one undo naturally counts exactly once), known imports, and restores
+  // ONLY. Preferences are deliberately excluded: they are in backups but
+  // churn on every page/filter/view change, which would inflate the counter
+  // without changing what the user backs up. Dataset imports and session
+  // queue edits are excluded too — neither is part of a backup.
+  private countChangeSinceExport(): void {
+    this.state.changesSinceExport += 1;
+  }
+
   async exportBackup(): Promise<string> {
     return this.withUserStateLock(async () => {
       const known = await this.storageOperation((store) => store.knownWords.getActive());
       const knownWords = known === null
         ? null
         : { name: known.name, words: [...known.words] };
-      return serializeBackup({
-        exportedAt: this.now(),
+      const exportedAt = this.now();
+      const json = serializeBackup({
+        exportedAt,
         knownWords,
         wordDecisions: this.state.wordDecisions.values(),
         preferences: {
@@ -552,6 +568,12 @@ class MinerControllerImpl implements MinerController {
           page: this.state.page,
         },
       });
+      // A completed export resets the freshness signal. Publish inside the
+      // existing lock so the Data area line updates immediately.
+      this.state.lastExportAt = exportedAt;
+      this.state.changesSinceExport = 0;
+      this.publish();
+      return json;
     });
   }
 
@@ -657,6 +679,9 @@ class MinerControllerImpl implements MinerController {
         this.state.queue = { ...this.state.queue, mode: "normal" };
       }
       if (this.state.review.active) this.stopReview();
+      // One committed restore is one counted change regardless of how many
+      // decisions/known words it replaced (single logical user action).
+      this.countChangeSinceExport();
       const dataset = this.state.dataset;
       if (dataset === null) {
         this.setState({ status: "empty", errorMessage: this.warningMessage });
@@ -797,6 +822,8 @@ class MinerControllerImpl implements MinerController {
       this.worker.dispose();
       this.sessionQueue.clear();
       this.undoRecord = null;
+      // Fresh initial state nulls lastExportAt and zeroes changesSinceExport:
+      // clearing saved data also wipes the export this session referred to.
       this.state = createInitialAppState(this.state.persistence);
       this.warningMessage = [this.fallbackWarning, ...clearFailures]
         .filter((part): part is string => part !== null)
@@ -1164,6 +1191,11 @@ class MinerControllerImpl implements MinerController {
       }
     });
     if (epoch !== this.userStateEpoch) return;
+    // Counted change (see countChangeSinceExport): the write committed and
+    // the epoch survived, so this decision genuinely landed. Undo re-applies
+    // through this same path and counts exactly once — never doubled by a
+    // separate undo-side increment.
+    this.countChangeSinceExport();
     this.publish();
     await this.runQuery();
     await this.requestCoverage();

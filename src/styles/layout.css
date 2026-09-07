@@ -167,6 +167,9 @@ input[type="file"] {
 
 .portability-row .clear-button { color: var(--text); }
 
+/* Freshness line wraps to its own row under the buttons/status. */
+.portability-row .backup-freshness { flex-basis: 100%; }
+
 .error-box {
   margin-top: 14px;
   padding: 13px 15px;

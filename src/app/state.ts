@@ -48,6 +48,11 @@ export interface AppState {
   coverage: CoverageStats | null;
   coverageStatus: "idle" | "loading" | "ready" | "error";
   coverageErrorMessage: string | null;
+  // Session-only backup freshness signal (never persisted, never in backups):
+  // when the last exportBackup() of THIS session ran, and how many counted
+  // user-state mutations have landed since.
+  lastExportAt: string | null;
+  changesSinceExport: number;
 }
 
 export interface FileSource {
@@ -144,6 +149,8 @@ export function createInitialAppState(
     coverage: null,
     coverageStatus: "idle",
     coverageErrorMessage: null,
+    lastExportAt: null,
+    changesSinceExport: 0,
   };
 }
 

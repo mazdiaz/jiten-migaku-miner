@@ -2980,6 +2980,142 @@ describe("MinerController coverage lifecycle", () => {
   });
 });
 
+describe("MinerController backup freshness", () => {
+  afterEach(() => {
+    delete (globalThis as { indexedDB?: IDBFactory }).indexedDB;
+  });
+
+  function freshnessSetup(store = createMemoryAppStore()) {
+    const worker = new FakeWorkerClient();
+    const controller = createMinerController(decisionOptions(store, worker));
+    const states: Readonly<AppState>[] = [];
+    controller.subscribe((state) => states.push(state));
+    return { store, worker, controller, states };
+  }
+
+  async function readyFreshnessSetup(): Promise<ReturnType<typeof freshnessSetup>> {
+    const env = freshnessSetup();
+    await seedActive(env.store);
+    await env.controller.init();
+    return env;
+  }
+
+  it("starts a session with no export and zero changes", async () => {
+    const { states } = await readyFreshnessSetup();
+    expect(states.at(-1)?.lastExportAt).toBeNull();
+    expect(states.at(-1)?.changesSinceExport).toBe(0);
+  });
+
+  it("increments once per applied decision, and undo's re-apply counts exactly once more", async () => {
+    const { controller, states } = await readyFreshnessSetup();
+
+    await controller.setWordDecision("猫", "known");
+    expect(states.at(-1)?.changesSinceExport).toBe(1);
+
+    await controller.undoLastDecision();
+    expect(states.at(-1)?.changesSinceExport).toBe(2);
+    expect(states.at(-1)?.wordDecisions.has("猫")).toBe(false);
+  });
+
+  it("increments once per known-word import", async () => {
+    const { controller, states } = await readyFreshnessSetup();
+
+    await controller.importKnown({ name: "known.txt", text: async () => "新しい\n" });
+
+    expect(states.at(-1)?.changesSinceExport).toBe(1);
+  });
+
+  it("increments once per restore backup, regardless of restored content size", async () => {
+    const { controller, states } = await readyFreshnessSetup();
+
+    await controller.restoreBackup(JSON.stringify({
+      format: "jiten-migaku-miner-backup",
+      version: 1,
+      exportedAt: "2026-09-06T00:00:00.000Z",
+      knownWords: { name: "known.txt", words: ["犬", "猫"] },
+      wordDecisions: [
+        { normalizedWord: "犬", status: "mined", updatedAt: "2026-08-01T00:00:00.000Z" },
+        { normalizedWord: "鳥", status: "later", updatedAt: "2026-08-02T00:00:00.000Z" },
+      ],
+      preferences: null,
+    }));
+
+    expect(states.at(-1)?.changesSinceExport).toBe(1);
+  });
+
+  it("does not increment when the decision write fails", async () => {
+    const { store, controller, states } = await readyFreshnessSetup();
+    store.wordDecisions.set = async () => { throw new Error("decision write failed"); };
+
+    await controller.setWordDecision("猫", "known");
+
+    expect(states.at(-1)?.changesSinceExport).toBe(0);
+  });
+
+  it("does not increment for preference, page, or session-queue churn", async () => {
+    const { controller, states } = await readyFreshnessSetup();
+
+    controller.updateQuery({ search: "猫" });
+    await flushMicrotasks();
+    controller.updateView({ showFurigana: true });
+    controller.changePage(1);
+    controller.toggleQueued("猫");
+    controller.removeQueued("猫");
+    await flushMicrotasks();
+
+    expect(states.at(-1)?.changesSinceExport).toBe(0);
+  });
+
+  it("exportBackup stamps lastExportAt and zeroes the counter", async () => {
+    const { controller, states } = await readyFreshnessSetup();
+    await controller.setWordDecision("猫", "known");
+    await controller.setWordDecision("犬", "later");
+    expect(states.at(-1)?.changesSinceExport).toBe(2);
+
+    await controller.exportBackup();
+
+    expect(states.at(-1)?.lastExportAt).toBe(FIXED_NOW);
+    expect(states.at(-1)?.changesSinceExport).toBe(0);
+
+    await controller.setWordDecision("鳥", "skip");
+    expect(states.at(-1)?.changesSinceExport).toBe(1);
+  });
+
+  it("clearSavedData resets both fields", async () => {
+    const { controller, states } = await readyFreshnessSetup();
+    await controller.setWordDecision("猫", "known");
+    await controller.exportBackup();
+    await controller.setWordDecision("犬", "later");
+    expect(states.at(-1)?.lastExportAt).toBe(FIXED_NOW);
+    expect(states.at(-1)?.changesSinceExport).toBe(1);
+
+    await controller.clearSavedData();
+
+    expect(states.at(-1)?.lastExportAt).toBeNull();
+    expect(states.at(-1)?.changesSinceExport).toBe(0);
+  });
+
+  it("is session-only: a new controller on the same store starts fresh", async () => {
+    const store = createMemoryAppStore();
+    const first = freshnessSetup(store);
+    await seedActive(store);
+    await first.controller.init();
+    await first.controller.setWordDecision("猫", "known");
+    await first.controller.exportBackup();
+    await first.controller.setWordDecision("犬", "later");
+    expect(first.states.at(-1)?.lastExportAt).toBe(FIXED_NOW);
+    expect(first.states.at(-1)?.changesSinceExport).toBe(1);
+
+    const second = freshnessSetup(store);
+    await second.controller.init();
+
+    expect(second.states.at(-1)?.lastExportAt).toBeNull();
+    expect(second.states.at(-1)?.changesSinceExport).toBe(0);
+    // The persisted user state itself survived; only freshness is session-only.
+    expect(second.states.at(-1)?.wordDecisions.get("犬")).toMatchObject({ status: "later" });
+  });
+});
+
 describe("source adapters", () => {
   it("wraps browser File text reads", async () => {
     const file = { name: "media.csv", text: async () => "Word\n猫" } as File;

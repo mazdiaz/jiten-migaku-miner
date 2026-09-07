@@ -40,6 +40,7 @@ function seedDom(): DomMap {
   add("exportBackup", "button");
   add("restoreBackup", "button");
   add("restoreBackupInput", "input").setAttribute("type", "file");
+  add("backupFreshness", "span");
   add("backupStatus", "span");
   add("errorBox", "div");
   const advancedToggle = add("advancedToggle", "button");

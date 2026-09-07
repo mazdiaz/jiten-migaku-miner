@@ -67,6 +67,8 @@ function makeState(overrides: Partial<AppState> = {}): AppState {
     coverage: null,
     coverageStatus: "idle",
     coverageErrorMessage: null,
+    lastExportAt: null,
+    changesSinceExport: 0,
     ...overrides,
   };
 }

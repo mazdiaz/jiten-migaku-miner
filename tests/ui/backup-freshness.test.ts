@@ -1,12 +1,11 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { bindControls } from "../../src/ui/controls";
 import { getDomMap } from "../../src/ui/dom";
 import type { DomMap } from "../../src/ui/dom";
-import { createRenderer } from "../../src/ui/renderer";
-import type { AppState, FileSource, MinerController } from "../../src/app/state";
+import { createRenderer, formatBackupFreshness } from "../../src/ui/renderer";
+import type { Renderer } from "../../src/ui/renderer";
+import type { AppState, MinerController } from "../../src/app/state";
 import { createInitialAppState } from "../../src/app/state";
-import type { QueryState } from "../../src/domain/types";
 
 type Listener = (state: Readonly<AppState>) => void;
 
@@ -68,39 +67,66 @@ function seedDom(): DomMap {
   withOptions("sentenceFilter", [["any", "any"], ["has", "has"], ["none", "none"]]);
   withOptions("sortSelect", [["occ-desc", "occ-desc"], ["occ-asc", "occ-asc"], ["original", "original"]]);
   withOptions("pageSize", [["25", "25"], ["50", "50"], ["100", "100"], ["all", "all"]]);
-  withOptions("decisionFilter", [["all", "All decisions"]]);
+  withOptions("decisionFilter", [
+    ["all", "All decisions"], ["unreviewed", "Unreviewed"], ["known", "Known"],
+    ["mined", "Mined"], ["skip", "Skipped"], ["later", "Later"],
+  ]);
 
   add("results", "section");
-  add("resultsHeading", "h2");
+  add("resultsHeading", "h2").setAttribute("tabindex", "-1");
   add("resultStats", "p");
   add("decisionSummary", "p");
   add("resultsList", "div");
-  add("undoButton", "button");
   add("filterChips", "div");
+  add("undoButton", "button");
   add("reviewButton", "button");
   const reviewOverlay = add("reviewOverlay", "div");
   reviewOverlay.setAttribute("role", "dialog");
+  reviewOverlay.setAttribute("aria-modal", "true");
+  reviewOverlay.setAttribute("aria-labelledby", "reviewHeading");
   const reviewPanel = add("reviewPanel", "div");
   reviewPanel.setAttribute("tabindex", "-1");
   reviewOverlay.appendChild(reviewPanel);
-  for (const id of ["reviewHeading", "reviewProgress", "reviewContent", "reviewComplete", "reviewReturn", "reviewExit", "reviewKnown", "reviewMined", "reviewSkip", "reviewLater", "reviewUndo"]) {
-    const element = add(id, "div");
+  const intoPanel = (id: string, tag: string): HTMLElement => {
+    const element = add(id, tag);
     reviewPanel.appendChild(element);
-  }
+    return element;
+  };
+  intoPanel("reviewHeading", "h2");
+  intoPanel("reviewProgress", "span");
+  intoPanel("reviewContent", "div");
+  const reviewComplete = intoPanel("reviewComplete", "div");
+  const completeCopy = document.createElement("p");
+  completeCopy.textContent = "No unreviewed candidates remain for the current filters.";
+  reviewComplete.appendChild(completeCopy);
+  const reviewReturn = add("reviewReturn", "button");
+  reviewComplete.appendChild(reviewReturn);
+  intoPanel("reviewExit", "button");
+  intoPanel("reviewKnown", "button");
+  intoPanel("reviewMined", "button");
+  intoPanel("reviewSkip", "button");
+  intoPanel("reviewLater", "button");
+  intoPanel("reviewUndo", "button");
   add("queueToggle", "button");
   add("queueHeader", "div");
   add("queueHeading", "h2");
   add("queueStats", "p");
   add("exitQueue", "button");
   add("clearQueue", "button");
-  add("stickyToolbar", "div");
-  add("stickyTitle", "div");
-  add("stickyPrev", "button");
-  add("stickyNext", "button");
-  add("stickyPage", "span");
+  const stickyToolbar = add("stickyToolbar", "div");
+  const stickyTitle = add("stickyTitle", "div");
+  const stickyPrev = add("stickyPrev", "button");
+  const stickyNext = add("stickyNext", "button");
+  const stickyPage = add("stickyPage", "span");
   add("bottomPrev", "button");
   add("bottomNext", "button");
   add("bottomPage", "span");
+
+  stickyToolbar.append(stickyTitle, stickyPrev, stickyNext, stickyPage);
+
+  const appShell = document.createElement("main");
+  appShell.className = "app-shell";
+  document.body.appendChild(appShell);
 
   const coveragePanel = add("coveragePanel", "section");
   const coverageToggle = add("coverageToggle", "button");
@@ -124,7 +150,6 @@ function seedDom(): DomMap {
 }
 
 interface FakeController extends MinerController {
-  calls: { updateQuery: Partial<QueryState>[] };
   publishState(patch: Partial<AppState>): void;
 }
 
@@ -132,7 +157,6 @@ function createFakeController(initial?: Partial<AppState>): FakeController {
   let state: AppState = { ...createInitialAppState("memory"), ...initial };
   const listeners = new Set<Listener>();
   const controller: FakeController = {
-    calls: { updateQuery: [] },
     publishState(patch) {
       state = { ...state, ...patch };
       for (const listener of listeners) listener(state);
@@ -142,11 +166,9 @@ function createFakeController(initial?: Partial<AppState>): FakeController {
       listener(state);
       return () => listeners.delete(listener);
     },
-    importJiten: vi.fn(async (_source: FileSource) => {}),
-    importKnown: vi.fn(async (_source: FileSource) => {}),
-    updateQuery(patch: Partial<QueryState>) {
-      controller.calls.updateQuery.push(patch);
-    },
+    importJiten: vi.fn(async () => {}),
+    importKnown: vi.fn(async () => {}),
+    updateQuery: vi.fn(),
     updateView: vi.fn(),
     updateViewport: vi.fn(),
     changePage: vi.fn(),
@@ -168,17 +190,10 @@ function createFakeController(initial?: Partial<AppState>): FakeController {
   return controller;
 }
 
-function dataset(id = "d1"): NonNullable<AppState["dataset"]> {
-  return {
-    id, name: "book.csv", sourceType: "file", sourceName: "book.csv",
-    headers: ["Word"], entryCount: 3, createdAt: "x", updatedAt: "x", schemaVersion: 1,
-  };
-}
-
 interface Harness {
   dom: DomMap;
   controller: FakeController;
-  render(state: Partial<AppState>): void;
+  renderer: Renderer;
   dispose(): void;
 }
 
@@ -187,104 +202,121 @@ function setup(initial?: Partial<AppState>): Harness {
   const controller = createFakeController(initial);
   const renderer = createRenderer(dom);
   const unsubscribe = controller.subscribe((state) => renderer.render(state));
-  const bindings = bindControls(dom, controller, {
-    onToggleImports: () => renderer.toggleImportsExpanded(),
-  });
-  const harness: Harness = {
+  return {
     dom,
     controller,
-    render(partial) {
-      renderer.render({ ...createInitialAppState("memory"), ...partial });
-    },
+    renderer,
     dispose() {
       unsubscribe();
-      bindings.dispose();
     },
   };
-  return harness;
 }
 
-function datasetLine(dom: DomMap): string {
-  return dom.importSummary.querySelector(".import-dataset-line")?.textContent ?? "";
+const NOW = new Date("2026-09-06T20:00:00.000Z");
+const SAME_DAY_EXPORT = new Date(NOW.getTime() - 60_000).toISOString();
+const OLDER_EXPORT = new Date(NOW.getTime() - 10 * 86_400_000).toISOString();
+
+function expectedTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
 }
 
-function knownLine(dom: DomMap): string {
-  return dom.importSummary.querySelector(".import-known-line")?.textContent ?? "";
+function expectedDate(iso: string): string {
+  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
 beforeEach(() => {
+  vi.useFakeTimers();
+  vi.setSystemTime(NOW);
   document.body.innerHTML = "";
 });
 
-describe("import panel collapse", () => {
-  it("collapses import grid to summary after dataset load", () => {
+describe("backup freshness formatting", () => {
+  it("shows the no-export message when lastExportAt is null", () => {
+    expect(formatBackupFreshness(null, 0)).toBe("No export this session");
+    expect(formatBackupFreshness(null, 7)).toBe("No export this session");
+  });
+
+  it("formats a same-day export as time only with the change count", () => {
+    expect(formatBackupFreshness(SAME_DAY_EXPORT, 3, NOW)).toBe(
+      `Last export: ${expectedTime(SAME_DAY_EXPORT)} · 3 changes since export`,
+    );
+  });
+
+  it("formats an older export as short date + time", () => {
+    expect(formatBackupFreshness(OLDER_EXPORT, 12, NOW)).toBe(
+      `Last export: ${expectedDate(OLDER_EXPORT)}, ${expectedTime(OLDER_EXPORT)} · 12 changes since export`,
+    );
+  });
+
+  it("uses the singular 'change' for exactly one", () => {
+    expect(formatBackupFreshness(SAME_DAY_EXPORT, 1, NOW)).toBe(
+      `Last export: ${expectedTime(SAME_DAY_EXPORT)} · 1 change since export`,
+    );
+  });
+
+  it("shows zero changes immediately after an export", () => {
+    expect(formatBackupFreshness(NOW.toISOString(), 0, NOW)).toBe(
+      `Last export: ${expectedTime(NOW.toISOString())} · 0 changes since export`,
+    );
+  });
+});
+
+describe("backup freshness line", () => {
+  it("resolves the element via getDomMap", () => {
+    const dom = seedDom();
+    expect(dom.backupFreshness.id).toBe("backupFreshness");
+  });
+
+  it("renders the no-export message before any export this session", () => {
     const harness = setup();
     try {
-      harness.render({
-        dataset: dataset(),
-        status: "ready",
-        knownWords: new Set(["言葉", "犬"]),
-        knownWordsName: "known.txt",
-      });
-      expect(harness.dom.importGrid.hidden).toBe(true);
-      expect(harness.dom.importSummary.hidden).toBe(false);
-      expect(datasetLine(harness.dom)).toBe("book.csv · 3 entries");
-      expect(knownLine(harness.dom)).toBe("known.txt · 2 entries");
-      expect(harness.dom.changeFiles.hidden).toBe(false);
-      expect(harness.dom.changeFiles.getAttribute("aria-expanded")).toBe("false");
-      expect(harness.dom.changeFiles.getAttribute("aria-controls")).toBe("importGrid");
+      expect(harness.dom.backupFreshness.textContent).toBe("No export this session");
     } finally {
       harness.dispose();
     }
   });
 
-  it("restores grid when change files clicked and collapses again on second click", () => {
-    const harness = setup({ dataset: dataset(), status: "ready" });
-    try {
-      expect(harness.dom.importGrid.hidden).toBe(true);
-
-      harness.dom.changeFiles.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      expect(harness.dom.importGrid.hidden).toBe(false);
-      expect(harness.dom.importSummary.hidden).toBe(true);
-      expect(harness.dom.changeFiles.hidden).toBe(false);
-      expect(harness.dom.changeFiles.getAttribute("aria-expanded")).toBe("true");
-
-      harness.dom.changeFiles.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      expect(harness.dom.importGrid.hidden).toBe(true);
-      expect(harness.dom.importSummary.hidden).toBe(false);
-      expect(harness.dom.changeFiles.getAttribute("aria-expanded")).toBe("false");
-    } finally {
-      harness.dispose();
-    }
-  });
-
-  it("keeps grid visible in empty state and on warnings", () => {
+  it("carries the no-retention title tooltip", () => {
     const harness = setup();
     try {
-      harness.render({ dataset: null, status: "empty" });
-      expect(harness.dom.importGrid.hidden).toBe(false);
-      expect(harness.dom.importSummary.hidden).toBe(true);
-      expect(harness.dom.changeFiles.hidden).toBe(true);
-
-      harness.render({ dataset: dataset(), status: "error", errorMessage: "Import failed" });
-      expect(harness.dom.importGrid.hidden).toBe(false);
-      expect(harness.dom.importSummary.hidden).toBe(true);
-      expect(harness.dom.changeFiles.hidden).toBe(false);
+      expect(harness.dom.backupFreshness.getAttribute("title")).toBe(
+        "Exporting does not guarantee the downloaded file was kept.",
+      );
     } finally {
       harness.dispose();
     }
   });
 
-  it("recollapses after a new import", () => {
-    const harness = setup({ dataset: dataset(), status: "ready" });
+  it("re-derives on every publish as exports land and changes accumulate", () => {
+    const harness = setup();
     try {
-      harness.dom.changeFiles.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      expect(harness.dom.importGrid.hidden).toBe(false);
+      expect(harness.dom.backupFreshness.textContent).toBe("No export this session");
 
-      harness.controller.publishState({ dataset: dataset("d2"), status: "ready" });
-      expect(harness.dom.importGrid.hidden).toBe(true);
-      expect(harness.dom.importSummary.hidden).toBe(false);
-      expect(harness.dom.changeFiles.getAttribute("aria-expanded")).toBe("false");
+      harness.controller.publishState({ lastExportAt: SAME_DAY_EXPORT, changesSinceExport: 0 });
+      expect(harness.dom.backupFreshness.textContent).toBe(
+        `Last export: ${expectedTime(SAME_DAY_EXPORT)} · 0 changes since export`,
+      );
+
+      harness.controller.publishState({ changesSinceExport: 1 });
+      expect(harness.dom.backupFreshness.textContent).toBe(
+        `Last export: ${expectedTime(SAME_DAY_EXPORT)} · 1 change since export`,
+      );
+
+      harness.controller.publishState({ changesSinceExport: 4 });
+      expect(harness.dom.backupFreshness.textContent).toBe(
+        `Last export: ${expectedTime(SAME_DAY_EXPORT)} · 4 changes since export`,
+      );
+    } finally {
+      harness.dispose();
+    }
+  });
+
+  it("returns to the no-export message after clear saved data", () => {
+    const harness = setup({ lastExportAt: SAME_DAY_EXPORT, changesSinceExport: 2 });
+    try {
+      expect(harness.dom.backupFreshness.textContent).toContain("changes since export");
+      harness.controller.publishState({ lastExportAt: null, changesSinceExport: 0 });
+      expect(harness.dom.backupFreshness.textContent).toBe("No export this session");
     } finally {
       harness.dispose();
     }
