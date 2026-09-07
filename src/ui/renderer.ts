@@ -1,5 +1,5 @@
 import { canonicalWord, parseHighlightSegments } from "../domain/text";
-import type { EntryWithKnown, QueryResult, ViewState, WordDecisionStatus } from "../domain/types";
+import type { EntryWithKnown, QueryResult, QueryState, ViewState, WordDecisionStatus } from "../domain/types";
 import type { AppState } from "../app/state";
 import type { DomMap } from "./dom";
 
@@ -21,6 +21,9 @@ const DECISION_STATUSES: readonly WordDecisionStatus[] = ["known", "mined", "ski
 
 const EMPTY_LOAD_MESSAGE = "Load a Jiten CSV above.";
 const EMPTY_FILTER_MESSAGE = "No entries match the current filters.";
+const EMPTY_FILTER_HINT = "Try removing a filter.";
+const RESET_FILTERS_LABEL = "Reset Filters";
+const SEARCH_CHIP_MAX_CHARS = 20;
 const REVIEW_COMPLETE_MESSAGE = "No unreviewed candidates remain for the current filters.";
 const QUEUE_COMPLETE_MESSAGE = "Mining queue complete.";
 const QUEUE_ADD_LABEL = "+ Queue";
@@ -31,6 +34,56 @@ const REVIEW_UNDO_BASE_LABEL = "Undo last";
 export interface EntryRenderOptions {
   queued?: boolean;
   queueMode?: boolean;
+}
+
+// Restrictive filter keys that can produce an active chip. Sort/page/pageSize
+// are deliberately absent: changing them never narrows what is visible, so
+// they are not "restrictive" for recoverability purposes.
+export type FilterChipKey =
+  | "search"
+  | "hideKnown"
+  | "hideKanaOnly"
+  | "sentence"
+  | "decision"
+  | "minOccurrences";
+
+interface ActiveFilterChip {
+  key: FilterChipKey;
+  label: string;
+}
+
+const DECISION_FILTER_CHIP_LABELS: Record<QueryState["decision"], string> = {
+  all: "",
+  unreviewed: "unreviewed",
+  known: "known",
+  mined: "mined",
+  skip: "skip",
+  later: "later",
+};
+
+// Derives the active chips from the query: one chip per restrictive filter
+// currently set away from its default. Pure derivation — no DOM.
+export function deriveFilterChips(query: Readonly<QueryState>): ActiveFilterChip[] {
+  const chips: ActiveFilterChip[] = [];
+  const search = query.search.trim();
+  if (search !== "") {
+    const truncated = search.length > SEARCH_CHIP_MAX_CHARS
+      ? `${search.slice(0, SEARCH_CHIP_MAX_CHARS)}…`
+      : search;
+    chips.push({ key: "search", label: `Search: "${truncated}"` });
+  }
+  if (query.hideKnown) chips.push({ key: "hideKnown", label: "Hide known" });
+  if (query.hideKanaOnly) chips.push({ key: "hideKanaOnly", label: "Hide kana-only" });
+  if (query.sentence !== "any") {
+    chips.push({ key: "sentence", label: `Sentence: ${query.sentence === "has" ? "has" : "none"}` });
+  }
+  if (query.decision !== "all") {
+    chips.push({ key: "decision", label: `Decision: ${DECISION_FILTER_CHIP_LABELS[query.decision]}` });
+  }
+  if (query.minOccurrences > 1) {
+    chips.push({ key: "minOccurrences", label: `Min occurrences: ${query.minOccurrences}` });
+  }
+  return chips;
 }
 
 function renderReviewSurface(dom: DomMap, state: Readonly<AppState>): void {
@@ -406,7 +459,18 @@ export function createRenderer(dom: DomMap): Renderer {
     if (items.length === 0) {
       const empty = document.createElement("div");
       empty.className = "empty-state";
-      empty.textContent = state.queue.mode === "queue" ? QUEUE_COMPLETE_MESSAGE : EMPTY_FILTER_MESSAGE;
+      if (state.queue.mode === "queue") {
+        empty.textContent = QUEUE_COMPLETE_MESSAGE;
+      } else {
+        empty.textContent = EMPTY_FILTER_MESSAGE;
+        // Filtered-empty recovery: the chips row (rendered in the results
+        // head regardless) is the single source of removable filters — the
+        // hint just points at it; no duplicate chip DOM here.
+        const hint = document.createElement("p");
+        hint.className = "empty-hint";
+        hint.textContent = EMPTY_FILTER_HINT;
+        empty.appendChild(hint);
+      }
       dom.resultsList.appendChild(empty);
       return;
     }
@@ -423,6 +487,37 @@ export function createRenderer(dom: DomMap): Renderer {
       }),
     ));
     dom.resultsList.appendChild(fragment);
+  };
+
+  // Active-filter chips row: rebuilt from state.query on every publish (the
+  // row lives outside #resultsList, so the paged render-skip machinery never
+  // applies to it). Hidden without a dataset, in queue mode, and when no
+  // restrictive filter is away from its default (the Reset Filters button
+  // only exists while at least one chip does).
+  const renderFilterChips = (state: Readonly<AppState>, hasData: boolean): void => {
+    const chips = deriveFilterChips(state.query);
+    const visible = hasData && state.queue.mode !== "queue" && chips.length > 0;
+    dom.filterChips.hidden = !visible;
+    if (!visible) {
+      dom.filterChips.textContent = "";
+      return;
+    }
+    dom.filterChips.textContent = "";
+    for (const { key, label } of chips) {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "filter-chip";
+      chip.textContent = label;
+      chip.dataset.filterChip = key;
+      chip.setAttribute("aria-label", `Remove ${label} filter`);
+      dom.filterChips.appendChild(chip);
+    }
+    const reset = document.createElement("button");
+    reset.type = "button";
+    reset.id = "resetFilters";
+    reset.className = "filter-chip filter-chip-reset";
+    reset.textContent = RESET_FILTERS_LABEL;
+    dom.filterChips.appendChild(reset);
   };
 
   const syncControls = (state: Readonly<AppState>, hasData: boolean): void => {
@@ -578,6 +673,7 @@ export function createRenderer(dom: DomMap): Renderer {
 
     setPager(state.result);
     renderCoveragePanel(state, hasData);
+    renderFilterChips(state, hasData);
     renderItems(state, hasData);
     renderReviewSurface(dom, state);
 

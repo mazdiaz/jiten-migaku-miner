@@ -76,6 +76,7 @@ function seedDom(): DomMap {
   add("resultStats", "p");
   add("resultsList", "div");
   add("undoButton", "button");
+  add("filterChips", "div");
   add("reviewButton", "button");
   const reviewOverlay = add("reviewOverlay", "div");
   reviewOverlay.setAttribute("role", "dialog");

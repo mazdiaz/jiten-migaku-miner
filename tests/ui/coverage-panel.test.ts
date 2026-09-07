@@ -137,6 +137,7 @@ function seedDom(): DomMap {
   coverageBody.appendChild(coverageFocus);
 
   add("undoButton", "button");
+  add("filterChips", "div");
   add("reviewButton", "button");
   const reviewOverlay = add("reviewOverlay", "div");
   reviewOverlay.setAttribute("role", "dialog");

@@ -1,6 +1,8 @@
 import { canonicalWord } from "../domain/text";
 import type { QueryState, ViewState, WordDecisionStatus } from "../domain/types";
 import type { AppState, FileSource, MinerController } from "../app/state";
+import { DEFAULT_QUERY } from "../app/state";
+import type { FilterChipKey } from "./renderer";
 import { createFileSource } from "../platform/file-source";
 import type { DomMap } from "./dom";
 
@@ -73,6 +75,15 @@ interface PendingFocus {
 }
 
 const normalizeWord = (value: string): string => value.trim().toLocaleLowerCase();
+
+const FILTER_CHIP_KEYS: readonly FilterChipKey[] = [
+  "search",
+  "hideKnown",
+  "hideKanaOnly",
+  "sentence",
+  "decision",
+  "minOccurrences",
+];
 
 export function bindControls(
   dom: DomMap,
@@ -350,6 +361,24 @@ export function bindControls(
     if (action !== "known" && action !== "mined" && action !== "skip" && action !== "later" && action !== "unreviewed") return;
     pendingFocus = { word, action, after: captureFollowingWords(button) };
     void controller.setWordDecision(word, action satisfies WordDecisionStatus | "unreviewed");
+  });
+
+  // Active-filter chips: delegation on the static container so clicks keep
+  // working across the renderer's per-publish chip rebuilds. A chip resets
+  // only its own field back to the query default; Reset Filters restores the
+  // entire DEFAULT_QUERY (sort/page included).
+  recorder.add(dom.filterChips, "click", (event) => {
+    const target = event.target;
+    if (target === null || !(target instanceof Element)) return;
+    if (target.closest("button#resetFilters") !== null) {
+      controller.updateQuery({ ...DEFAULT_QUERY });
+      return;
+    }
+    const chip = target.closest<HTMLButtonElement>("button[data-filter-chip]");
+    if (chip === null) return;
+    const key = chip.dataset.filterChip;
+    if (key === undefined || !FILTER_CHIP_KEYS.includes(key as FilterChipKey)) return;
+    controller.updateQuery({ [key]: DEFAULT_QUERY[key as FilterChipKey] });
   });
 
   recorder.add(dom.clearData, "click", () => {

@@ -344,8 +344,9 @@ input:focus, select:focus, button:focus-visible {
 
 .results-head {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
-  gap: 16px;
+  gap: 8px 16px;
   align-items: end;
   margin: 0 2px 12px;
 }
@@ -358,6 +359,59 @@ input:focus, select:focus, button:focus-visible {
   align-items: center;
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+/* Active-filter chips: full-width wrap row between the stats block and the
+   head actions. The row also carries .queue-hidden so queue mode (which
+   ignores normal filters) removes it entirely. */
+.filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  align-items: center;
+  flex: 1 1 100%;
+}
+
+.filter-chips[hidden] { display: none; }
+
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  padding: 4px 11px;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 0.82rem;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Visual × affordance lives in CSS so the accessible name stays the
+   aria-label ("Remove … filter"), not the glyph. */
+.filter-chip::after { content: "×"; font-weight: 900; }
+
+.filter-chip:hover {
+  background: var(--accent);
+  color: #10131a;
+}
+
+.filter-chip-reset {
+  border-color: var(--border-strong);
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.filter-chip-reset::after { content: none; }
+
+.filter-chip-reset:hover {
+  border-color: var(--danger);
+  background: var(--surface-3);
+  color: var(--danger);
 }
 
 /* Keep the focused/scrolled-to results heading clear of the sticky toolbar.
