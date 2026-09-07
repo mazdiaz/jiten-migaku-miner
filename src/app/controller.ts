@@ -123,6 +123,11 @@ class MinerControllerImpl implements MinerController {
   // Bumped whenever a review session ends (stopReview or dataset change);
   // in-flight continuations compare their captured value to detect staleness.
   private reviewGeneration = 0;
+  // Bumped whenever the dataset/user-state identity the coverage stats
+  // describe changes (dataset swap, clear, restore attempts); in-flight
+  // coverage responses compare their captured value and stale ones are
+  // dropped. Every request also bumps, so the newest request always wins.
+  private coverageGeneration = 0;
 
   constructor(options: MinerControllerOptions) {
     this.storeWasProvided = options.store !== undefined;
@@ -223,6 +228,10 @@ class MinerControllerImpl implements MinerController {
         this.sessionQueue.clear();
         this.viewportStart = 0;
         this.queryGeneration += 1;
+        // Dataset identity changed: stale coverage responses are dead and the
+        // old dataset's stats no longer describe the active dataset.
+        this.coverageGeneration += 1;
+        this.state.coverage = null;
         // The dataset changed; a stale review card must not survive the commit.
         if (this.state.review.active) this.stopReview();
         this.setState({ status: "ready", errorMessage: this.warningMessage });
@@ -232,6 +241,7 @@ class MinerControllerImpl implements MinerController {
       }));
       if (committed) {
         await this.runQuery();
+        await this.requestCoverage();
         return;
       }
 
@@ -315,6 +325,7 @@ class MinerControllerImpl implements MinerController {
       });
       if (!saved) return;
       await this.runQuery();
+      await this.requestCoverage();
     } catch (error) {
       if (generation !== this.importGeneration || epoch !== this.userStateEpoch) return;
       this.setState({ status: "error", errorMessage: errorMessage(error) });
@@ -487,6 +498,7 @@ class MinerControllerImpl implements MinerController {
       // A review continuation in flight across the failure must not publish
       // into the post-failure state; mirror clearSavedData's invalidation.
       this.reviewGeneration += 1;
+      this.coverageGeneration += 1;
       this.setState({ errorMessage: `Backup could not be restored: ${message}` });
       throw new Error(message);
     }
@@ -497,6 +509,7 @@ class MinerControllerImpl implements MinerController {
       this.queryGeneration += 1;
       // Same invalidation as the size-limit exit above.
       this.reviewGeneration += 1;
+      this.coverageGeneration += 1;
       this.setState({ errorMessage: `Backup could not be restored: ${errorMessage(error)}` });
       throw error;
     }
@@ -541,6 +554,7 @@ class MinerControllerImpl implements MinerController {
         this.queryGeneration += 1;
         // Same invalidation as the size-limit exit above.
         this.reviewGeneration += 1;
+        this.coverageGeneration += 1;
         this.setState({ errorMessage: `Backup could not be restored: ${errorMessage(error)}` });
         throw error;
       });
@@ -566,6 +580,7 @@ class MinerControllerImpl implements MinerController {
           this.queryGeneration += 1;
           // Same invalidation as the size-limit exit above.
           this.reviewGeneration += 1;
+          this.coverageGeneration += 1;
           this.setState({ errorMessage: `Backup could not be restored: ${message}` });
           throw error;
         }
@@ -676,6 +691,12 @@ class MinerControllerImpl implements MinerController {
     this.viewportStart = 0;
     this.queryGeneration += 1;
     this.state.result = null;
+    // Restored user state invalidates any in-flight coverage computation, and
+    // the pre-restore stats no longer describe the restored known/decisions.
+    this.coverageGeneration += 1;
+    this.state.coverage = null;
+    this.state.coverageStatus = "idle";
+    this.state.coverageErrorMessage = null;
   }
 
   async clearSavedData(): Promise<void> {
@@ -684,6 +705,7 @@ class MinerControllerImpl implements MinerController {
       this.importGeneration += 1;
       this.queryGeneration += 1;
       this.reviewGeneration += 1;
+      this.coverageGeneration += 1;
       const clearFailures: string[] = [];
       try {
         await this.storageOperation((store) => store.clearAll());
@@ -1058,6 +1080,7 @@ class MinerControllerImpl implements MinerController {
     if (epoch !== this.userStateEpoch) return;
     this.publish();
     await this.runQuery();
+    await this.requestCoverage();
   }
 
   private async loadAndQuery(
@@ -1072,8 +1095,54 @@ class MinerControllerImpl implements MinerController {
       }
       await this.worker.loadDataset(datasetId, copiedEntryChunks(loaded.values));
       await this.runQuery(options);
+      await this.requestCoverage();
     } catch (error) {
       this.setState({ status: "error", errorMessage: errorMessage(error) });
+    }
+  }
+
+  // Coverage describes the whole active dataset, so it refreshes only after
+  // dataset/known/decision identity changes (dataset load, known import,
+  // decision apply, restore) — never for view/page/search-only updates that
+  // route through runQuery alone. Errors are nonfatal: they land in
+  // coverageStatus/coverageErrorMessage while the results list stays intact.
+  private async requestCoverage(): Promise<void> {
+    const dataset = this.state.dataset;
+    if (dataset === null) {
+      if (
+        this.state.coverage !== null ||
+        this.state.coverageStatus !== "idle" ||
+        this.state.coverageErrorMessage !== null
+      ) {
+        this.state.coverage = null;
+        this.state.coverageStatus = "idle";
+        this.state.coverageErrorMessage = null;
+        this.publish();
+      }
+      return;
+    }
+
+    const generation = ++this.coverageGeneration;
+    this.state.coverageStatus = "loading";
+    this.state.coverageErrorMessage = null;
+    this.publish();
+    try {
+      // Targets stay unset: the worker applies the domain defaults
+      // [98, 98.5, 99, 99.5].
+      const stats = await this.worker.coverage({
+        datasetId: dataset.id,
+        knownWords: [...this.state.knownWords],
+        decisions: this.decisionTuples(),
+      });
+      if (generation !== this.coverageGeneration) return;
+      this.state.coverage = stats;
+      this.state.coverageStatus = "ready";
+      this.publish();
+    } catch (error) {
+      if (generation !== this.coverageGeneration) return;
+      this.state.coverageStatus = "error";
+      this.state.coverageErrorMessage = errorMessage(error);
+      this.publish();
     }
   }
 

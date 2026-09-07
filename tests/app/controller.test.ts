@@ -1,6 +1,6 @@
 import "fake-indexeddb/auto";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Entry, QueryResult, QueryState, ViewState, WordDecisionStatus } from "../../src/domain/types";
+import type { CoverageStats, Entry, QueryResult, QueryState, ViewState, WordDecisionStatus } from "../../src/domain/types";
 import type { AppState, FileSource, MinerController } from "../../src/app/state";
 import { DEFAULT_QUERY, DEFAULT_VIEW } from "../../src/app/state";
 import {
@@ -8,7 +8,8 @@ import {
   MAX_BACKUP_BYTES,
   type MinerControllerOptions,
 } from "../../src/app/controller";
-import type { WorkerClient, WorkerQueryInput } from "../../src/app/worker-client";
+import type { WorkerClient, WorkerCoverageInput, WorkerQueryInput } from "../../src/app/worker-client";
+import { computeCoverage } from "../../src/domain/coverage";
 import { createFileSource } from "../../src/platform/file-source";
 import { createFolderSource } from "../../src/platform/folder-source";
 import { createSessionQueueStore } from "../../src/platform/session-queue";
@@ -102,6 +103,10 @@ class FakeWorkerClient implements WorkerClient {
   queryErrors: Error[] = [];
   queryResult: QueryResult = result();
   queryHandler: ((request: WorkerQueryInput) => Promise<QueryResult>) | null = null;
+  coverageErrors: Error[] = [];
+  coverageEntries: readonly Entry[] = [entry("old-entry", "古い")];
+  coverageHandler: ((request: WorkerCoverageInput) => Promise<CoverageStats>) | null = null;
+  readonly coverageCalls: WorkerCoverageInput[] = [];
 
   async importJiten(
     name: string,
@@ -182,10 +187,20 @@ class FakeWorkerClient implements WorkerClient {
     return this.queryResult;
   }
 
-  // Coverage wiring lands with the controller lifecycle task; the interface
-  // stub exists only to keep this fake assignable.
-  async coverage(): Promise<never> {
-    throw new Error("coverage is not wired into this fake yet");
+  async coverage(request: WorkerCoverageInput): Promise<CoverageStats> {
+    this.events.push("coverage");
+    this.coverageCalls.push(request);
+    const error = this.coverageErrors.shift();
+    if (error) throw error;
+    if (this.coverageHandler !== null) return this.coverageHandler(request);
+    // Cheap real math over a configurable fixture keeps refresh assertions
+    // (upward/downward/unchanged) meaningful without a worker.
+    return computeCoverage(
+      this.coverageEntries,
+      new Set(request.knownWords),
+      new Map(request.decisions ?? []),
+      request.targets,
+    );
   }
 
   dispose(): void {
@@ -2495,6 +2510,282 @@ describe("MinerController user-state serialization", () => {
     expect(final.result).toBeNull();
     expect(final.status).toBe("empty");
     expect(final.errorMessage).toBeNull();
+  });
+});
+
+describe("MinerController coverage lifecycle", () => {
+  afterEach(() => {
+    delete (globalThis as { indexedDB?: IDBFactory }).indexedDB;
+  });
+
+  const coverageFixture: Entry[] = [
+    { ...entry("cov-1", "新しい", 0), occurrences: 50 },
+    { ...entry("cov-2", "犬", 1), occurrences: 30 },
+    { ...entry("cov-3", "猫", 2), occurrences: 20 },
+  ];
+
+  function fixtureStats(
+    knownWords: Iterable<string> = [],
+    decisions: Array<[string, WordDecisionStatus]> = [],
+  ): CoverageStats {
+    return computeCoverage(coverageFixture, new Set(knownWords), new Map(decisions));
+  }
+
+  async function flushMicrotasks(rounds = 6): Promise<void> {
+    for (let index = 0; index < rounds; index += 1) await Promise.resolve();
+  }
+
+  async function untilReady(predicate: () => boolean): Promise<void> {
+    for (let index = 0; index < 1_000 && !predicate(); index += 1) await Promise.resolve();
+  }
+
+  async function coverageSetup(active = true): Promise<{
+    store: AppStore;
+    worker: FakeWorkerClient;
+    controller: MinerController;
+    states: Readonly<AppState>[];
+  }> {
+    const store = createMemoryAppStore();
+    if (active) await seedActive(store);
+    const worker = new FakeWorkerClient();
+    worker.coverageEntries = coverageFixture;
+    const controller = createMinerController(controllerOptions(store, worker));
+    const states: Readonly<AppState>[] = [];
+    controller.subscribe((state) => states.push(state));
+    return { store, worker, controller, states };
+  }
+
+  it("loads coverage after dataset initialization with inputs and omitted targets", async () => {
+    const { worker, controller, states } = await coverageSetup();
+    await controller.init();
+
+    const final = states.at(-1)!;
+    expect(final.status).toBe("ready");
+    expect(final.coverageStatus).toBe("ready");
+    expect(final.coverage).toEqual(fixtureStats());
+    expect(worker.coverageCalls).toHaveLength(1);
+    expect(worker.coverageCalls[0]).toMatchObject({
+      datasetId: "old-dataset",
+      knownWords: [],
+      decisions: [],
+    });
+    // Worker-side defaults apply when the controller omits targets.
+    expect(worker.coverageCalls[0]!.targets).toBeUndefined();
+  });
+
+  it("keeps coverage null and idle when no dataset is active", async () => {
+    const { worker, controller, states } = await coverageSetup(false);
+    await controller.init();
+
+    expect(states.at(-1)!.dataset).toBeNull();
+    expect(states.at(-1)!.coverage).toBeNull();
+    expect(states.at(-1)!.coverageStatus).toBe("idle");
+    expect(worker.coverageCalls).toHaveLength(0);
+
+    await controller.importKnown({ name: "known.txt", text: async () => "新しい\n" });
+
+    expect(worker.coverageCalls).toHaveLength(0);
+    expect(states.at(-1)!.coverage).toBeNull();
+    expect(states.at(-1)!.coverageStatus).toBe("idle");
+  });
+
+  it("refreshes coverage after a known-word import with updated inputs", async () => {
+    const { worker, controller, states } = await coverageSetup();
+    await controller.init();
+    worker.nextKnown = {
+      chunks: [["新しい"]],
+      complete: {
+        protocolVersion: 1,
+        type: "import-complete",
+        requestId: "known-new",
+        kind: "known",
+        name: "known.txt",
+        wordCount: 1,
+      },
+    };
+
+    await controller.importKnown({ name: "known.txt", text: async () => "新しい\n" });
+
+    expect(worker.coverageCalls).toHaveLength(2);
+    expect(worker.coverageCalls.at(-1)).toMatchObject({
+      datasetId: "old-dataset",
+      knownWords: ["新しい"],
+    });
+    expect(states.at(-1)!.coverageStatus).toBe("ready");
+    expect(states.at(-1)!.coverage).toEqual(fixtureStats(["新しい"]));
+  });
+
+  it("refreshes coverage upward after a local Known decision", async () => {
+    const { worker, controller, states } = await coverageSetup();
+    await controller.init();
+    expect(states.at(-1)!.coverage!.coveragePercent).toBe(0);
+
+    await controller.setWordDecision("新しい", "known");
+
+    expect(worker.coverageCalls.at(-1)?.decisions).toEqual([["新しい", "known"]]);
+    expect(states.at(-1)!.coverageStatus).toBe("ready");
+    expect(states.at(-1)!.coverage).toEqual(fixtureStats([], [["新しい", "known"]]));
+    expect(states.at(-1)!.coverage!.coveragePercent).toBe(50);
+  });
+
+  it("does not count a Mined decision toward coverage", async () => {
+    const { worker, controller, states } = await coverageSetup();
+    await controller.init();
+
+    await controller.setWordDecision("新しい", "mined");
+
+    expect(worker.coverageCalls.at(-1)?.decisions).toEqual([["新しい", "mined"]]);
+    expect(states.at(-1)!.coverageStatus).toBe("ready");
+    expect(states.at(-1)!.coverage).toEqual(fixtureStats([], [["新しい", "mined"]]));
+    expect(states.at(-1)!.coverage!.coveragePercent).toBe(0);
+  });
+
+  it("refreshes coverage downward when a local Known is reset and the word is not in the Migaku list", async () => {
+    const { worker, controller, states } = await coverageSetup();
+    await controller.init();
+    await controller.setWordDecision("新しい", "known");
+    expect(states.at(-1)!.coverage!.coveragePercent).toBe(50);
+
+    await controller.setWordDecision("新しい", "unreviewed");
+
+    expect(worker.coverageCalls.at(-1)?.decisions).toEqual([]);
+    expect(states.at(-1)!.coverageStatus).toBe("ready");
+    expect(states.at(-1)!.coverage).toEqual(fixtureStats());
+    expect(states.at(-1)!.coverage!.coveragePercent).toBe(0);
+  });
+
+  it("requests coverage for the new dataset after a Jiten import commits", async () => {
+    const { worker, controller, states } = await coverageSetup();
+    await controller.init();
+    const importCount = worker.coverageCalls.length;
+
+    await controller.importJiten({ name: "new.csv", text: async () => "Word\n新しい" });
+
+    const newDatasetId = states.at(-1)!.dataset!.id;
+    expect(newDatasetId).not.toBe("old-dataset");
+    expect(worker.coverageCalls.length).toBeGreaterThan(importCount);
+    expect(worker.coverageCalls.at(-1)?.datasetId).toBe(newDatasetId);
+    expect(states.at(-1)!.coverageStatus).toBe("ready");
+  });
+
+  it("ignores a stale coverage response after a dataset swap", async () => {
+    const { worker, controller, states } = await coverageSetup();
+    const resolvers: Array<(stats: CoverageStats) => void> = [];
+    worker.coverageHandler = () => new Promise<CoverageStats>((resolve) => {
+      resolvers.push(resolve);
+    });
+
+    // Both the init load and the replacement import below block on their
+    // gated coverage responses, so neither promise can be awaited directly
+    // until its resolver fires.
+    const initPromise = controller.init();
+    await untilReady(() => resolvers.length === 1);
+    expect(resolvers).toHaveLength(1);
+    expect(states.at(-1)!.coverageStatus).toBe("loading");
+
+    const importPromise = controller.importJiten({ name: "new.csv", text: async () => "Word\n新しい" });
+    await untilReady(() => resolvers.length === 2);
+    expect(resolvers).toHaveLength(2);
+
+    const staleStats = fixtureStats(["新しい", "犬", "猫"]);
+    resolvers[0]!(staleStats);
+    await flushMicrotasks();
+
+    expect(states.at(-1)!.coverage).not.toEqual(staleStats);
+    expect(states.at(-1)!.coverageStatus).toBe("loading");
+
+    const freshStats: CoverageStats = { ...fixtureStats(), totalUniqueWords: 1 };
+    resolvers[1]!(freshStats);
+    await flushMicrotasks();
+
+    expect(states.at(-1)!.coverage).toEqual(freshStats);
+    expect(states.at(-1)!.coverageStatus).toBe("ready");
+    await Promise.all([initPromise, importPromise]);
+  });
+
+  it("keeps the results list usable when coverage fails", async () => {
+    const { worker, controller, states } = await coverageSetup();
+    worker.queryResult = result([{
+      ...entry("old-entry", "古い"),
+      known: false,
+      decision: "unreviewed",
+      knownByMigaku: false,
+      knownByDecision: false,
+    }]);
+    worker.coverageErrors = [new Error("coverage worker failed")];
+    await controller.init();
+
+    const final = states.at(-1)!;
+    expect(final.status).toBe("ready");
+    expect(final.errorMessage).toBeNull();
+    expect(final.result).not.toBeNull();
+    expect(final.coverageStatus).toBe("error");
+    expect(final.coverageErrorMessage).toContain("coverage worker failed");
+    expect(final.coverage).toBeNull();
+  });
+
+  it("does not request coverage for view toggles, page changes, or search-only updates", async () => {
+    const { worker, controller } = await coverageSetup();
+    worker.queryResult = { ...result(), totalPages: 3, totalEntries: 3 };
+    await controller.init();
+    const coverageBefore = worker.coverageCalls.length;
+    const queriesBefore = worker.queryCalls.length;
+
+    controller.updateView({ showFurigana: true });
+    controller.updateQuery({ search: "犬" });
+    controller.changePage(1);
+
+    // Queries ran for the search and page change, but no coverage request fired.
+    expect(worker.queryCalls.length).toBeGreaterThan(queriesBefore);
+    expect(worker.coverageCalls.length).toBe(coverageBefore);
+  });
+
+  it("resets coverage when saved data is cleared", async () => {
+    const { controller, states } = await coverageSetup();
+    await controller.init();
+    expect(states.at(-1)!.coverageStatus).toBe("ready");
+    expect(states.at(-1)!.coverage).not.toBeNull();
+
+    await controller.clearSavedData();
+
+    const final = states.at(-1)!;
+    expect(final.coverage).toBeNull();
+    expect(final.coverageStatus).toBe("idle");
+    expect(final.coverageErrorMessage).toBeNull();
+  });
+
+  it("refreshes coverage after restoring a backup", async () => {
+    const store = createMemoryAppStore();
+    await seedActive(store);
+    await store.knownWords.save("old-known", "old.txt", new Set(["古い"]));
+    const worker = new FakeWorkerClient();
+    const controller = createMinerController(decisionOptions(store, worker));
+    const states: Readonly<AppState>[] = [];
+    controller.subscribe((state) => states.push(state));
+    await controller.init();
+    // Seeded known 古い over the single 古い entry = full coverage.
+    expect(states.at(-1)!.coverage!.coveragePercent).toBe(100);
+
+    await controller.restoreBackup(serializeBackup({
+      exportedAt: FIXED_NOW,
+      knownWords: { name: "restored.txt", words: ["犬", "猫"] },
+      wordDecisions: [
+        { normalizedWord: "犬", status: "mined", updatedAt: "2026-08-01T00:00:00.000Z" },
+        { normalizedWord: "鳥", status: "later", updatedAt: "2026-08-02T00:00:00.000Z" },
+      ],
+      preferences: { query: { ...query, page: 1 }, view, page: 1 },
+    }));
+
+    const final = states.at(-1)!;
+    expect(final.coverageStatus).toBe("ready");
+    expect(worker.coverageCalls.at(-1)?.knownWords).toEqual(["犬", "猫"]);
+    expect(worker.coverageCalls.at(-1)?.decisions).toEqual([
+      ["犬", "mined"],
+      ["鳥", "later"],
+    ]);
+    // Restored mined/later decisions do not count; 古い left the known list.
+    expect(final.coverage!.coveragePercent).toBe(0);
+    expect(final.coverage!.knownUniqueWords).toBe(0);
   });
 });
 

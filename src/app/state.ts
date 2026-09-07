@@ -1,4 +1,5 @@
 import type {
+  CoverageStats,
   EntryWithKnown,
   QueryResult,
   QueryState,
@@ -38,6 +39,9 @@ export interface AppState {
   persistence: "indexeddb" | "memory";
   review: ReviewState;
   queue: MiningQueueState;
+  coverage: CoverageStats | null;
+  coverageStatus: "idle" | "loading" | "ready" | "error";
+  coverageErrorMessage: string | null;
 }
 
 export interface FileSource {
@@ -124,6 +128,9 @@ export function createInitialAppState(
     persistence,
     review: { ...EMPTY_REVIEW },
     queue: { ...EMPTY_QUEUE, normalizedWords: [] },
+    coverage: null,
+    coverageStatus: "idle",
+    coverageErrorMessage: null,
   };
 }
 
@@ -151,6 +158,10 @@ function cloneQueue(value: MiningQueueState): MiningQueueState {
   return { ...value, normalizedWords: [...value.normalizedWords] };
 }
 
+function cloneCoverage(value: CoverageStats | null): CoverageStats | null {
+  return value === null ? null : { ...value, targets: [...value.targets] };
+}
+
 export function cloneAppState(value: AppState): AppState {
   return {
     ...value,
@@ -162,6 +173,7 @@ export function cloneAppState(value: AppState): AppState {
     result: cloneResult(value.result),
     review: cloneReview(value.review),
     queue: cloneQueue(value.queue),
+    coverage: cloneCoverage(value.coverage),
   };
 }
 
@@ -172,6 +184,7 @@ export function snapshotAppState(value: AppState): Readonly<AppState> {
   Object.freeze(snapshot.review);
   Object.freeze(snapshot.queue);
   if (snapshot.result !== null) Object.freeze(snapshot.result);
+  if (snapshot.coverage !== null) Object.freeze(snapshot.coverage);
   Object.freeze(snapshot);
   return snapshot;
 }
