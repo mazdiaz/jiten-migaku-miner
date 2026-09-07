@@ -287,6 +287,15 @@ Implement after reliability and core usability fixes. These are proposed enhance
 | Backup freshness indicator | Show last successful export and changes since export. | Do not imply that exporting guarantees the user retained the download. |
 | Reading display controls | Offer sentence size and compact/comfortable density. | Verify virtualization anchoring after every height-affecting preference. |
 
+### Phase 7 Verification
+
+- Vocabulary Coverage Analysis: (verified: coverage suite — 17 domain units, worker/controller/renderer coverage tests, 11-step e2e scenario, worker-resident perf-bounded computation / b073851 3d93f9e a622288 e8d61a3 365fac6 c1b6d20) — Review unreviewed by frequency deferred (needs review sort-override surface)
+- One-step Undo: (verified: controller+UI+e2e / 39ba993)
+- Active-filter chips and Reset Filters: (verified: derivation matrix + e2e / ee3c2d7)
+- Compact decision summary: (verified: renderer units / 7f3113d)
+- Backup freshness indicator: (verified: increment/reset/copy units / 4ae14b6)
+- Reading display controls: (verified: anchoring pins + e2e computed-size + reload / 3611288)
+
 Avoid expanding into SRS, cloud sync, or direct card integrations until the local workflow is dependable.
 
 ## Implementation Order
@@ -301,15 +310,15 @@ Use a failing regression test for each confirmed defect before changing implemen
 
 ## Completion Criteria
 
-- [ ] Confirmed data-integrity failures have regression coverage and no longer reproduce.
-- [ ] Queue and Review preserve their documented behavior under async operations.
-- [ ] Keyboard-only import, browsing, decisions, review, and queue workflows retain meaningful focus.
-- [ ] Mobile controls remain usable at 320px and 375px without obscuring most reading space.
-- [ ] Large datasets remain bounded in DOM and stable during deep scroll and resizing.
-- [ ] Accepted backups round-trip and restore without silently losing user-state categories.
-- [ ] Production-serving workflow is covered by smoke tests.
-- [ ] `npm run check` passes.
-- [ ] `npm run test:e2e` passes with new regression cases.
-- [ ] Completed work is checked off using verification evidence, not implementation intent.
+- [x] Confirmed data-integrity failures have regression coverage and no longer reproduce. (verified: Phase 1 — storage-fallback transfer/export 5588970, clear/restore serialization e79b74e, chunk pagination bounds bc11d75, migration recovery ef4fe8d, backup validation round-trip 536282a)
+- [x] Queue and Review preserve their documented behavior under async operations. (verified: queue-mode dispatch/include-list regressions 7b43332, review session generation + error rendering 1a6eb69, restore-failure review regeneration e997aa6)
+- [x] Keyboard-only import, browsing, decisions, review, and queue workflows retain meaningful focus. (verified: focus restoration tiers + review trap + inert + return-focus unit/e2e 4a565d7, keyboard specs across accessibility/word-decisions/review-mode suites)
+- [x] Mobile controls remain usable at 320px and 375px without obscuring most reading space. (verified: mobile-layout e2e — audit order without horizontal overflow, ≥44px touch targets, sticky toolbar inside viewport / fbd6396; larger-text/landscape validation deferred, see Phase 3)
+- [x] Large datasets remain bounded in DOM and stable during deep scroll and resizing. (verified: estimate-change anchoring incl. shrink 86b5e3f, resize guard 937c105, windowed-exit/dataset-change render invalidation c1b6d20, perf e2e 100k deep-scroll bounded DOM)
+- [x] Accepted backups round-trip and restore without silently losing user-state categories. (verified: every accepted backup serialize/parse round-trip 536282a, e2e export/restore of known words, decisions, preferences)
+- [x] Production-serving workflow is covered by smoke tests. (verified: production suite over real dist, root-served — boot, worker import/query, legacy redirect, asset types, no bundled vocab / 59b10d6 6d5078c; this run 18/18)
+- [x] `npm run check` passes. (verified: this run — typecheck + 568 unit tests + production build, 2026-09-07)
+- [x] `npm run test:e2e` passes with new regression cases. (verified: this run — 150 passed across 3 browsers incl. coverage, one-step undo, filter-chips, display-controls, mobile, perf specs, 2026-09-07)
+- [x] Completed work is checked off using verification evidence, not implementation intent. (verified: every checked box in this audit cites a regression test, spec run, or measured check)
 
 Target outcome: less configuration on screen, more readable sentences, reliable decisions, and recoverable mistakes.
