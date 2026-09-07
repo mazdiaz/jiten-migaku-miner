@@ -484,6 +484,9 @@ class MinerControllerImpl implements MinerController {
     if (text.length > MAX_BACKUP_BYTES) {
       const message = `Backup is too large: ${text.length} bytes exceeds the ${MAX_BACKUP_BYTES} byte limit`;
       this.queryGeneration += 1;
+      // A review continuation in flight across the failure must not publish
+      // into the post-failure state; mirror clearSavedData's invalidation.
+      this.reviewGeneration += 1;
       this.setState({ errorMessage: `Backup could not be restored: ${message}` });
       throw new Error(message);
     }
@@ -492,6 +495,8 @@ class MinerControllerImpl implements MinerController {
       backup = parseBackup(text);
     } catch (error) {
       this.queryGeneration += 1;
+      // Same invalidation as the size-limit exit above.
+      this.reviewGeneration += 1;
       this.setState({ errorMessage: `Backup could not be restored: ${errorMessage(error)}` });
       throw error;
     }
@@ -534,6 +539,8 @@ class MinerControllerImpl implements MinerController {
         // The atomic transaction aborted; the storage engine rolled
         // everything back, so no app-level rollback writes are needed.
         this.queryGeneration += 1;
+        // Same invalidation as the size-limit exit above.
+        this.reviewGeneration += 1;
         this.setState({ errorMessage: `Backup could not be restored: ${errorMessage(error)}` });
         throw error;
       });
@@ -557,6 +564,8 @@ class MinerControllerImpl implements MinerController {
             ? errorMessage(error)
             : `${errorMessage(error)} ${rollbackWarning}`;
           this.queryGeneration += 1;
+          // Same invalidation as the size-limit exit above.
+          this.reviewGeneration += 1;
           this.setState({ errorMessage: `Backup could not be restored: ${message}` });
           throw error;
         }

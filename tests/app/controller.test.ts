@@ -1,7 +1,7 @@
 import "fake-indexeddb/auto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Entry, QueryResult, QueryState, ViewState, WordDecisionStatus } from "../../src/domain/types";
-import type { AppState, FileSource } from "../../src/app/state";
+import type { AppState, FileSource, MinerController } from "../../src/app/state";
 import { DEFAULT_QUERY, DEFAULT_VIEW } from "../../src/app/state";
 import {
   createMinerController,
@@ -2120,7 +2120,7 @@ describe("MinerController backup and restore", () => {
     );
     expect(states.at(-1)!.errorMessage).toContain("Backup could not be restored");
 
-    resolveStale?.(result([entry("stale-entry", "残")]));
+    resolveStale?.(result([decoratedReviewItem(entry("stale-entry", "残"))]));
     await flushMicrotasks();
 
     const final = states.at(-1)!;
@@ -2129,6 +2129,123 @@ describe("MinerController backup and restore", () => {
     expect(final.status).not.toBe("ready");
     expect(final.result?.items.some((item) => item.id === "stale-entry")).toBe(false);
     expect(final.result).toEqual(resultBefore);
+  });
+
+  function decoratedReviewItem(value: Entry): QueryResult["items"][number] {
+    return {
+      ...value,
+      known: false,
+      decision: "unreviewed",
+      knownByMigaku: false,
+      knownByDecision: false,
+    };
+  }
+
+  // Wave-6 review-generation symmetry: every restore-failure exit must
+  // invalidate an in-flight review continuation exactly like it invalidates
+  // an in-flight query render (the test above). The review query issued by
+  // startReview is held unresolved across the failed restore; its late
+  // completion must not resurrect a card over the error surface.
+  async function expectReviewHeldAcrossRestoreFailure(world: {
+    store: AppStore;
+    failRestore: (controller: MinerController) => Promise<void>;
+  }): Promise<void> {
+    const worker = new FakeWorkerClient();
+    const controller = createMinerController({
+      store: world.store,
+      worker,
+      legacyStorage: null,
+      sessionQueueStore: createSessionQueueStore(null),
+      now: () => FIXED_NOW,
+    });
+    const states: Readonly<AppState>[] = [];
+    controller.subscribe((state) => states.push(state));
+    await controller.init();
+
+    let held = false;
+    let resolveHeld: ((value: QueryResult) => void) | undefined;
+    const heldQuery = new Promise<QueryResult>((resolve) => { resolveHeld = resolve; });
+    const unheld = worker.queryResult;
+    worker.queryHandler = async (request) => {
+      if (request.queryChannel === "review" && !held) {
+        held = true;
+        return heldQuery;
+      }
+      return unheld;
+    };
+
+    const started = controller.startReview();
+    await flushMicrotasks();
+    expect(held).toBe(true);
+    expect(states.at(-1)!.review.active).toBe(true);
+    expect(states.at(-1)!.review.status).toBe("loading");
+
+    await world.failRestore(controller);
+    expect(states.at(-1)!.errorMessage).toContain("Backup could not be restored");
+
+    resolveHeld?.({ ...result([decoratedReviewItem(entry("late-entry", "遅"))]), totalEntries: 1 });
+    await started;
+    await flushMicrotasks();
+
+    const final = states.at(-1)!;
+    expect(final.errorMessage).toContain("Backup could not be restored");
+    expect(final.review.active).toBe(true);
+    expect(final.review.status).toBe("loading");
+    expect(final.review.current).toBeNull();
+  }
+
+  it("an oversized-backup rejection invalidates in-flight review continuations", async () => {
+    const inner = createMemoryAppStore();
+    await seedForRestore(inner);
+    await expectReviewHeldAcrossRestoreFailure({
+      store: inner,
+      failRestore: async (controller) => {
+        await expect(controller.restoreBackup("x".repeat(MAX_BACKUP_BYTES + 1))).rejects.toThrow("too large");
+      },
+    });
+  });
+
+  it("a parse-failure restore invalidates in-flight review continuations", async () => {
+    const inner = createMemoryAppStore();
+    await seedForRestore(inner);
+    await expectReviewHeldAcrossRestoreFailure({
+      store: inner,
+      failRestore: async (controller) => {
+        await expect(controller.restoreBackup("{not json")).rejects.toThrow();
+      },
+    });
+  });
+
+  it("an atomic-abort restore failure invalidates in-flight review continuations", async () => {
+    const inner = createMemoryAppStore();
+    await seedForRestore(inner);
+    const store: AppStore = {
+      ...withoutRestoreUserState(inner),
+      restoreUserState: async () => {
+        throw new Error("atomic restore failed");
+      },
+    };
+    await expectReviewHeldAcrossRestoreFailure({
+      store,
+      failRestore: async (controller) => {
+        await expect(controller.restoreBackup(backupText())).rejects.toThrow("atomic restore failed");
+      },
+    });
+  });
+
+  it("a sequential-rollback restore failure invalidates in-flight review continuations", async () => {
+    const inner = createMemoryAppStore();
+    await seedForRestore(inner);
+    const delayed = createDelayedAppStore(inner, { forwardRestoreUserState: false });
+    await expectReviewHeldAcrossRestoreFailure({
+      store: delayed.store,
+      failRestore: async (controller) => {
+        delayed.failNext("preferences.save");
+        await expect(controller.restoreBackup(backupText())).rejects.toThrow(
+          "preferences.save failed as requested",
+        );
+      },
+    });
   });
 
   it("routes restoreUserState failures through the memory fallback and completes the restore", async () => {
