@@ -334,12 +334,15 @@ export function createRenderer(dom: DomMap): Renderer {
   let itemsRendered: { resultSig: string; viewSig: string; queueSig: string } | null = null;
   let lastState: Readonly<AppState> | null = null;
 
-  const resultSignature = (result: Readonly<AppState>["result"]): string => {
-    if (result === null) return "null";
+  const resultSignature = (result: Readonly<AppState>["result"], datasetId: string | null): string => {
+    if (result === null) return `null/${datasetId}`;
+    // Entry ids are positional, so a same-shape re-import (edited CSV, same
+    // counts) produces identical ids; the dataset id and each entry's word
+    // disambiguate content changes from pure reference changes.
     const items = result.items
-      .map((item) => `${item.id}·${item.decision}·${item.known}·${item.knownByMigaku}·${item.knownByDecision}·${item.occurrences}`)
+      .map((item) => `${item.id}·${item.word}·${item.decision}·${item.known}·${item.knownByMigaku}·${item.knownByDecision}·${item.occurrences}`)
       .join(",");
-    return `${result.page}/${result.totalPages}/${result.totalEntries}/${result.startIndex}/${result.endIndex}/${String(result.pageSize)}/${result.knownCount}/${result.windowed}|${items}`;
+    return `${datasetId}/${result.page}/${result.totalPages}/${result.totalEntries}/${result.startIndex}/${result.endIndex}/${String(result.pageSize)}/${result.knownCount}/${result.windowed}|${items}`;
   };
 
   const setPager = (result: QueryResult | null): void => {
@@ -355,6 +358,12 @@ export function createRenderer(dom: DomMap): Renderer {
 
   const renderItems = (state: Readonly<AppState>, hasData: boolean): void => {
     if (state.result?.windowed === true && state.result.totalEntries > 0) {
+      // Windowed results own the list DOM (virtual list mounts spacers +
+      // container straight into resultsList). Invalidate the paged skip
+      // cache: without this, returning to a paged result whose signature
+      // matches the pre-windowed render would skip the rebuild and leave
+      // the virtual-list DOM mounted in paged mode.
+      itemsRendered = null;
       return;
     }
     // Rebuild only when a render input actually changed. Coverage-only
@@ -364,7 +373,7 @@ export function createRenderer(dom: DomMap): Renderer {
     // <body> (and racing list clicks mid-rebuild).
     const viewSig = JSON.stringify(state.view);
     const queueSig = `${state.queue.mode}|${state.queue.normalizedWords.join("\n")}`;
-    const resultSig = resultSignature(state.result);
+    const resultSig = resultSignature(state.result, state.dataset?.id ?? null);
     const rendered = itemsRendered;
     if (
       rendered !== null
