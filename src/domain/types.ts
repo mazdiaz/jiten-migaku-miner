@@ -43,6 +43,26 @@ export interface WordDecision {
   updatedAt: string;
 }
 
+export interface CoverageTargetResult {
+  targetPercent: number;
+  reached: boolean;
+  additionalWords: number;
+  additionalTrackedOccurrences: number;
+}
+
+export interface CoverageStats {
+  totalUniqueWords: number;
+  knownUniqueWords: number;
+  unknownUniqueWords: number;
+
+  totalTrackedOccurrences: number;
+  knownTrackedOccurrences: number;
+  unknownTrackedOccurrences: number;
+
+  coveragePercent: number | null;
+  targets: CoverageTargetResult[];
+}
+
 export interface QueryState {
   search: string;
   hideKnown: boolean;
