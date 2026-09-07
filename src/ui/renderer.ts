@@ -1,5 +1,5 @@
 import { canonicalWord, parseHighlightSegments } from "../domain/text";
-import type { EntryWithKnown, QueryResult, QueryState, ViewState, WordDecisionStatus } from "../domain/types";
+import type { EntryWithKnown, QueryResult, QueryState, ViewState, WordDecision, WordDecisionStatus } from "../domain/types";
 import type { AppState } from "../app/state";
 import type { DomMap } from "./dom";
 
@@ -18,6 +18,10 @@ const DECISION_LABELS: Record<WordDecisionStatus, string> = {
 };
 
 const DECISION_STATUSES: readonly WordDecisionStatus[] = ["known", "mined", "skip", "later"];
+
+// Summary order follows the audit's "Known/Mined/Later/Skipped" wording, not
+// the button order above.
+const DECISION_SUMMARY_STATUSES: readonly WordDecisionStatus[] = ["known", "mined", "later", "skip"];
 
 const EMPTY_LOAD_MESSAGE = "Load a Jiten CSV above.";
 const EMPTY_FILTER_MESSAGE = "No entries match the current filters.";
@@ -84,6 +88,25 @@ export function deriveFilterChips(query: Readonly<QueryState>): ActiveFilterChip
     chips.push({ key: "minOccurrences", label: `Min occurrences: ${query.minOccurrences}` });
   }
   return chips;
+}
+
+// Compact decision summary line: status counts from wordDecisions in
+// known/mined/later/skip order, plus the imported knownness labeled separately
+// (audit: "Label imported knownness separately from local decisions"). All
+// four counts always render while the line is visible — consistent shape.
+// Pure derivation — no DOM.
+export function formatDecisionSummary(
+  wordDecisions: ReadonlyMap<string, WordDecision>,
+  knownWordsCount: number,
+): string {
+  const counts = new Map<WordDecisionStatus, number>();
+  for (const decision of wordDecisions.values()) {
+    counts.set(decision.status, (counts.get(decision.status) ?? 0) + 1);
+  }
+  const parts = DECISION_SUMMARY_STATUSES.map(
+    (status) => `${(counts.get(status) ?? 0).toLocaleString()} ${status}`,
+  );
+  return `Decisions: ${parts.join(" · ")} · Migaku-known: ${knownWordsCount.toLocaleString()}`;
 }
 
 function renderReviewSurface(dom: DomMap, state: Readonly<AppState>): void {
@@ -670,6 +693,15 @@ export function createRenderer(dom: DomMap): Renderer {
     dom.resultStats.textContent = !hasData
       ? "Load a Jiten CSV to begin."
       : `Loaded ${state.dataset.entryCount.toLocaleString()} · ${(state.result?.totalEntries ?? 0).toLocaleString()} currently shown${state.knownWords.size > 0 ? ` · ${(state.result?.knownCount ?? 0).toLocaleString()} match Migaku known words` : ""}`;
+
+    // Compact decision summary under the stats line: hidden only when there
+    // is nothing to summarize at all (no dataset, no decisions, no known
+    // words). Lives outside #resultsList, so it re-derives on every publish.
+    const summaryVisible = hasData || state.wordDecisions.size > 0 || state.knownWords.size > 0;
+    dom.decisionSummary.hidden = !summaryVisible;
+    dom.decisionSummary.textContent = summaryVisible
+      ? formatDecisionSummary(state.wordDecisions, state.knownWords.size)
+      : "";
 
     setPager(state.result);
     renderCoveragePanel(state, hasData);

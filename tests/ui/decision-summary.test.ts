@@ -1,14 +1,12 @@
 // @vitest-environment happy-dom
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { bindControls } from "../../src/ui/controls";
 import { getDomMap } from "../../src/ui/dom";
 import type { DomMap } from "../../src/ui/dom";
 import { createRenderer } from "../../src/ui/renderer";
-import type { AppState, FileSource, MinerController } from "../../src/app/state";
+import type { Renderer } from "../../src/ui/renderer";
+import type { AppState, MinerController } from "../../src/app/state";
 import { createInitialAppState } from "../../src/app/state";
-import type { QueryState } from "../../src/domain/types";
+import type { WordDecision, WordDecisionStatus } from "../../src/domain/types";
 
 type Listener = (state: Readonly<AppState>) => void;
 
@@ -69,39 +67,66 @@ function seedDom(): DomMap {
   withOptions("sentenceFilter", [["any", "any"], ["has", "has"], ["none", "none"]]);
   withOptions("sortSelect", [["occ-desc", "occ-desc"], ["occ-asc", "occ-asc"], ["original", "original"]]);
   withOptions("pageSize", [["25", "25"], ["50", "50"], ["100", "100"], ["all", "all"]]);
-  withOptions("decisionFilter", [["all", "All decisions"]]);
+  withOptions("decisionFilter", [
+    ["all", "All decisions"], ["unreviewed", "Unreviewed"], ["known", "Known"],
+    ["mined", "Mined"], ["skip", "Skipped"], ["later", "Later"],
+  ]);
 
   add("results", "section");
-  add("resultsHeading", "h2");
+  add("resultsHeading", "h2").setAttribute("tabindex", "-1");
   add("resultStats", "p");
   add("decisionSummary", "p");
   add("resultsList", "div");
-  add("undoButton", "button");
   add("filterChips", "div");
+  add("undoButton", "button");
   add("reviewButton", "button");
   const reviewOverlay = add("reviewOverlay", "div");
   reviewOverlay.setAttribute("role", "dialog");
+  reviewOverlay.setAttribute("aria-modal", "true");
+  reviewOverlay.setAttribute("aria-labelledby", "reviewHeading");
   const reviewPanel = add("reviewPanel", "div");
   reviewPanel.setAttribute("tabindex", "-1");
   reviewOverlay.appendChild(reviewPanel);
-  for (const id of ["reviewHeading", "reviewProgress", "reviewContent", "reviewComplete", "reviewReturn", "reviewExit", "reviewKnown", "reviewMined", "reviewSkip", "reviewLater", "reviewUndo"]) {
-    const element = add(id, "div");
+  const intoPanel = (id: string, tag: string): HTMLElement => {
+    const element = add(id, tag);
     reviewPanel.appendChild(element);
-  }
+    return element;
+  };
+  intoPanel("reviewHeading", "h2");
+  intoPanel("reviewProgress", "span");
+  intoPanel("reviewContent", "div");
+  const reviewComplete = intoPanel("reviewComplete", "div");
+  const completeCopy = document.createElement("p");
+  completeCopy.textContent = "No unreviewed candidates remain for the current filters.";
+  reviewComplete.appendChild(completeCopy);
+  const reviewReturn = add("reviewReturn", "button");
+  reviewComplete.appendChild(reviewReturn);
+  intoPanel("reviewExit", "button");
+  intoPanel("reviewKnown", "button");
+  intoPanel("reviewMined", "button");
+  intoPanel("reviewSkip", "button");
+  intoPanel("reviewLater", "button");
+  intoPanel("reviewUndo", "button");
   add("queueToggle", "button");
   add("queueHeader", "div");
   add("queueHeading", "h2");
   add("queueStats", "p");
   add("exitQueue", "button");
   add("clearQueue", "button");
-  add("stickyToolbar", "div");
-  add("stickyTitle", "div");
-  add("stickyPrev", "button");
-  add("stickyNext", "button");
-  add("stickyPage", "span");
+  const stickyToolbar = add("stickyToolbar", "div");
+  const stickyTitle = add("stickyTitle", "div");
+  const stickyPrev = add("stickyPrev", "button");
+  const stickyNext = add("stickyNext", "button");
+  const stickyPage = add("stickyPage", "span");
   add("bottomPrev", "button");
   add("bottomNext", "button");
   add("bottomPage", "span");
+
+  stickyToolbar.append(stickyTitle, stickyPrev, stickyNext, stickyPage);
+
+  const appShell = document.createElement("main");
+  appShell.className = "app-shell";
+  document.body.appendChild(appShell);
 
   const coveragePanel = add("coveragePanel", "section");
   const coverageToggle = add("coverageToggle", "button");
@@ -125,16 +150,13 @@ function seedDom(): DomMap {
 }
 
 interface FakeController extends MinerController {
-  calls: { updateQuery: Partial<QueryState>[] };
   publishState(patch: Partial<AppState>): void;
 }
 
 function createFakeController(initial?: Partial<AppState>): FakeController {
   let state: AppState = { ...createInitialAppState("memory"), ...initial };
   const listeners = new Set<Listener>();
-  const calls = { updateQuery: [] as Partial<QueryState>[] };
   const controller: FakeController = {
-    calls,
     publishState(patch) {
       state = { ...state, ...patch };
       for (const listener of listeners) listener(state);
@@ -144,11 +166,9 @@ function createFakeController(initial?: Partial<AppState>): FakeController {
       listener(state);
       return () => listeners.delete(listener);
     },
-    importJiten: vi.fn(async (_source: FileSource) => {}),
-    importKnown: vi.fn(async (_source: FileSource) => {}),
-    updateQuery(patch: Partial<QueryState>) {
-      calls.updateQuery.push(patch);
-    },
+    importJiten: vi.fn(async () => {}),
+    importKnown: vi.fn(async () => {}),
+    updateQuery: vi.fn(),
     updateView: vi.fn(),
     updateViewport: vi.fn(),
     changePage: vi.fn(),
@@ -170,17 +190,28 @@ function createFakeController(initial?: Partial<AppState>): FakeController {
   return controller;
 }
 
-function dataset(id = "d1"): NonNullable<AppState["dataset"]> {
+function datasetReady(): Partial<AppState> {
   return {
-    id, name: "book.csv", sourceType: "file", sourceName: "book.csv",
-    headers: ["Word"], entryCount: 3, createdAt: "x", updatedAt: "x", schemaVersion: 1,
+    dataset: {
+      id: "d1", name: "book.csv", sourceType: "file", sourceName: "book.csv",
+      headers: ["Word"], entryCount: 3, createdAt: "x", updatedAt: "x", schemaVersion: 1,
+    },
+    status: "ready",
   };
+}
+
+function decisions(spec: Array<[string, WordDecisionStatus]>): Map<string, WordDecision> {
+  const map = new Map<string, WordDecision>();
+  for (const [normalizedWord, status] of spec) {
+    map.set(normalizedWord, { normalizedWord, status, updatedAt: "x" });
+  }
+  return map;
 }
 
 interface Harness {
   dom: DomMap;
   controller: FakeController;
-  render(state: Partial<AppState>): void;
+  renderer: Renderer;
   dispose(): void;
 }
 
@@ -189,136 +220,135 @@ function setup(initial?: Partial<AppState>): Harness {
   const controller = createFakeController(initial);
   const renderer = createRenderer(dom);
   const unsubscribe = controller.subscribe((state) => renderer.render(state));
-  const bindings = bindControls(dom, controller, {
-    onToggleAdvanced: () => renderer.toggleAdvancedPanel(),
-  });
-  const harness: Harness = {
+  return {
     dom,
     controller,
-    render(partial) {
-      renderer.render({ ...createInitialAppState("memory"), ...partial });
-    },
+    renderer,
     dispose() {
       unsubscribe();
-      bindings.dispose();
     },
   };
-  return harness;
 }
 
 beforeEach(() => {
   document.body.innerHTML = "";
 });
 
-describe("advanced panel disclosure", () => {
-  it("resolves the new toolbar markup via getDomMap", () => {
+describe("decision summary visibility", () => {
+  it("resolves the summary element via getDomMap", () => {
     const dom = seedDom();
-    expect(dom.advancedToggle.tagName).toBe("BUTTON");
-    expect(dom.advancedPanel.id).toBe("advancedPanel");
+    expect(dom.decisionSummary.id).toBe("decisionSummary");
   });
 
-  it("keeps the panel collapsed and the toggle disabled without data", () => {
+  it("stays hidden with no dataset, no decisions, and no known words", () => {
     const harness = setup();
     try {
-      expect(harness.dom.advancedToggle.disabled).toBe(true);
-      expect(harness.dom.advancedPanel.hidden).toBe(true);
-      expect(harness.dom.advancedToggle.getAttribute("aria-expanded")).toBe("false");
+      expect(harness.dom.decisionSummary.hidden).toBe(true);
+      expect(harness.dom.decisionSummary.textContent).toBe("");
     } finally {
       harness.dispose();
     }
   });
 
-  it("enables the toggle with data and expands on click", () => {
-    const harness = setup({ dataset: dataset(), status: "ready" });
+  it("shows all-zero decision counts with a dataset present", () => {
+    const harness = setup(datasetReady());
     try {
-      expect(harness.dom.advancedToggle.disabled).toBe(false);
-      expect(harness.dom.advancedPanel.hidden).toBe(true);
-
-      harness.dom.advancedToggle.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      expect(harness.dom.advancedPanel.hidden).toBe(false);
-      expect(harness.dom.advancedToggle.getAttribute("aria-expanded")).toBe("true");
-
-      harness.dom.advancedToggle.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      expect(harness.dom.advancedPanel.hidden).toBe(true);
-      expect(harness.dom.advancedToggle.getAttribute("aria-expanded")).toBe("false");
+      expect(harness.dom.decisionSummary.hidden).toBe(false);
+      expect(harness.dom.decisionSummary.textContent).toBe(
+        `Decisions: 0 known · 0 mined · 0 later · 0 skip · Migaku-known: 0`,
+      );
     } finally {
       harness.dispose();
     }
   });
 
-  it("hides the expanded panel when the dataset is cleared", () => {
-    const harness = setup({ dataset: dataset(), status: "ready" });
+  it("shows without a dataset when decisions exist (persisted decisions)", () => {
+    const harness = setup({ wordDecisions: decisions([["言葉", "known"]]) });
     try {
-      harness.dom.advancedToggle.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      expect(harness.dom.advancedPanel.hidden).toBe(false);
-
-      harness.controller.publishState({ dataset: null, status: "empty" });
-      expect(harness.dom.advancedToggle.disabled).toBe(true);
-      expect(harness.dom.advancedPanel.hidden).toBe(true);
+      expect(harness.dom.decisionSummary.hidden).toBe(false);
+      expect(harness.dom.decisionSummary.textContent).toBe(
+        `Decisions: 1 known · 0 mined · 0 later · 0 skip · Migaku-known: 0`,
+      );
     } finally {
       harness.dispose();
     }
   });
 
-  it("recollapses after a new dataset import", () => {
-    const harness = setup({ dataset: dataset("d1"), status: "ready" });
+  it("shows without a dataset when only known words exist", () => {
+    const harness = setup({ knownWords: new Set(["言葉", "読む"]), knownWordsName: "list.txt" });
     try {
-      harness.dom.advancedToggle.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      expect(harness.dom.advancedPanel.hidden).toBe(false);
-
-      harness.controller.publishState({ dataset: dataset("d2"), status: "ready" });
-      expect(harness.dom.advancedPanel.hidden).toBe(true);
-      expect(harness.dom.advancedToggle.getAttribute("aria-expanded")).toBe("false");
+      expect(harness.dom.decisionSummary.hidden).toBe(false);
+      expect(harness.dom.decisionSummary.textContent).toBe(
+        `Decisions: 0 known · 0 mined · 0 later · 0 skip · Migaku-known: 2`,
+      );
     } finally {
       harness.dispose();
     }
   });
+});
 
-  it("survivor filter controls stay live while the panel is collapsed", () => {
-    const harness = setup({ dataset: dataset(), status: "ready" });
+describe("decision summary counts", () => {
+  it("renders mixed decision counts in known/mined/later/skip order with the separate Migaku label", () => {
+    const spec: Array<[string, WordDecisionStatus]> = [
+      ...Array.from({ length: 12 }, (_, i): [string, WordDecisionStatus] => [`k${i}`, "known"]),
+      ...Array.from({ length: 3 }, (_, i): [string, WordDecisionStatus] => [`m${i}`, "mined"]),
+      ...Array.from({ length: 2 }, (_, i): [string, WordDecisionStatus] => [`l${i}`, "later"]),
+      ["s0", "skip"],
+    ];
+    const harness = setup({
+      ...datasetReady(),
+      wordDecisions: decisions(spec),
+      knownWords: new Set(Array.from({ length: 8614 }, (_, i) => `w${i}`)),
+    });
     try {
-      expect(harness.dom.advancedPanel.hidden).toBe(true);
-      harness.dom.sortSelect.value = "occ-asc";
-      harness.dom.sortSelect.dispatchEvent(new Event("change"));
-      expect(harness.controller.calls.updateQuery.at(-1)).toEqual({ sort: "occ-asc" });
+      expect(harness.dom.decisionSummary.textContent).toBe(
+        `Decisions: 12 known · 3 mined · 2 later · 1 skip · Migaku-known: ${(8614).toLocaleString()}`,
+      );
     } finally {
       harness.dispose();
     }
   });
 
-  it("toggles the advanced-open body class with the panel visibility", () => {
-    const harness = setup({ dataset: dataset(), status: "ready" });
+  it("formats large counts with locale separators", () => {
+    const spec: Array<[string, WordDecisionStatus]> = [
+      ...Array.from({ length: 1234 }, (_, i): [string, WordDecisionStatus] => [`k${i}`, "known"]),
+    ];
+    const harness = setup({ ...datasetReady(), wordDecisions: decisions(spec) });
     try {
-      expect(document.body.classList.contains("advanced-open")).toBe(false);
-
-      harness.dom.advancedToggle.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      expect(harness.dom.advancedPanel.hidden).toBe(false);
-      expect(document.body.classList.contains("advanced-open")).toBe(true);
-
-      harness.dom.advancedToggle.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      expect(harness.dom.advancedPanel.hidden).toBe(true);
-      expect(document.body.classList.contains("advanced-open")).toBe(false);
+      expect(harness.dom.decisionSummary.textContent).toBe(
+        `Decisions: ${(1234).toLocaleString()} known · 0 mined · 0 later · 0 skip · Migaku-known: 0`,
+      );
     } finally {
       harness.dispose();
     }
   });
 
-  it("drops the advanced-open body class when the dataset clears while expanded", () => {
-    const harness = setup({ dataset: dataset(), status: "ready" });
+  it("re-derives counts on every publish as decisions change", () => {
+    const harness = setup(datasetReady());
     try {
-      harness.dom.advancedToggle.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      expect(document.body.classList.contains("advanced-open")).toBe(true);
-
-      harness.controller.publishState({ dataset: null, status: "empty" });
-      expect(harness.dom.advancedPanel.hidden).toBe(true);
-      expect(document.body.classList.contains("advanced-open")).toBe(false);
+      expect(harness.dom.decisionSummary.textContent).toContain("0 mined");
+      harness.controller.publishState({ wordDecisions: decisions([["言葉", "mined"]]) });
+      expect(harness.dom.decisionSummary.textContent).toBe(
+        `Decisions: 0 known · 1 mined · 0 later · 0 skip · Migaku-known: 0`,
+      );
+      harness.controller.publishState({ wordDecisions: new Map() });
+      expect(harness.dom.decisionSummary.textContent).toBe(
+        `Decisions: 0 known · 0 mined · 0 later · 0 skip · Migaku-known: 0`,
+      );
     } finally {
       harness.dispose();
     }
   });
 
-  it("ships the advanced panel without the legacy sticky-row-2 class", () => {
-    const html = readFileSync(resolve(process.cwd(), "index.html"), "utf8");
-    expect(html).not.toContain("sticky-row-2");
+  it("hides again when everything returns to zero without a dataset", () => {
+    const harness = setup({ wordDecisions: decisions([["言葉", "known"]]) });
+    try {
+      expect(harness.dom.decisionSummary.hidden).toBe(false);
+      harness.controller.publishState({ wordDecisions: new Map() });
+      expect(harness.dom.decisionSummary.hidden).toBe(true);
+      expect(harness.dom.decisionSummary.textContent).toBe("");
+    } finally {
+      harness.dispose();
+    }
   });
 });

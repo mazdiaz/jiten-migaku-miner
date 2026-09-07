@@ -425,6 +425,8 @@ body.advanced-open #resultsHeading { scroll-margin-top: 530px; }
 
 .result-stats { margin: 4px 0 0; color: var(--muted); font-size: 0.9rem; }
 
+.decision-summary { margin: 2px 0 0; color: var(--muted); font-size: 0.85rem; }
+
 .coverage-panel {
   margin: 0 2px 12px;
   border: 1px solid var(--border);

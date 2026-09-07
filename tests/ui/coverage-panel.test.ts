@@ -81,6 +81,7 @@ function seedDom(): DomMap {
   add("results", "section");
   add("resultsHeading", "h2");
   add("resultStats", "p");
+  add("decisionSummary", "p");
   add("resultsList", "div");
 
   // Coverage panel markup mirrors the index.html structure.

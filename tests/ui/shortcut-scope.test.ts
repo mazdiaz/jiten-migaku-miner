@@ -71,6 +71,7 @@ function seedDom(): DomMap {
   add("results", "section");
   add("resultsHeading", "h2").setAttribute("tabindex", "-1");
   add("resultStats", "p");
+  add("decisionSummary", "p");
   add("resultsList", "div");
   add("undoButton", "button");
   add("filterChips", "div");

@@ -31,6 +31,7 @@ export interface DomMap {
   readonly results: HTMLElement;
   readonly resultsHeading: HTMLElement;
   readonly resultStats: HTMLElement;
+  readonly decisionSummary: HTMLElement;
   readonly filterChips: HTMLElement;
   readonly resultsList: HTMLElement;
   readonly coveragePanel: HTMLElement;
@@ -114,6 +115,7 @@ export function getDomMap(): DomMap {
     results: byId<HTMLElement>("results"),
     resultsHeading: byId<HTMLElement>("resultsHeading"),
     resultStats: byId<HTMLElement>("resultStats"),
+    decisionSummary: byId<HTMLElement>("decisionSummary"),
     filterChips: byId<HTMLElement>("filterChips"),
     resultsList: byId<HTMLElement>("resultsList"),
     coveragePanel: byId<HTMLElement>("coveragePanel"),
