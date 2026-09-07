@@ -551,7 +551,12 @@ export function bindControls(
     }
 
     if (latest.queue.mode === "queue") {
-      // Queue Mode has no paging; ignore list shortcuts until exited.
+      // Queue Mode has no paging; ignore list shortcuts until exited. Undo
+      // stays live here: decisions happen in queue mode too.
+      if (keyboard.key.toLowerCase() === "z" && latest.undo.available) {
+        keyboard.preventDefault();
+        void controller.undoLastDecision();
+      }
       return;
     }
 

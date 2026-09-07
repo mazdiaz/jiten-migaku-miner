@@ -424,6 +424,11 @@ class MinerControllerImpl implements MinerController {
       // removal, coverage refresh) rather than a raw store write — without
       // capturing a fresh undo record, so one undo does not become redo.
       await this.applyWordDecision(record.normalizedWord, record.previousStatus, epoch, { captureUndo: false });
+      // A concurrent clear/restore bumped the epoch and dropped the re-apply:
+      // the record stays consumed (the restored/cleared world replaced the
+      // context it described), and the queue re-add must not half-apply on
+      // top of that replaced state.
+      if (epoch !== this.userStateEpoch) return;
       // Restore queue membership the decision's auto-removal dropped. The
       // word is APPENDED to the end: original position is not tracked, and
       // one-step undo only promises the word returns to the queue.

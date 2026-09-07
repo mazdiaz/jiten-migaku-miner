@@ -1537,6 +1537,52 @@ describe("MinerController one-step undo", () => {
     expect(states.at(-1)?.undo).toEqual({ available: true, label: "Undo Known — 猫" });
     expect(states.at(-1)?.errorMessage).toContain("undo write failed");
   });
+
+  it("drops the queue re-add when a concurrent restore wins the lock", async () => {
+    const inner = createMemoryAppStore();
+    await seedActive(inner);
+    const delayed = createDelayedAppStore(inner, { forwardRestoreUserState: false });
+    const worker = new FakeWorkerClient();
+    const controller = createMinerController({
+      store: delayed.store,
+      worker,
+      legacyStorage: null,
+      sessionQueueStore: createSessionQueueStore(null),
+      now: () => FIXED_NOW,
+    });
+    const states: Readonly<AppState>[] = [];
+    controller.subscribe((state) => states.push(state));
+    await controller.init();
+
+    controller.toggleQueued("a");
+    controller.toggleQueued("b");
+    await controller.setWordDecision("a", "known");
+    expect(states.at(-1)?.queue.normalizedWords).toEqual(["b"]);
+
+    const backup = JSON.stringify({
+      format: "jiten-migaku-miner-backup",
+      version: 1,
+      exportedAt: "2026-09-06T00:00:00.000Z",
+      knownWords: { name: "list.csv", words: ["b"] },
+      wordDecisions: [],
+      preferences: null,
+    });
+
+    // The restore blocks on its known-write while holding the user-state
+    // lock. The undo starts before the restore's epoch bump becomes
+    // observable, so its re-apply queues behind the restore and must be
+    // dropped — and the queue re-add must be dropped with it.
+    delayed.gate("knownWords.save");
+    const restoring = controller.restoreBackup(backup);
+    const undoing = controller.undoLastDecision();
+    await delayed.started("knownWords.save");
+    delayed.release("knownWords.save");
+    await Promise.all([restoring, undoing]);
+
+    expect(states.at(-1)?.queue.normalizedWords).toEqual(["b"]);
+    expect(states.at(-1)?.wordDecisions.has("a")).toBe(false);
+    expect(states.at(-1)?.undo).toEqual({ available: false, label: null });
+  });
 });
 
 describe("MinerController preference persistence", () => {

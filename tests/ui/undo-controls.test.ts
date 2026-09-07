@@ -395,4 +395,25 @@ describe("z undo shortcut", () => {
       harness.dispose();
     }
   });
+
+  it("works in queue mode while paging shortcuts stay suppressed", () => {
+    const harness = setup({
+      ...datasetReady(),
+      queue: { datasetId: "d1", normalizedWords: ["言葉"], mode: "queue" },
+    });
+    try {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "z", bubbles: true }));
+      expect(harness.controller.calls.undo).toBe(0);
+
+      harness.controller.publishState({ undo: { available: true, label: "Undo Known — 言葉" } });
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "z", bubbles: true }));
+      expect(harness.controller.calls.undo).toBe(1);
+
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "n", bubbles: true }));
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+      expect(harness.controller.changePage).not.toHaveBeenCalled();
+    } finally {
+      harness.dispose();
+    }
+  });
 });
