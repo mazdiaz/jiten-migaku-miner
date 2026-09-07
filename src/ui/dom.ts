@@ -42,6 +42,7 @@ export interface DomMap {
   readonly coverageTargets: HTMLElement;
   readonly coverageError: HTMLElement;
   readonly coverageFocus: HTMLButtonElement;
+  readonly undoButton: HTMLButtonElement;
   readonly reviewButton: HTMLButtonElement;
   readonly reviewOverlay: HTMLElement;
   readonly reviewPanel: HTMLElement;
@@ -55,6 +56,7 @@ export interface DomMap {
   readonly reviewMined: HTMLButtonElement;
   readonly reviewSkip: HTMLButtonElement;
   readonly reviewLater: HTMLButtonElement;
+  readonly reviewUndo: HTMLButtonElement;
   readonly queueToggle: HTMLButtonElement;
   readonly queueHeader: HTMLElement;
   readonly queueHeading: HTMLElement;
@@ -122,6 +124,7 @@ export function getDomMap(): DomMap {
     coverageTargets: byId<HTMLElement>("coverageTargets"),
     coverageError: byId<HTMLElement>("coverageError"),
     coverageFocus: byId<HTMLButtonElement>("coverageFocus"),
+    undoButton: byId<HTMLButtonElement>("undoButton"),
     reviewButton: byId<HTMLButtonElement>("reviewButton"),
     reviewOverlay: byId<HTMLElement>("reviewOverlay"),
     reviewPanel: byId<HTMLElement>("reviewPanel"),
@@ -135,6 +138,7 @@ export function getDomMap(): DomMap {
     reviewMined: byId<HTMLButtonElement>("reviewMined"),
     reviewSkip: byId<HTMLButtonElement>("reviewSkip"),
     reviewLater: byId<HTMLButtonElement>("reviewLater"),
+    reviewUndo: byId<HTMLButtonElement>("reviewUndo"),
     queueToggle: byId<HTMLButtonElement>("queueToggle"),
     queueHeader: byId<HTMLElement>("queueHeader"),
     queueHeading: byId<HTMLElement>("queueHeading"),

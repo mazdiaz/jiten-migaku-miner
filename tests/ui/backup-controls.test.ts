@@ -71,13 +71,14 @@ function seedDom(): DomMap {
   add("resultsHeading", "h2");
   add("resultStats", "p");
   add("resultsList", "div");
+  add("undoButton", "button");
   add("reviewButton", "button");
   const reviewOverlay = add("reviewOverlay", "div");
   reviewOverlay.setAttribute("role", "dialog");
   const reviewPanel = add("reviewPanel", "div");
   reviewPanel.setAttribute("tabindex", "-1");
   reviewOverlay.appendChild(reviewPanel);
-  for (const id of ["reviewHeading", "reviewProgress", "reviewContent", "reviewComplete", "reviewReturn", "reviewExit", "reviewKnown", "reviewMined", "reviewSkip", "reviewLater"]) {
+  for (const id of ["reviewHeading", "reviewProgress", "reviewContent", "reviewComplete", "reviewReturn", "reviewExit", "reviewKnown", "reviewMined", "reviewSkip", "reviewLater", "reviewUndo"]) {
     intoPanel(add, reviewPanel, id);
   }
   add("queueToggle", "button");
@@ -157,6 +158,7 @@ function createFakeController(initial?: Partial<AppState>): FakeController {
     updateViewport: vi.fn(),
     changePage: vi.fn(),
     setWordDecision: vi.fn(async () => {}),
+    undoLastDecision: vi.fn(async () => {}),
     startReview: vi.fn(async () => {}),
     stopReview: vi.fn(),
     reviewDecision: vi.fn(async () => {}),

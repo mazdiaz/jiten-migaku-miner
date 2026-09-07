@@ -25,6 +25,11 @@ export interface MiningQueueState {
   mode: "normal" | "queue";
 }
 
+export interface UndoState {
+  available: boolean;
+  label: string | null;
+}
+
 export interface AppState {
   dataset: DatasetMetadata | null;
   knownWords: Set<string>;
@@ -39,6 +44,7 @@ export interface AppState {
   persistence: "indexeddb" | "memory";
   review: ReviewState;
   queue: MiningQueueState;
+  undo: UndoState;
   coverage: CoverageStats | null;
   coverageStatus: "idle" | "loading" | "ready" | "error";
   coverageErrorMessage: string | null;
@@ -62,6 +68,7 @@ export interface MinerController {
   updateViewport(start: number): void;
   changePage(delta: number): void;
   setWordDecision(normalizedWord: string, status: WordDecisionStatus | "unreviewed"): Promise<void>;
+  undoLastDecision(): Promise<void>;
   startReview(): Promise<void>;
   stopReview(): void;
   reviewDecision(status: WordDecisionStatus): Promise<void>;
@@ -111,6 +118,11 @@ export const EMPTY_QUEUE: MiningQueueState = {
   mode: "normal",
 };
 
+export const EMPTY_UNDO: UndoState = {
+  available: false,
+  label: null,
+};
+
 export function createInitialAppState(
   persistence: AppState["persistence"] = "indexeddb",
 ): AppState {
@@ -128,6 +140,7 @@ export function createInitialAppState(
     persistence,
     review: { ...EMPTY_REVIEW },
     queue: { ...EMPTY_QUEUE, normalizedWords: [] },
+    undo: { ...EMPTY_UNDO },
     coverage: null,
     coverageStatus: "idle",
     coverageErrorMessage: null,
@@ -158,6 +171,10 @@ function cloneQueue(value: MiningQueueState): MiningQueueState {
   return { ...value, normalizedWords: [...value.normalizedWords] };
 }
 
+function cloneUndo(value: UndoState): UndoState {
+  return { ...value };
+}
+
 function cloneCoverage(value: CoverageStats | null): CoverageStats | null {
   return value === null ? null : { ...value, targets: [...value.targets] };
 }
@@ -173,6 +190,7 @@ export function cloneAppState(value: AppState): AppState {
     result: cloneResult(value.result),
     review: cloneReview(value.review),
     queue: cloneQueue(value.queue),
+    undo: cloneUndo(value.undo),
     coverage: cloneCoverage(value.coverage),
   };
 }
@@ -183,6 +201,7 @@ export function snapshotAppState(value: AppState): Readonly<AppState> {
   Object.freeze(snapshot.view);
   Object.freeze(snapshot.review);
   Object.freeze(snapshot.queue);
+  Object.freeze(snapshot.undo);
   if (snapshot.result !== null) Object.freeze(snapshot.result);
   if (snapshot.coverage !== null) Object.freeze(snapshot.coverage);
   Object.freeze(snapshot);

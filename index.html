@@ -144,7 +144,10 @@
           <h2 id="resultsHeading" tabindex="-1">Mining entries</h2>
           <p id="resultStats" class="result-stats" aria-live="polite">Load a Jiten CSV to begin.</p>
         </div>
-        <button id="reviewButton" type="button" class="review-button" disabled>Review unreviewed</button>
+        <div class="results-head-actions">
+          <button id="undoButton" type="button" class="review-button undo-button" disabled>Undo</button>
+          <button id="reviewButton" type="button" class="review-button" disabled>Review unreviewed</button>
+        </div>
       </div>
 
       <section id="coveragePanel" class="coverage-panel queue-hidden" aria-label="Tracked vocabulary coverage" hidden>
@@ -185,7 +188,7 @@
         <span id="bottomPage" class="page-label">Page 0 / 0</span>
         <button id="bottomNext" type="button" aria-label="Next page" disabled>→</button>
       </div>
-      <p class="shortcut-note">Shortcuts: → / N next · ← / P previous · Home top · End bottom. Work when focus is outside the toolbar; disabled while typing.</p>
+      <p class="shortcut-note">Shortcuts: → / N next · ← / P previous · Z undo last decision · Home top · End bottom. Work when focus is outside the toolbar; disabled while typing.</p>
     </section>
   </main>
 
@@ -206,8 +209,9 @@
           <button id="reviewMined" type="button" class="review-action">Mined (M)</button>
           <button id="reviewSkip" type="button" class="review-action">Skip (S)</button>
           <button id="reviewLater" type="button" class="review-action">Later (L)</button>
+          <button id="reviewUndo" type="button" class="review-action review-undo" disabled>Undo last (Z)</button>
         </div>
-        <p class="review-shortcut-note">Shortcuts: K known · M mined · S skip · L later · Esc exit.</p>
+        <p class="review-shortcut-note">Shortcuts: K known · M mined · S skip · L later · Z undo · Esc exit.</p>
       </div>
   </div>
 

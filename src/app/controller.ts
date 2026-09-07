@@ -22,6 +22,7 @@ import {
   DEFAULT_QUERY,
   DEFAULT_VIEW,
   EMPTY_REVIEW,
+  EMPTY_UNDO,
   type AppState,
   type FileSource,
   type MinerController,
@@ -89,6 +90,23 @@ interface ImportSnapshot {
   state: AppState;
 }
 
+// The single undo entry: the decision status and queue membership that
+// existed BEFORE the last applied decision. Captured pre-mutation inside
+// applyWordDecision; consumed by undoLastDecision (one step only).
+interface UndoRecord {
+  normalizedWord: string;
+  previousStatus: WordDecisionStatus | "unreviewed";
+  previousQueueMembership: boolean;
+}
+
+const UNDO_STATUS_LABELS: Record<WordDecisionStatus | "unreviewed", string> = {
+  known: "Known",
+  mined: "Mined",
+  skip: "Skip",
+  later: "Later",
+  unreviewed: "Unreviewed",
+};
+
 class MinerControllerImpl implements MinerController {
   private store: AppStore;
   private readonly worker: WorkerClient;
@@ -128,6 +146,9 @@ class MinerControllerImpl implements MinerController {
   // coverage responses compare their captured value and stale ones are
   // dropped. Every request also bumps, so the newest request always wins.
   private coverageGeneration = 0;
+  // The last successfully applied decision's undo record, mirrored into
+  // state.undo for the UI. Null when undo is unavailable.
+  private undoRecord: UndoRecord | null = null;
 
   constructor(options: MinerControllerOptions) {
     this.storeWasProvided = options.store !== undefined;
@@ -226,6 +247,10 @@ class MinerControllerImpl implements MinerController {
         // A newly activated dataset starts with a fresh queue association.
         this.state.queue = { datasetId: dataset.id, normalizedWords: [], mode: "normal" };
         this.sessionQueue.clear();
+        // The committed dataset change invalidates any pending undo record:
+        // its word/queue context belongs to the replaced dataset.
+        this.undoRecord = null;
+        this.state.undo = { ...EMPTY_UNDO };
         this.viewportStart = 0;
         this.queryGeneration += 1;
         // Dataset identity changed: stale coverage responses are dead and the
@@ -378,6 +403,45 @@ class MinerControllerImpl implements MinerController {
       if (epoch !== this.userStateEpoch) return;
       this.setState({ errorMessage: `Word decision could not be saved: ${errorMessage(error)}` });
     });
+  }
+
+  async undoLastDecision(): Promise<void> {
+    const record = this.undoRecord;
+    if (record === null) return;
+    // Consume the record first: undo is single-step, and a second call while
+    // a re-apply is still in flight must no-op.
+    this.undoRecord = null;
+    const priorUndo = this.state.undo;
+    this.state.undo = { ...EMPTY_UNDO };
+    // Undo is itself a user action: capture its own epoch so a concurrent
+    // clear/restore that wins the lock first drops this re-apply.
+    const epoch = this.userStateEpoch;
+    try {
+      // Re-apply through the SAME decision path (locks, epoch checks, queue
+      // removal, coverage refresh) rather than a raw store write — without
+      // capturing a fresh undo record, so one undo does not become redo.
+      await this.applyWordDecision(record.normalizedWord, record.previousStatus, epoch, { captureUndo: false });
+      // Restore queue membership the decision's auto-removal dropped. The
+      // word is APPENDED to the end: original position is not tracked, and
+      // one-step undo only promises the word returns to the queue.
+      if (record.previousQueueMembership) {
+        const queueDatasetId = this.state.queue.datasetId;
+        if (
+          queueDatasetId !== null
+          && !this.state.queue.normalizedWords.includes(record.normalizedWord)
+        ) {
+          this.setQueueWords(queueDatasetId, [...this.state.queue.normalizedWords, record.normalizedWord]);
+        }
+      }
+    } catch (error) {
+      if (epoch === this.userStateEpoch) {
+        // The re-apply failed without mutating anything: put the record back
+        // so undo can be retried once the cause is resolved.
+        this.undoRecord = record;
+        this.state.undo = priorUndo;
+        this.setState({ errorMessage: `Undo could not be saved: ${errorMessage(error)}` });
+      }
+    }
   }
 
   async startReview(): Promise<void> {
@@ -691,6 +755,10 @@ class MinerControllerImpl implements MinerController {
     this.viewportStart = 0;
     this.queryGeneration += 1;
     this.state.result = null;
+    // Restored decisions replaced the pre-restore ones, so the pending undo
+    // record no longer describes any live decision.
+    this.undoRecord = null;
+    this.state.undo = { ...EMPTY_UNDO };
     // Restored user state invalidates any in-flight coverage computation, and
     // the pre-restore stats no longer describe the restored known/decisions.
     this.coverageGeneration += 1;
@@ -728,6 +796,7 @@ class MinerControllerImpl implements MinerController {
       }
       this.worker.dispose();
       this.sessionQueue.clear();
+      this.undoRecord = null;
       this.state = createInitialAppState(this.state.persistence);
       this.warningMessage = [this.fallbackWarning, ...clearFailures]
         .filter((part): part is string => part !== null)
@@ -1048,6 +1117,7 @@ class MinerControllerImpl implements MinerController {
     normalizedWord: string,
     status: WordDecisionStatus | "unreviewed",
     epoch: number,
+    options: { captureUndo?: boolean } = {},
   ): Promise<void> {
     // Single canonicalization choke point: every caller (list clicks, review
     // triage) funnels raw words through here so persisted keys always use the
@@ -1058,6 +1128,15 @@ class MinerControllerImpl implements MinerController {
     }
     await this.withUserStateLock(async () => {
       if (epoch !== this.userStateEpoch) return;
+      // Snapshot the undo record BEFORE any mutation: the prior decision
+      // status and the prior queue membership (a decision auto-removes
+      // queued words further down). Only committed once the write succeeds,
+      // so a failed decision leaves the previous record intact.
+      const pendingUndo = options.captureUndo === false ? null : {
+        normalizedWord: canonical,
+        previousStatus: this.state.wordDecisions.get(canonical)?.status ?? ("unreviewed" as const),
+        previousQueueMembership: this.state.queue.normalizedWords.includes(canonical),
+      };
       if (status === "unreviewed") {
         await this.storageOperation((store) => store.wordDecisions.remove(canonical));
         if (epoch !== this.userStateEpoch) return;
@@ -1075,6 +1154,13 @@ class MinerControllerImpl implements MinerController {
         const remaining = this.state.queue.normalizedWords.filter((queued) => queued !== canonical);
         this.state.queue = { ...this.state.queue, normalizedWords: remaining };
         this.sessionQueue.save({ version: 1, datasetId: queueDatasetId, normalizedWords: remaining });
+      }
+      if (pendingUndo !== null) {
+        this.undoRecord = pendingUndo;
+        this.state.undo = {
+          available: true,
+          label: `Undo ${UNDO_STATUS_LABELS[status]} — ${normalizedWord}`,
+        };
       }
     });
     if (epoch !== this.userStateEpoch) return;

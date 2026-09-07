@@ -424,6 +424,12 @@ export function bindControls(
   ] as const) {
     recorder.add(button, "click", () => submitReviewDecision(status));
   }
+  recorder.add(dom.undoButton, "click", () => {
+    void controller.undoLastDecision();
+  });
+  recorder.add(dom.reviewUndo, "click", () => {
+    void controller.undoLastDecision();
+  });
 
   const reviewFocusables = (): HTMLElement[] => {
     const nodes = dom.reviewPanel.querySelectorAll<HTMLElement>(
@@ -490,6 +496,13 @@ export function bindControls(
       if (action !== undefined) {
         keyboard.preventDefault();
         submitReviewDecision(action);
+      } else if (keyboard.key.toLowerCase() === "z") {
+        // Undo works during review: the undone word rejoins the review
+        // candidate pool via the next review query.
+        if (latest.undo.available) {
+          keyboard.preventDefault();
+          void controller.undoLastDecision();
+        }
       } else if (keyboard.key === "Escape") {
         keyboard.preventDefault();
         controller.stopReview();
@@ -511,6 +524,11 @@ export function bindControls(
       keyboard.preventDefault();
       controller.changePage(-1);
       focusResultsHeading();
+    } else if (keyboard.key.toLowerCase() === "z") {
+      if (latest.undo.available) {
+        keyboard.preventDefault();
+        void controller.undoLastDecision();
+      }
     } else if (keyboard.key === "Home") {
       keyboard.preventDefault();
       dom.resultsHeading.scrollIntoView({ block: "start" });

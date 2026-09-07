@@ -1300,6 +1300,197 @@ describe("MinerController word decisions", () => {
   });
 });
 
+describe("MinerController one-step undo", () => {
+  afterEach(() => {
+    delete (globalThis as { indexedDB?: IDBFactory }).indexedDB;
+  });
+
+  function undoSetup(): {
+    store: ReturnType<typeof createMemoryAppStore>;
+    worker: FakeWorkerClient;
+    controller: ReturnType<typeof createMinerController>;
+    states: Readonly<AppState>[];
+  } {
+    const store = createMemoryAppStore();
+    const worker = new FakeWorkerClient();
+    const controller = createMinerController(decisionOptions(store, worker));
+    const states: Readonly<AppState>[] = [];
+    controller.subscribe((state) => states.push(state));
+    return { store, worker, controller, states };
+  }
+
+  async function readyUndoSetup(): Promise<ReturnType<typeof undoSetup>> {
+    const env = undoSetup();
+    await seedActive(env.store);
+    await env.controller.init();
+    return env;
+  }
+
+  it("undoes a known decision back to unreviewed in state and store", async () => {
+    const { store, worker, controller, states } = await readyUndoSetup();
+    await controller.setWordDecision("猫", "known");
+
+    await controller.undoLastDecision();
+
+    expect(await store.wordDecisions.get("猫")).toBeNull();
+    expect(states.at(-1)?.wordDecisions.has("猫")).toBe(false);
+    expect(worker.queryCalls.at(-1)?.decisions).toEqual([]);
+  });
+
+  it("exposes the record via state.undo with a status + word label", async () => {
+    const { controller, states } = await readyUndoSetup();
+
+    expect(states.at(-1)?.undo).toEqual({ available: false, label: null });
+
+    await controller.setWordDecision("新しい", "known");
+    expect(states.at(-1)?.undo).toEqual({ available: true, label: "Undo Known — 新しい" });
+
+    await controller.setWordDecision("新しい", "later");
+    expect(states.at(-1)?.undo).toEqual({ available: true, label: "Undo Later — 新しい" });
+
+    await controller.undoLastDecision();
+    expect(states.at(-1)?.undo).toEqual({ available: false, label: null });
+  });
+
+  it("no-ops without a record", async () => {
+    const { controller, states } = await readyUndoSetup();
+    const publishes = states.length;
+
+    await controller.undoLastDecision();
+
+    expect(states.length).toBe(publishes);
+  });
+
+  it("restores queue membership lost to the decision by appending to the end", async () => {
+    const { controller, states } = await readyUndoSetup();
+
+    controller.toggleQueued("a");
+    controller.toggleQueued("b");
+    expect(states.at(-1)?.queue.normalizedWords).toEqual(["a", "b"]);
+
+    await controller.setWordDecision("a", "known");
+    expect(states.at(-1)?.queue.normalizedWords).toEqual(["b"]);
+
+    await controller.undoLastDecision();
+
+    // Appended at the END: the original position is not tracked, and
+    // one-step undo only promises the word returns to the queue.
+    expect(states.at(-1)?.queue.normalizedWords).toEqual(["b", "a"]);
+    expect(states.at(-1)?.wordDecisions.has("a")).toBe(false);
+  });
+
+  it("re-adds queue membership only when the word actually left the queue", async () => {
+    const { controller, states } = await readyUndoSetup();
+
+    controller.toggleQueued("a");
+    controller.toggleQueued("b");
+    // Decide an UNQUEUED word: previousQueueMembership false, so undo must
+    // not inject it into the queue.
+    await controller.setWordDecision("b", "known");
+    controller.toggleQueued("b");
+    expect(states.at(-1)?.queue.normalizedWords).toEqual(["a", "b"]);
+
+    await controller.undoLastDecision();
+
+    expect(states.at(-1)?.queue.normalizedWords).toEqual(["a", "b"]);
+  });
+
+  it("undoes a mined decision back to the prior known status", async () => {
+    const store = createMemoryAppStore();
+    await seedActive(store);
+    await store.wordDecisions.set({ normalizedWord: "猫", status: "known", updatedAt: "2026-09-01T00:00:00.000Z" });
+    const worker = new FakeWorkerClient();
+    const controller = createMinerController(decisionOptions(store, worker));
+    const states: Readonly<AppState>[] = [];
+    controller.subscribe((state) => states.push(state));
+    await controller.init();
+
+    await controller.setWordDecision("猫", "mined");
+    expect(states.at(-1)?.wordDecisions.get("猫")).toMatchObject({ status: "mined" });
+
+    await controller.undoLastDecision();
+
+    expect(await store.wordDecisions.get("猫")).toEqual({
+      normalizedWord: "猫",
+      status: "known",
+      updatedAt: FIXED_NOW,
+    });
+    expect(states.at(-1)?.wordDecisions.get("猫")).toMatchObject({ status: "known" });
+    expect(worker.queryCalls.at(-1)?.decisions).toEqual([["猫", "known"]]);
+  });
+
+  it("consumes the record: a second undo no-ops", async () => {
+    const { controller, states } = await readyUndoSetup();
+    await controller.setWordDecision("猫", "known");
+    await controller.undoLastDecision();
+    expect(states.at(-1)?.wordDecisions.has("猫")).toBe(false);
+    const publishes = states.length;
+
+    await controller.undoLastDecision();
+
+    expect(states.length).toBe(publishes);
+    expect(states.at(-1)?.wordDecisions.has("猫")).toBe(false);
+  });
+
+  it("clears the record when saved data is cleared", async () => {
+    const { controller, states } = await readyUndoSetup();
+    await controller.setWordDecision("猫", "known");
+    expect(states.at(-1)?.undo.available).toBe(true);
+
+    await controller.clearSavedData();
+
+    expect(states.at(-1)?.undo).toEqual({ available: false, label: null });
+    const publishes = states.length;
+    await controller.undoLastDecision();
+    expect(states.length).toBe(publishes);
+  });
+
+  it("clears the record after a backup restore commits", async () => {
+    const { controller, states } = await readyUndoSetup();
+    await controller.setWordDecision("猫", "known");
+    expect(states.at(-1)?.undo.available).toBe(true);
+
+    await controller.restoreBackup(JSON.stringify({
+      format: "jiten-migaku-miner-backup",
+      version: 1,
+      exportedAt: "2026-09-06T00:00:00.000Z",
+      knownWords: null,
+      wordDecisions: [],
+      preferences: null,
+    }));
+
+    expect(states.at(-1)?.undo).toEqual({ available: false, label: null });
+  });
+
+  it("clears the record when a new dataset import commits", async () => {
+    const { controller, states } = await readyUndoSetup();
+    await controller.setWordDecision("猫", "known");
+    expect(states.at(-1)?.undo.available).toBe(true);
+
+    await controller.importJiten({ name: "new.csv", text: async () => "Word\n新しい" });
+
+    expect(states.at(-1)?.undo).toEqual({ available: false, label: null });
+  });
+
+  it("keeps the record and surfaces an error when the undo re-apply fails", async () => {
+    const { store, controller, states } = await readyUndoSetup();
+    await controller.setWordDecision("猫", "known");
+    const originalRemove = store.wordDecisions.remove.bind(store.wordDecisions);
+    store.wordDecisions.remove = async () => {
+      throw new Error("undo write failed");
+    };
+
+    await controller.undoLastDecision();
+    store.wordDecisions.remove = originalRemove;
+
+    // The decision is still known everywhere and the undo stays retryable.
+    expect(await store.wordDecisions.get("猫")).toMatchObject({ status: "known" });
+    expect(states.at(-1)?.wordDecisions.get("猫")).toMatchObject({ status: "known" });
+    expect(states.at(-1)?.undo).toEqual({ available: true, label: "Undo Known — 猫" });
+    expect(states.at(-1)?.errorMessage).toContain("undo write failed");
+  });
+});
+
 describe("MinerController preference persistence", () => {
   afterEach(() => {
     delete (globalThis as { indexedDB?: IDBFactory }).indexedDB;

@@ -256,6 +256,19 @@ body.hl-pill .target-highlight:not(:has(*)) {
   cursor: default;
 }
 
+/* The undo button borrows the review-button pill but sits quieter so the
+   primary Review action keeps visual priority. */
+.undo-button {
+  background: var(--surface-2);
+  color: var(--text);
+  font-weight: 600;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.undo-button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+
 body.review-open { overflow: hidden; }
 
 .review-overlay {
@@ -364,6 +377,9 @@ body.review-open { overflow: hidden; }
   opacity: 0.45;
   cursor: default;
 }
+
+/* Undo spans the full row beneath the four triage actions in the grid. */
+.review-undo { grid-column: 1 / -1; }
 
 .review-shortcut-note {
   margin: 0;

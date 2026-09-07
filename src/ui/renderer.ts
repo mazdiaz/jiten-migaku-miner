@@ -25,6 +25,8 @@ const REVIEW_COMPLETE_MESSAGE = "No unreviewed candidates remain for the current
 const QUEUE_COMPLETE_MESSAGE = "Mining queue complete.";
 const QUEUE_ADD_LABEL = "+ Queue";
 const QUEUE_QUEUED_LABEL = "✓ Queued";
+const UNDO_BASE_LABEL = "Undo";
+const REVIEW_UNDO_BASE_LABEL = "Undo last";
 
 export interface EntryRenderOptions {
   queued?: boolean;
@@ -42,6 +44,13 @@ function renderReviewSurface(dom: DomMap, state: Readonly<AppState>): void {
 
   const triageButtons = [dom.reviewKnown, dom.reviewMined, dom.reviewSkip, dom.reviewLater];
   for (const button of triageButtons) button.disabled = review.status !== "ready";
+
+  // The review undo button shares state.undo with the results-head button:
+  // enabled whenever a decision record is available, labeled with it.
+  dom.reviewUndo.disabled = !state.undo.available;
+  dom.reviewUndo.textContent = state.undo.available && state.undo.label !== null
+    ? state.undo.label
+    : REVIEW_UNDO_BASE_LABEL;
 
   const complete = review.active && review.status === "complete";
   dom.reviewComplete.hidden = !complete;
@@ -571,6 +580,13 @@ export function createRenderer(dom: DomMap): Renderer {
     renderCoveragePanel(state, hasData);
     renderItems(state, hasData);
     renderReviewSurface(dom, state);
+
+    // Results-head undo button mirrors state.undo; disabled without a
+    // record, labeled with the record when one exists.
+    dom.undoButton.disabled = !state.undo.available;
+    dom.undoButton.textContent = state.undo.available && state.undo.label !== null
+      ? state.undo.label
+      : UNDO_BASE_LABEL;
 
     const queueMode = state.queue.mode === "queue";
     dom.queueHeader.hidden = !queueMode;

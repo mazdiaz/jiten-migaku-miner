@@ -77,6 +77,7 @@ function seedDom(): DomMap {
   add("resultsHeading", "h2").setAttribute("tabindex", "-1");
   add("resultStats", "p");
   add("resultsList", "div");
+  add("undoButton", "button");
   add("reviewButton", "button");
   const reviewOverlay = add("reviewOverlay", "div");
   reviewOverlay.setAttribute("role", "dialog");
@@ -104,6 +105,7 @@ function seedDom(): DomMap {
   intoPanel("reviewMined", "button");
   intoPanel("reviewSkip", "button");
   intoPanel("reviewLater", "button");
+  intoPanel("reviewUndo", "button");
   add("queueToggle", "button");
   add("queueHeader", "div");
   add("queueHeading", "h2");
@@ -207,6 +209,7 @@ function createFakeController(initial?: Partial<AppState>): FakeController {
     setWordDecision: vi.fn(async (word: string, status: string) => {
       calls.setWordDecision.push([word, status]);
     }),
+    undoLastDecision: vi.fn(async () => {}),
     startReview: vi.fn(async () => {
       calls.startReview += 1;
     }),

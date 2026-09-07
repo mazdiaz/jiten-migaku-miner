@@ -352,6 +352,14 @@ input:focus, select:focus, button:focus-visible {
 
 .results-head h2 { margin: 0; font-size: 1.05rem; }
 
+.results-head-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 /* Keep the focused/scrolled-to results heading clear of the sticky toolbar.
    140px clears the collapsed toolbar at 375px. When the filters panel is
    expanded the renderer adds body.advanced-open; 530px clears the full
