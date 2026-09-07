@@ -591,6 +591,8 @@ export function createRenderer(dom: DomMap): Renderer {
     dom.pillHighlight.checked = state.view.pillHighlight;
     dom.showHighlight.checked = state.view.showHighlight;
     dom.showDefinitions.checked = state.view.showDefinitions;
+    dom.sentenceSize.value = state.view.sentenceSize;
+    dom.density.value = state.view.density;
     dom.sentenceFilter.value = state.query.sentence;
     dom.decisionFilter.value = state.query.decision;
     dom.minOccurrences.value = String(state.query.minOccurrences);
@@ -603,6 +605,11 @@ export function createRenderer(dom: DomMap): Renderer {
     dom.clearQueue.disabled = queueCount === 0;
     document.body.classList.toggle("hl-pill", state.view.pillHighlight);
     document.body.classList.toggle("queue-mode", state.queue.mode === "queue");
+    // Reading display preferences: a body class exists ONLY when a
+    // preference moves away from its default, so default rendering keeps
+    // the exact current look (no class, no CSS override).
+    document.body.classList.toggle("sent-size-lg", state.view.sentenceSize === "large");
+    document.body.classList.toggle("density-compact", state.view.density === "compact");
   };
 
   const formatCoveragePercent = (value: number | null): string =>

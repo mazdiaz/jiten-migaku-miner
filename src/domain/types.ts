@@ -80,6 +80,8 @@ export interface ViewState {
   pillHighlight: boolean;
   showHighlight: boolean;
   showDefinitions: boolean;
+  sentenceSize: "medium" | "large";
+  density: "comfortable" | "compact";
 }
 
 export interface QueryWindow {

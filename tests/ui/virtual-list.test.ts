@@ -260,6 +260,79 @@ describe("virtual list scroll anchoring", () => {
     expect(requested).toEqual([]);
     list.destroy();
   });
+
+  // Height-PREFERENCE-change variants (audit phase 6/7 row: "Verify
+  // virtualization anchoring after every height-affecting preference").
+  // A density/sentence-size change re-renders the SAME window (same start)
+  // with new row heights. The sequence models the app: the first render
+  // settles the estimate (measured == estimate, no compensation), the second
+  // render arrives after the preference flip with different gBCR heights.
+  // The re-measure must compensate the scroll so the visible start stays
+  // anchored, and must not request a different window start.
+  function resizableItems(): { render: (entryValue: EntryWithKnown, index: number) => HTMLElement; setHeight: (height: number) => void } {
+    let height = 96;
+    return {
+      render(entryValue: EntryWithKnown, index: number): HTMLElement {
+        const node = itemNode(entryValue, index);
+        node.getBoundingClientRect = () => ({ height } as DOMRect);
+        return node;
+      },
+      setHeight(next: number) {
+        height = next;
+      },
+    }
+  }
+
+  it("anchors the visible start when compact density shrinks row heights after a settled estimate", () => {
+    const root = document.createElement("div");
+    const requested: number[] = [];
+    const { calls } = stubWindowScroll(5_000 * 96);
+    const items = resizableItems();
+    const list = createVirtualList(root, items.render, {
+      onRequestWindow: (start) => requested.push(start),
+    });
+
+    list.setTotal(100_000);
+    list.setWindow(5_000, entries(100));
+    // Estimate settled at 96: no compensation, no window request.
+    expect(calls).toEqual([]);
+    expect(requested).toEqual([]);
+    expect(spacerHeights(root).top).toBe(5_000 * 96);
+
+    // Density flip: rows re-render 32px shorter.
+    items.setHeight(64);
+    list.setWindow(5_000, entries(100));
+
+    expect(spacerHeights(root).top).toBe(5_000 * 64);
+    expect(calls).toEqual([[0, 5_000 * 64]]);
+    expect(window.scrollY).toBe(5_000 * 64);
+    expect(requested).toEqual([]);
+    list.destroy();
+  });
+
+  it("anchors the visible start when large sentence size grows row heights after a settled estimate", () => {
+    const root = document.createElement("div");
+    const requested: number[] = [];
+    const { calls } = stubWindowScroll(5_000 * 96);
+    const items = resizableItems();
+    const list = createVirtualList(root, items.render, {
+      onRequestWindow: (start) => requested.push(start),
+    });
+
+    list.setTotal(100_000);
+    list.setWindow(5_000, entries(100));
+    expect(calls).toEqual([]);
+
+    // Sentence-size flip: rows re-render 44px taller.
+    items.setHeight(140);
+    list.setWindow(5_000, entries(100));
+
+    expect(spacerHeights(root).top).toBe(5_000 * 140);
+    expect(calls).toEqual([[0, 5_000 * 140]]);
+    expect(window.scrollY).toBe(5_000 * 140);
+    expect(requested).toEqual([]);
+    list.destroy();
+  });
 });
 
 describe("virtual list viewport resize", () => {

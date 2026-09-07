@@ -41,6 +41,8 @@ const view: ViewState = {
   pillHighlight: false,
   showHighlight: false,
   showDefinitions: true,
+  sentenceSize: "medium",
+  density: "comfortable",
 };
 
 function entry(id: string, word: string, originalIndex = 0): Entry {
@@ -419,6 +421,52 @@ describe("MinerController", () => {
     expect(states[0]!.view.showDefinitions).toBe(true);
     expect(states.at(-1)!.view.showDefinitions).toBe(false);
     expect(states[0]).not.toBe(states.at(-1));
+  });
+
+  it("fills display-preference defaults when stored preferences predate the fields", async () => {
+    const store = createMemoryAppStore();
+    await seedActive(store);
+    // A preference record written before the display controls shipped lacks
+    // sentenceSize/density entirely; initialize must restore it to defaults.
+    const legacyView = { ...view } as Partial<ViewState>;
+    delete legacyView.sentenceSize;
+    delete legacyView.density;
+    await store.preferences.save({
+      query: { ...query, page: 1 },
+      view: legacyView as ViewState,
+      page: 1,
+    });
+    const worker = new FakeWorkerClient();
+    const controller = createMinerController(controllerOptions(store, worker));
+    const states: Readonly<AppState>[] = [];
+    controller.subscribe((state) => states.push(state));
+
+    await controller.init();
+
+    const final = states.at(-1)!;
+    expect(final.view.sentenceSize).toBe("medium");
+    expect(final.view.density).toBe("comfortable");
+    expect(final.view.showDefinitions).toBe(true);
+  });
+
+  it("persists and restores the display preferences through updateView", async () => {
+    const store = createMemoryAppStore();
+    await seedActive(store);
+    const worker = new FakeWorkerClient();
+    const controller = createMinerController(controllerOptions(store, worker));
+    const states: Readonly<AppState>[] = [];
+    controller.subscribe((state) => states.push(state));
+    await controller.init();
+
+    controller.updateView({ sentenceSize: "large", density: "compact" });
+    // persistPreferences is fire-and-forget; flush the lock chain before reading the store.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(states.at(-1)!.view.sentenceSize).toBe("large");
+    expect(states.at(-1)!.view.density).toBe("compact");
+    const saved = await store.preferences.load();
+    expect(saved?.view.sentenceSize).toBe("large");
+    expect(saved?.view.density).toBe("compact");
   });
 
   it("rejects persisted datasets whose stored entry count is incomplete", async () => {
@@ -1946,6 +1994,8 @@ describe("MinerController backup and restore", () => {
     pillHighlight: true,
     showHighlight: false,
     showDefinitions: false,
+    sentenceSize: "large",
+    density: "compact",
   };
 
   function backupText(overrides: Record<string, unknown> = {}): string {

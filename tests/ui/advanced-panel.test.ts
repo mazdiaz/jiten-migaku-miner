@@ -72,6 +72,8 @@ function seedDom(): DomMap {
   withOptions("pageSize", [["25", "25"], ["50", "50"], ["100", "100"], ["all", "all"]]);
   withOptions("decisionFilter", [["all", "All decisions"]]);
 
+  withOptions("sentenceSize", [["medium", "medium"], ["large", "large"]]);
+  withOptions("density", [["comfortable", "comfortable"], ["compact", "compact"]]);
   add("results", "section");
   add("resultsHeading", "h2");
   add("resultStats", "p");

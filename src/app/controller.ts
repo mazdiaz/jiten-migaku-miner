@@ -880,7 +880,9 @@ class MinerControllerImpl implements MinerController {
     if (preferences !== null) {
       // Preferences written before word decisions lack query.decision; DEFAULT_QUERY fills it as "all".
       this.state.query = { ...DEFAULT_QUERY, ...preferences.query, page: preferences.page };
-      this.state.view = { ...preferences.view };
+      // Same additive fill for the view: records stored before the reading
+      // display controls shipped lack sentenceSize/density.
+      this.state.view = { ...DEFAULT_VIEW, ...preferences.view };
       this.state.page = preferences.page;
     }
     this.state.dataset = active;

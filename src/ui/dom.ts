@@ -26,6 +26,8 @@ export interface DomMap {
   readonly showDefinitions: HTMLInputElement;
   readonly sentenceFilter: HTMLSelectElement;
   readonly decisionFilter: HTMLSelectElement;
+  readonly sentenceSize: HTMLSelectElement;
+  readonly density: HTMLSelectElement;
   readonly minOccurrences: HTMLInputElement;
   readonly sortSelect: HTMLSelectElement;
   readonly pageSize: HTMLSelectElement;
@@ -111,6 +113,8 @@ export function getDomMap(): DomMap {
     showDefinitions: byId<HTMLInputElement>("showDefinitions"),
     sentenceFilter: byId<HTMLSelectElement>("sentenceFilter"),
     decisionFilter: byId<HTMLSelectElement>("decisionFilter"),
+    sentenceSize: byId<HTMLSelectElement>("sentenceSize"),
+    density: byId<HTMLSelectElement>("density"),
     minOccurrences: byId<HTMLInputElement>("minOccurrences"),
     sortSelect: byId<HTMLSelectElement>("sortSelect"),
     pageSize: byId<HTMLSelectElement>("pageSize"),

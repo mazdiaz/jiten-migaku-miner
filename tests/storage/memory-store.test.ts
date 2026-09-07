@@ -68,6 +68,8 @@ const view: ViewState = {
   pillHighlight: false,
   showHighlight: true,
   showDefinitions: false,
+  sentenceSize: "large",
+  density: "compact",
 };
 
 const decision = (normalizedWord: string, status: WordDecision["status"], updatedAt: string): WordDecision => ({

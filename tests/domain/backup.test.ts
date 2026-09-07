@@ -27,6 +27,8 @@ const view = {
   pillHighlight: false,
   showHighlight: true,
   showDefinitions: false,
+  sentenceSize: "large" as const,
+  density: "compact" as const,
 };
 
 function decision(word: string, status: WordDecision["status"], updatedAt = EXPORTED_AT): WordDecision {
@@ -381,6 +383,49 @@ describe("parseBackup canonical identities", () => {
       preferences: parsed.preferences,
     });
     expect(parseBackup(serialized)).toEqual(parsed);
+  });
+});
+
+describe("parseBackup display preferences", () => {
+  it("round-trips sentenceSize and density with the new fields", () => {
+    const json = serializeBackup({
+      exportedAt: EXPORTED_AT,
+      knownWords: null,
+      wordDecisions: [],
+      preferences: { query, view, page: 3 },
+    });
+    const backup = parseBackup(json);
+    expect(backup.preferences?.view.sentenceSize).toBe("large");
+    expect(backup.preferences?.view.density).toBe("compact");
+  });
+
+  it("fills the DEFAULT_VIEW display values when an old backup omits the new keys", () => {
+    const backup = parseBackup(mutatedBackup((record) => {
+      delete record.preferences.view.sentenceSize;
+      delete record.preferences.view.density;
+    }));
+    expect(backup.preferences?.view.sentenceSize).toBe("medium");
+    expect(backup.preferences?.view.density).toBe("comfortable");
+  });
+
+  it("rejects an out-of-set sentenceSize", () => {
+    expectBackupError(
+      "invalid-shape",
+      /preferences\.view\.sentenceSize must be "medium" or "large"/,
+      () => parseBackup(mutatedBackup((record) => {
+        record.preferences.view.sentenceSize = "huge";
+      })),
+    );
+  });
+
+  it("rejects an out-of-set density", () => {
+    expectBackupError(
+      "invalid-shape",
+      /preferences\.view\.density must be "comfortable" or "compact"/,
+      () => parseBackup(mutatedBackup((record) => {
+        record.preferences.view.density = "cozy";
+      })),
+    );
   });
 });
 

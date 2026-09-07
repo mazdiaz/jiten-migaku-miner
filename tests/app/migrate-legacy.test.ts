@@ -38,6 +38,8 @@ const view: ViewState = {
   pillHighlight: false,
   showHighlight: false,
   showDefinitions: true,
+  sentenceSize: "medium",
+  density: "comfortable",
 };
 
 const oldEntry: Entry = {

@@ -250,6 +250,15 @@ export function bindControls(
     recorder.add(input, "change", () => controller.updateView(patch(input.checked)));
   };
 
+  // Select variant of the view bindings: same updateView patch flow, value
+  // driven instead of checked.
+  const bindViewSelect = (
+    select: HTMLSelectElement,
+    patch: (value: string) => Partial<ViewState>,
+  ): void => {
+    recorder.add(select, "change", () => controller.updateView(patch(select.value)));
+  };
+
   const bindSelect = <T extends HTMLSelectElement>(
     select: T,
     patch: (value: string) => Partial<QueryState>,
@@ -318,6 +327,8 @@ export function bindControls(
   bindViewCheckbox(dom.pillHighlight, (checked) => ({ pillHighlight: checked }));
   bindViewCheckbox(dom.showHighlight, (checked) => ({ showHighlight: checked }));
   bindViewCheckbox(dom.showDefinitions, (checked) => ({ showDefinitions: checked }));
+  bindViewSelect(dom.sentenceSize, (value) => ({ sentenceSize: value as ViewState["sentenceSize"] }));
+  bindViewSelect(dom.density, (value) => ({ density: value as ViewState["density"] }));
 
   bindPagerButton(dom.bottomPrev, -1);
   bindPagerButton(dom.stickyPrev, -1);

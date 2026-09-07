@@ -47,7 +47,7 @@ function makeState(overrides: Partial<AppState> = {}): AppState {
       page: 1,
       decision: "all",
     },
-    view: { showFurigana: false, pillHighlight: false, showHighlight: false, showDefinitions: true },
+    view: { showFurigana: false, pillHighlight: false, showHighlight: false, showDefinitions: true, sentenceSize: "medium", density: "comfortable" },
     page: 1,
     result: null,
     status: "empty",

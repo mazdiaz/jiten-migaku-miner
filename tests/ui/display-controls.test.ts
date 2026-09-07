@@ -3,9 +3,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { bindControls } from "../../src/ui/controls";
 import { getDomMap } from "../../src/ui/dom";
 import type { DomMap } from "../../src/ui/dom";
-import type { AppState, FileSource, MinerController } from "../../src/app/state";
-import { createInitialAppState } from "../../src/app/state";
-import type { QueryState } from "../../src/domain/types";
+import { createRenderer } from "../../src/ui/renderer";
+import {
+  createInitialAppState,
+  DEFAULT_VIEW,
+  type AppState,
+  type FileSource,
+  type MinerController,
+} from "../../src/app/state";
+import type { QueryState, ViewState } from "../../src/domain/types";
 
 type Listener = (state: Readonly<AppState>) => void;
 
@@ -68,11 +74,11 @@ function seedDom(): DomMap {
   withOptions("sortSelect", [["occ-desc", "occ-desc"], ["occ-asc", "occ-asc"], ["original", "original"]]);
   withOptions("pageSize", [["25", "25"], ["50", "50"], ["100", "100"], ["all", "all"]]);
   withOptions("decisionFilter", [["all", "All decisions"]]);
+  withOptions("sentenceSize", [["medium", "Medium"], ["large", "Large"]]);
+  withOptions("density", [["comfortable", "Comfortable"], ["compact", "Compact"]]);
 
-  withOptions("sentenceSize", [["medium", "medium"], ["large", "large"]]);
-  withOptions("density", [["comfortable", "comfortable"], ["compact", "compact"]]);
   add("results", "section");
-  add("resultsHeading", "h2").setAttribute("tabindex", "-1");
+  add("resultsHeading", "h2");
   add("resultStats", "p");
   add("decisionSummary", "p");
   add("resultsList", "div");
@@ -94,17 +100,14 @@ function seedDom(): DomMap {
   add("queueStats", "p");
   add("exitQueue", "button");
   add("clearQueue", "button");
-  const stickyToolbar = add("stickyToolbar", "div");
-  const stickyTitle = add("stickyTitle", "div");
-  const stickyPrev = add("stickyPrev", "button");
-  const stickyNext = add("stickyNext", "button");
-  const stickyPage = add("stickyPage", "span");
+  add("stickyToolbar", "div");
+  add("stickyTitle", "div");
+  add("stickyPrev", "button");
+  add("stickyNext", "button");
+  add("stickyPage", "span");
   add("bottomPrev", "button");
   add("bottomNext", "button");
   add("bottomPage", "span");
-
-  // Mirror the real markup: pager controls live inside the sticky toolbar.
-  stickyToolbar.append(stickyTitle, stickyPrev, stickyNext, stickyPage);
 
   const coveragePanel = add("coveragePanel", "section");
   const coverageToggle = add("coverageToggle", "button");
@@ -128,22 +131,20 @@ function seedDom(): DomMap {
 }
 
 interface FakeController extends MinerController {
-  calls: { changePage: number[] };
+  calls: { updateView: Partial<ViewState>[]; updateQuery: Partial<QueryState>[] };
+  publishState(patch: Partial<AppState>): void;
 }
 
-function createFakeController(): FakeController {
-  const state: AppState = {
-    ...createInitialAppState("memory"),
-    dataset: {
-      id: "d1", name: "book.csv", sourceType: "file", sourceName: "book.csv",
-      headers: ["Word"], entryCount: 60, createdAt: "x", updatedAt: "x", schemaVersion: 1,
-    },
-    status: "ready",
-  };
+function createFakeController(initial?: Partial<AppState>): FakeController {
+  let state: AppState = { ...createInitialAppState("memory"), ...initial };
   const listeners = new Set<Listener>();
-  const calls = { changePage: [] as number[] };
+  const calls = { updateView: [] as Partial<ViewState>[], updateQuery: [] as Partial<QueryState>[] };
   const controller: FakeController = {
     calls,
+    publishState(patch) {
+      state = { ...state, ...patch };
+      for (const listener of listeners) listener(state);
+    },
     subscribe(listener: Listener) {
       listeners.add(listener);
       listener(state);
@@ -151,12 +152,14 @@ function createFakeController(): FakeController {
     },
     importJiten: vi.fn(async (_source: FileSource) => {}),
     importKnown: vi.fn(async (_source: FileSource) => {}),
-    updateQuery: vi.fn(),
-    updateView: vi.fn(),
-    updateViewport: vi.fn(),
-    changePage(delta: number) {
-      calls.changePage.push(delta);
+    updateQuery(patch: Partial<QueryState>) {
+      calls.updateQuery.push(patch);
     },
+    updateView(patch: Partial<ViewState>) {
+      calls.updateView.push(patch);
+    },
+    updateViewport: vi.fn(),
+    changePage: vi.fn(),
     setWordDecision: vi.fn(async () => {}),
     undoLastDecision: vi.fn(async () => {}),
     startReview: vi.fn(async () => {}),
@@ -178,65 +181,145 @@ function createFakeController(): FakeController {
 interface Harness {
   dom: DomMap;
   controller: FakeController;
+  render(state: Partial<AppState>): void;
   dispose(): void;
 }
 
-function setup(): Harness {
+function setup(initial?: Partial<AppState>): Harness {
   const dom = seedDom();
-  const controller = createFakeController();
+  const controller = createFakeController(initial);
+  const renderer = createRenderer(dom);
+  const unsubscribe = controller.subscribe((state) => renderer.render(state));
   const bindings = bindControls(dom, controller);
-  return {
+  const harness: Harness = {
     dom,
     controller,
+    render(partial) {
+      renderer.render({ ...createInitialAppState("memory"), ...partial });
+    },
     dispose() {
+      unsubscribe();
       bindings.dispose();
     },
   };
+  return harness;
 }
 
 beforeEach(() => {
   document.body.innerHTML = "";
+  document.body.className = "";
 });
 
-describe("list shortcut scoping and pagination focus", () => {
-  it("letter and arrow shortcuts bail when focus is inside the sticky toolbar", () => {
+describe("reading display preference defaults", () => {
+  it("defaults sentenceSize to medium and density to comfortable", () => {
+    expect(DEFAULT_VIEW.sentenceSize).toBe("medium");
+    expect(DEFAULT_VIEW.density).toBe("comfortable");
+  });
+
+  it("seeds initial app state with the default display preferences", () => {
+    expect(createInitialAppState("memory").view).toEqual(DEFAULT_VIEW);
+  });
+});
+
+describe("reading display body classes and select sync", () => {
+  it("mounts no display body classes at the default preferences", () => {
     const harness = setup();
     try {
-      const keydown = (key: string, target: HTMLElement): void => {
-        target.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
-      };
-      keydown("n", harness.dom.stickyNext);
-      keydown("ArrowRight", harness.dom.stickyNext);
-      keydown("Home", harness.dom.stickyNext);
-      expect(harness.controller.calls.changePage).toEqual([]);
-
-      keydown("n", document.body);
-      expect(harness.controller.calls.changePage).toEqual([1]);
+      expect(document.body.classList.contains("sent-size-lg")).toBe(false);
+      expect(document.body.classList.contains("density-compact")).toBe(false);
+      expect(harness.dom.sentenceSize.value).toBe("medium");
+      expect(harness.dom.density.value).toBe("comfortable");
     } finally {
       harness.dispose();
     }
   });
 
-  it("keyboard pagination focuses the results heading", () => {
+  it("toggles sent-size-lg only when sentenceSize is large", () => {
     const harness = setup();
     try {
-      document.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
-      expect(harness.controller.calls.changePage).toEqual([1]);
-      expect(document.activeElement).toBe(harness.dom.resultsHeading);
+      harness.controller.publishState({ view: { ...DEFAULT_VIEW, sentenceSize: "large" } });
+      expect(document.body.classList.contains("sent-size-lg")).toBe(true);
+      expect(document.body.classList.contains("density-compact")).toBe(false);
+      expect(harness.dom.sentenceSize.value).toBe("large");
+
+      harness.controller.publishState({ view: { ...DEFAULT_VIEW } });
+      expect(document.body.classList.contains("sent-size-lg")).toBe(false);
+      expect(harness.dom.sentenceSize.value).toBe("medium");
     } finally {
       harness.dispose();
     }
   });
 
-  it("pager button clicks focus the results heading", () => {
+  it("toggles density-compact only when density is compact", () => {
     const harness = setup();
     try {
-      harness.dom.bottomNext.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      harness.dom.stickyNext.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      expect(harness.controller.calls.changePage).toEqual([1, 1]);
-      expect(document.activeElement).toBe(harness.dom.resultsHeading);
+      harness.controller.publishState({ view: { ...DEFAULT_VIEW, density: "compact" } });
+      expect(document.body.classList.contains("density-compact")).toBe(true);
+      expect(document.body.classList.contains("sent-size-lg")).toBe(false);
+      expect(harness.dom.density.value).toBe("compact");
+
+      harness.controller.publishState({ view: { ...DEFAULT_VIEW } });
+      expect(document.body.classList.contains("density-compact")).toBe(false);
+      expect(harness.dom.density.value).toBe("comfortable");
     } finally {
       harness.dispose();
     }
+  });
+
+  it("supports both display preferences at once", () => {
+    const harness = setup();
+    try {
+      harness.controller.publishState({
+        view: { ...DEFAULT_VIEW, sentenceSize: "large", density: "compact" },
+      });
+      expect(document.body.classList.contains("sent-size-lg")).toBe(true);
+      expect(document.body.classList.contains("density-compact")).toBe(true);
+    } finally {
+      harness.dispose();
+    }
+  });
+});
+
+describe("reading display controls binding", () => {
+  it("patches updateView with sentenceSize when the select changes", () => {
+    const harness = setup();
+    try {
+      harness.dom.sentenceSize.value = "large";
+      harness.dom.sentenceSize.dispatchEvent(new Event("change"));
+      expect(harness.controller.calls.updateView).toEqual([{ sentenceSize: "large" }]);
+
+      harness.dom.sentenceSize.value = "medium";
+      harness.dom.sentenceSize.dispatchEvent(new Event("change"));
+      expect(harness.controller.calls.updateView).toEqual([{ sentenceSize: "large" }, { sentenceSize: "medium" }]);
+    } finally {
+      harness.dispose();
+    }
+  });
+
+  it("patches updateView with density when the select changes", () => {
+    const harness = setup();
+    try {
+      harness.dom.density.value = "compact";
+      harness.dom.density.dispatchEvent(new Event("change"));
+      expect(harness.controller.calls.updateView).toEqual([{ density: "compact" }]);
+    } finally {
+      harness.dispose();
+    }
+  });
+});
+
+describe("reading display controls markup", () => {
+  it("ships both selects in the Display group with default-selected options", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    const html = readFileSync(resolve(process.cwd(), "index.html"), "utf8");
+    const displayStart = html.indexOf('<legend>Display</legend>');
+    const displayEnd = html.indexOf("</fieldset>", displayStart);
+    expect(displayStart).toBeGreaterThan(-1);
+    const displayHtml = html.slice(displayStart, displayEnd);
+    expect(displayHtml).toContain('id="sentenceSize"');
+    expect(displayHtml).toContain('value="medium" selected');
+    expect(displayHtml).toContain('id="density"');
+    expect(displayHtml).toContain('value="comfortable" selected');
   });
 });

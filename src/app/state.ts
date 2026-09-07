@@ -105,6 +105,10 @@ export const DEFAULT_VIEW: ViewState = {
   pillHighlight: false,
   showHighlight: false,
   showDefinitions: true,
+  // Reading display preferences: the defaults must leave the current look
+  // byte-unchanged (no body class, no CSS override).
+  sentenceSize: "medium",
+  density: "comfortable",
 };
 
 export const EMPTY_REVIEW: ReviewState = {

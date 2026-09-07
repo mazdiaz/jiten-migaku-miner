@@ -143,6 +143,34 @@
   overflow-wrap: anywhere;
 }
 
+/* Reading display preferences (body classes applied only when a preference
+   moves away from its default, so defaults render exactly as before). */
+
+/* Large sentence size: results-list and review-overlay parity. */
+.sent-size-lg .sentence {
+  font-size: clamp(1.45rem, 3vw, 1.9rem);
+  line-height: 1.9;
+}
+
+.sent-size-lg .review-entry .sentence {
+  font-size: clamp(1.45rem, 3vw, 1.9rem);
+  line-height: 1.9;
+}
+
+/* Compact density: tighter entry padding, margins, and action gaps. */
+.density-compact .mining-entry {
+  padding: 12px 16px 14px;
+}
+
+.density-compact .sentence { margin-top: 10px; }
+
+.density-compact .entry-definitions { margin-top: 5px; }
+
+.density-compact .entry-actions {
+  gap: 6px;
+  margin-top: 8px;
+}
+
 .entry-number {
   flex: 0 0 auto;
   min-width: 3.2em;

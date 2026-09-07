@@ -4,6 +4,8 @@ import type { QueryState, ViewState, WordDecision, WordDecisionFilter, WordDecis
 export const BACKUP_FORMAT = "jiten-migaku-miner-backup" as const;
 export const BACKUP_VERSION = 1 as const;
 export const DECISION_STATUSES: readonly WordDecisionStatus[] = ["known", "mined", "skip", "later"];
+export const SENTENCE_SIZES: readonly ViewState["sentenceSize"][] = ["medium", "large"];
+export const DENSITIES: readonly ViewState["density"][] = ["comfortable", "compact"];
 
 function isDecisionFilter(value: unknown): value is WordDecisionFilter {
   return value === "all" || value === "unreviewed" || DECISION_STATUSES.includes(value as WordDecisionStatus);
@@ -159,13 +161,27 @@ function validateQuery(value: unknown): QueryState {
   };
 }
 
+// Display preferences are additive-optional: backups written before the
+// reading display controls shipped omit sentenceSize/density, and those
+// missing keys restore to the DEFAULT_VIEW values (medium/comfortable —
+// kept in sync with DEFAULT_VIEW in src/app/state.ts by round-trip tests).
 function validateView(value: unknown): ViewState {
   if (!isRecord(value)) fail("invalid-shape", "preferences.view must be an object");
+  const sentenceSize = value.sentenceSize;
+  if (sentenceSize !== undefined && !SENTENCE_SIZES.includes(sentenceSize as ViewState["sentenceSize"])) {
+    fail("invalid-shape", 'preferences.view.sentenceSize must be "medium" or "large"');
+  }
+  const density = value.density;
+  if (density !== undefined && !DENSITIES.includes(density as ViewState["density"])) {
+    fail("invalid-shape", 'preferences.view.density must be "comfortable" or "compact"');
+  }
   return {
     showFurigana: boolean(value.showFurigana, "preferences.view.showFurigana"),
     pillHighlight: boolean(value.pillHighlight, "preferences.view.pillHighlight"),
     showHighlight: boolean(value.showHighlight, "preferences.view.showHighlight"),
     showDefinitions: boolean(value.showDefinitions, "preferences.view.showDefinitions"),
+    sentenceSize: (sentenceSize as ViewState["sentenceSize"] | undefined) ?? "medium",
+    density: (density as ViewState["density"] | undefined) ?? "comfortable",
   };
 }
 

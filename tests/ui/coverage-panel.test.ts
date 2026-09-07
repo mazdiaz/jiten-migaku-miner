@@ -79,6 +79,8 @@ function seedDom(): DomMap {
     ["later", "Later"],
   ]);
 
+  withOptions("sentenceSize", [["medium", "medium"], ["large", "large"]]);
+  withOptions("density", [["comfortable", "comfortable"], ["compact", "compact"]]);
   add("results", "section");
   add("resultsHeading", "h2");
   add("resultStats", "p");
