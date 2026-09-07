@@ -143,6 +143,10 @@ class FakeWorkerClient implements WorkerClient {
     return this.queryResult;
   }
 
+  async coverage(): Promise<never> {
+    throw new Error("coverage is not used in these tests");
+  }
+
   dispose(): void {}
 }
 

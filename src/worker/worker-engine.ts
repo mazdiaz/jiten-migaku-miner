@@ -1,10 +1,12 @@
 import { parseJitenCsv } from "../domain/import";
-import { isKanaOnly, normalizeText, parseKnownWords, sentencePlain } from "../domain/text";
+import { buildEffectiveKnownIndex, computeCoverage } from "../domain/coverage";
+import { canonicalWord, isKanaOnly, normalizeText, parseKnownWords, sentencePlain } from "../domain/text";
 import { paginateEntries } from "../domain/query";
 import type { Entry, EntryWithKnown, QueryState, WordDecisionStatus } from "../domain/types";
 import {
   WORKER_IMPORT_CHUNK_SIZE,
   WORKER_PROTOCOL_VERSION,
+  type CoverageRequest,
   type QueryRequest,
   type SendResponse,
   type WorkerResponse,
@@ -409,6 +411,47 @@ export class WorkerEngine {
     }
   }
 
+  async coverage(request: CoverageRequest, send: SendResponse): Promise<void> {
+    this.ensureUsable();
+    this.activeOperations.add(request.requestId);
+    try {
+      if (this.isCancelled(request.requestId)) return;
+      const generation = this.datasetGeneration;
+      const dataset = this.datasets.get(request.datasetId);
+      if (dataset === undefined) {
+        throw new WorkerEngineError("dataset-not-found", `Dataset not found: ${request.datasetId}`);
+      }
+      if (!dataset.complete) {
+        throw new WorkerEngineError("dataset-not-ready", `Dataset is not complete: ${request.datasetId}`);
+      }
+      this.refreshDatasetRecency(request.datasetId, dataset);
+
+      const knownWords = new Set(request.knownWords);
+      const decisions = new Map(request.decisions);
+
+      // computeCoverage runs synchronously over the complete dataset, so the
+      // chunkFinished yields bracket the O(n log n) pass: the worker stays
+      // responsive, cancellation is honoured before and after the heavy work,
+      // and a swapped dataset generation never receives a published result.
+      if (await this.chunkFinished(request.requestId)) return;
+      const stats = computeCoverage(dataset.entries, knownWords, decisions, request.targets);
+      if (await this.chunkFinished(request.requestId)) return;
+      if (this.isCancelled(request.requestId)) return;
+      if (generation !== this.datasetGeneration) return;
+
+      send({
+        protocolVersion: WORKER_PROTOCOL_VERSION,
+        type: "coverage-result",
+        requestId: request.requestId,
+        datasetId: request.datasetId,
+        result: stats,
+      });
+    } finally {
+      this.activeOperations.delete(request.requestId);
+      this.cancelledRequests.delete(request.requestId);
+    }
+  }
+
   protected async scanDataset(
     request: QueryRequest,
     dataset: DatasetState,
@@ -425,11 +468,14 @@ export class WorkerEngine {
     const matching = new Set<number>();
     // Canonical match key: lowercase(normalizeText(word)). Cache fields already
     // store entries in this form, so lookups below compare canonical to canonical.
-    const canonicalWord = (word: string): string => normalizeText(word).toLocaleLowerCase();
+    // Raw per-index metadata still needs the canonical sets, but effective
+    // knownness itself is owned by the shared domain helper (also used by
+    // coverage) so the two pipelines cannot drift apart.
     const knownLower = new Set<string>();
     for (const word of knownWords) knownLower.add(canonicalWord(word));
     const decisionsLower = new Map<string, WordDecisionStatus>();
     for (const [word, status] of decisions) decisionsLower.set(canonicalWord(word), status);
+    const isEffectivelyKnown = buildEffectiveKnownIndex(knownWords, decisions);
     const includeLower = request.includeNormalizedWords === undefined
       ? null
       : new Set(request.includeNormalizedWords.map((word) => canonicalWord(word)));
@@ -446,8 +492,7 @@ export class WorkerEngine {
 
       const knownByMigaku = knownLower.has(fields.normalizedWord);
       const decision = decisionsLower.get(fields.normalizedWord) ?? "unreviewed";
-      const knownByDecision = decision === "known";
-      const known = knownByMigaku || knownByDecision;
+      const known = isEffectivelyKnown(fields.normalizedWord);
       knownByMigakuByIndex.set(index, knownByMigaku);
       decisionByIndex.set(index, decision);
       if (known) knownCount += 1;

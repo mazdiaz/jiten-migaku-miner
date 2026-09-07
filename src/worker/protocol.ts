@@ -1,4 +1,5 @@
 import type {
+  CoverageStats,
   Entry,
   QueryResult,
   QueryState,
@@ -36,10 +37,20 @@ export type WorkerRequest =
       includeNormalizedWords?: string[];
       window?: QueryWindow;
     }
+  | {
+      protocolVersion: 1;
+      type: "coverage";
+      requestId: string;
+      datasetId: string;
+      knownWords: string[];
+      decisions: Array<[string, WordDecisionStatus]>;
+      targets?: number[];
+    }
   | { protocolVersion: 1; type: "cancel"; requestId: string }
   | { protocolVersion: 1; type: "dispose"; requestId: string };
 
 export type QueryRequest = Extract<WorkerRequest, { type: "query" }>;
+export type CoverageRequest = Extract<WorkerRequest, { type: "coverage" }>;
 
 export type ImportChunkResponse =
   | {
@@ -99,6 +110,13 @@ export type WorkerResponse =
       requestId: string;
       datasetId: string;
       result: QueryResult;
+    }
+  | {
+      protocolVersion: 1;
+      type: "coverage-result";
+      requestId: string;
+      datasetId: string;
+      result: CoverageStats;
     }
   | {
       protocolVersion: 1;
@@ -298,6 +316,18 @@ function validateIncludeNormalizedWords(value: unknown): string[] {
   return [...value];
 }
 
+function validateTargets(value: unknown): number[] {
+  if (!Array.isArray(value)) throw invalidMessage("targets must be an array");
+
+  return value.map((target, index) => {
+    if (typeof target !== "number" || !Number.isFinite(target)) {
+      throw invalidMessage(`targets[${index}] must be a finite number`);
+    }
+
+    return target;
+  });
+}
+
 export function parseWorkerRequest(value: unknown): WorkerRequest {
   if (!isRecord(value)) throw invalidMessage("worker request must be an object");
 
@@ -316,6 +346,7 @@ export function parseWorkerRequest(value: unknown): WorkerRequest {
     type !== "load-chunk" &&
     type !== "load-complete" &&
     type !== "query" &&
+    type !== "coverage" &&
     type !== "cancel" &&
     type !== "dispose"
   ) {
@@ -370,6 +401,19 @@ export function parseWorkerRequest(value: unknown): WorkerRequest {
       request.includeNormalizedWords = validateIncludeNormalizedWords(value.includeNormalizedWords);
     }
     if (value.window !== undefined) request.window = validateWindow(value.window);
+    return request;
+  }
+
+  if (type === "coverage") {
+    const request: CoverageRequest = {
+      protocolVersion: WORKER_PROTOCOL_VERSION,
+      type,
+      requestId,
+      datasetId: requiredString(value, "datasetId"),
+      knownWords: validateKnownWords(value.knownWords),
+      decisions: validateDecisions(value.decisions),
+    };
+    if (value.targets !== undefined) request.targets = validateTargets(value.targets);
     return request;
   }
 

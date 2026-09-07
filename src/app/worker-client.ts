@@ -1,4 +1,5 @@
 import type {
+  CoverageStats,
   Entry,
   QueryResult,
   QueryState,
@@ -7,6 +8,7 @@ import type {
 } from "../domain/types";
 import {
   WORKER_PROTOCOL_VERSION,
+  type CoverageRequest,
   type ImportChunkResponse,
   type ImportCompleteResponse,
   type QueryRequest,
@@ -44,6 +46,13 @@ export interface WorkerQueryInput {
   queryChannel?: WorkerQueryChannel;
 }
 
+export interface WorkerCoverageInput {
+  datasetId: string;
+  knownWords: Iterable<string>;
+  decisions?: Array<[string, WordDecisionStatus]>;
+  targets?: number[];
+}
+
 export interface WorkerClient {
   importJiten(
     name: string,
@@ -57,6 +66,7 @@ export interface WorkerClient {
   ): Promise<KnownImportComplete>;
   loadDataset(datasetId: string, chunks: AsyncIterable<readonly Entry[]>): Promise<void>;
   query(input: WorkerQueryInput): Promise<QueryResult>;
+  coverage(input: WorkerCoverageInput): Promise<CoverageStats>;
   dispose(): void;
 }
 
@@ -70,8 +80,8 @@ export class WorkerClientError extends Error {
   }
 }
 
-type OperationKind = "import-jiten" | "import-known" | "load" | "query";
-type PendingValue = JitenImportComplete | KnownImportComplete | QueryResult | void;
+type OperationKind = "import-jiten" | "import-known" | "load" | "query" | "coverage";
+type PendingValue = JitenImportComplete | KnownImportComplete | QueryResult | CoverageStats | void;
 
 interface PendingOperation {
   kind: OperationKind;
@@ -91,7 +101,7 @@ function isWorkerResponse(value: unknown): value is WorkerResponse {
   if (!isRecord(value)) return false;
   if (value.protocolVersion !== WORKER_PROTOCOL_VERSION || typeof value.requestId !== "string") return false;
 
-  return value.type === "import-chunk" || value.type === "import-complete" || value.type === "load-complete" || value.type === "query-result" || value.type === "error";
+  return value.type === "import-chunk" || value.type === "import-complete" || value.type === "load-complete" || value.type === "query-result" || value.type === "coverage-result" || value.type === "error";
 }
 
 function messageFromError(error: unknown): string {
@@ -201,6 +211,13 @@ class BrowserWorkerClient implements WorkerClient {
       ) return;
       this.pending.delete(response.requestId);
       pending.resolve(response);
+      return;
+    }
+
+    if (response.type === "coverage-result") {
+      if (pending.kind !== "coverage") return;
+      this.pending.delete(response.requestId);
+      pending.resolve(response.result);
       return;
     }
 
@@ -408,6 +425,29 @@ class BrowserWorkerClient implements WorkerClient {
     };
     if (input.includeNormalizedWords !== undefined) request.includeNormalizedWords = [...input.includeNormalizedWords];
     if (input.window !== undefined) request.window = input.window;
+
+    try {
+      this.post(request);
+    } catch (error) {
+      this.rejectPending(requestId, error);
+    }
+    return result;
+  }
+
+  async coverage(input: WorkerCoverageInput): Promise<CoverageStats> {
+    // Coverage requests are independent: unlike channelled queries they never
+    // supersede each other, so each one registers its own pending operation.
+    const requestId = this.requestId("coverage");
+    const result = this.register<CoverageStats>(requestId, "coverage");
+    const request: CoverageRequest = {
+      protocolVersion: WORKER_PROTOCOL_VERSION,
+      type: "coverage",
+      requestId,
+      datasetId: input.datasetId,
+      knownWords: [...input.knownWords],
+      decisions: input.decisions ?? [],
+    };
+    if (input.targets !== undefined) request.targets = [...input.targets];
 
     try {
       this.post(request);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Entry, QueryResult, QueryState } from "../../src/domain/types";
+import type { CoverageStats, Entry, QueryResult, QueryState } from "../../src/domain/types";
 import {
   createWorkerClient,
   type WorkerClientEvent,
@@ -83,6 +83,31 @@ function queryResponse(requestId: string, page: number): WorkerResponse {
     requestId,
     datasetId: "dataset-1",
     result: queryResult(page),
+  };
+}
+
+function coverageStats(): CoverageStats {
+  return {
+    totalUniqueWords: 3,
+    knownUniqueWords: 1,
+    unknownUniqueWords: 2,
+    totalTrackedOccurrences: 100,
+    knownTrackedOccurrences: 50,
+    unknownTrackedOccurrences: 50,
+    coveragePercent: 50,
+    targets: [
+      { targetPercent: 98, reached: false, additionalWords: 2, additionalTrackedOccurrences: 48 },
+    ],
+  };
+}
+
+function coverageResponse(requestId: string, result: CoverageStats): WorkerResponse {
+  return {
+    protocolVersion: 1,
+    type: "coverage-result",
+    requestId,
+    datasetId: "dataset-1",
+    result,
   };
 }
 
@@ -549,5 +574,95 @@ describe("worker client", () => {
       yield [];
     })());
     expect(workers).toHaveLength(2);
+  });
+
+  it("posts well-formed coverage requests and resolves on coverage results", async () => {
+    const worker = new FakeWorker();
+    const client = createWorkerClient(() => worker);
+    const stats = coverageStats();
+
+    const pending = client.coverage({
+      datasetId: "dataset-1",
+      knownWords: ["猫", "犬"],
+      decisions: [["鳥", "mined"]],
+      targets: [98, 99],
+    });
+    const request = worker.messages.find((message) => message.type === "coverage");
+    expect(request).toMatchObject({
+      protocolVersion: 1,
+      type: "coverage",
+      datasetId: "dataset-1",
+      knownWords: ["猫", "犬"],
+      decisions: [["鳥", "mined"]],
+      targets: [98, 99],
+    });
+    if (!request || request.type !== "coverage") throw new Error("missing coverage request");
+
+    worker.emit(coverageResponse(request.requestId, stats));
+    await expect(pending).resolves.toEqual(stats);
+  });
+
+  it("omits the targets field when coverage input leaves targets unset", async () => {
+    const worker = new FakeWorker();
+    const client = createWorkerClient(() => worker);
+
+    const pending = client.coverage({ datasetId: "dataset-1", knownWords: [] });
+    const request = worker.messages.find((message) => message.type === "coverage");
+    expect(request).toMatchObject({ type: "coverage", datasetId: "dataset-1", knownWords: [], decisions: [] });
+    if (!request || request.type !== "coverage") throw new Error("missing coverage request");
+    expect("targets" in request).toBe(false);
+
+    worker.emit(coverageResponse(request.requestId, coverageStats()));
+    await expect(pending).resolves.toMatchObject({ coveragePercent: 50 });
+  });
+
+  it("propagates coverage errors as typed client errors", async () => {
+    const worker = new FakeWorker();
+    const client = createWorkerClient(() => worker);
+
+    const pending = client.coverage({ datasetId: "missing", knownWords: [] });
+    const request = worker.messages.find((message) => message.type === "coverage");
+    if (!request) throw new Error("missing coverage request");
+
+    worker.emit({
+      protocolVersion: 1,
+      type: "error",
+      requestId: request.requestId,
+      code: "dataset-not-found",
+      message: "Dataset not found: missing",
+    });
+
+    await expect(pending).rejects.toMatchObject({
+      name: "WorkerClientError",
+      code: "dataset-not-found",
+    });
+  });
+
+  it("keeps coverage requests independent without superseding pending queries or each other", async () => {
+    const worker = new FakeWorker();
+    const client = createWorkerClient(() => worker);
+
+    const query = client.query({ datasetId: "dataset-1", knownWords: [], query: queryState() });
+    const queryRequestMessage = worker.messages.find((message) => message.type === "query");
+    const first = client.coverage({ datasetId: "dataset-1", knownWords: ["猫"] });
+    const second = client.coverage({ datasetId: "dataset-1", knownWords: ["猫", "犬"] });
+    const coverageRequests = worker.messages.filter((message) => message.type === "coverage");
+
+    expect(coverageRequests).toHaveLength(2);
+    for (const message of worker.messages) {
+      if (message.type === "cancel" && queryRequestMessage) {
+        expect(message.requestId).not.toBe(queryRequestMessage.requestId);
+      }
+    }
+    if (!queryRequestMessage || coverageRequests.length !== 2) throw new Error("missing requests");
+
+    worker.emit(queryResponse(queryRequestMessage.requestId, 1));
+    worker.emit(coverageResponse(coverageRequests[0]!.requestId, coverageStats()));
+    const otherStats = { ...coverageStats(), coveragePercent: 75 };
+    worker.emit(coverageResponse(coverageRequests[1]!.requestId, otherStats));
+
+    await expect(query).resolves.toMatchObject({ page: 1 });
+    await expect(first).resolves.toMatchObject({ coveragePercent: 50 });
+    await expect(second).resolves.toMatchObject({ coveragePercent: 75 });
   });
 });

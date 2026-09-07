@@ -182,6 +182,12 @@ class FakeWorkerClient implements WorkerClient {
     return this.queryResult;
   }
 
+  // Coverage wiring lands with the controller lifecycle task; the interface
+  // stub exists only to keep this fake assignable.
+  async coverage(): Promise<never> {
+    throw new Error("coverage is not wired into this fake yet");
+  }
+
   dispose(): void {
     this.events.push("dispose");
   }

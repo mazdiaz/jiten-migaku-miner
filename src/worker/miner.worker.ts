@@ -53,6 +53,9 @@ export async function dispatchWorkerRequest(
       case "query":
         await engine.query(request, send);
         return;
+      case "coverage":
+        await engine.coverage(request, send);
+        return;
       case "cancel":
         engine.cancel(request.requestId);
         return;

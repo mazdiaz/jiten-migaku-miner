@@ -105,6 +105,7 @@ class FakeWorkerClient implements WorkerClient {
 
   async loadDataset(_datasetId: string, _chunks: AsyncIterable<readonly Entry[]>): Promise<void> {}
   async query(_request: QueryRequest): Promise<never> { throw new Error("not used"); }
+  async coverage(): Promise<never> { throw new Error("not used"); }
   dispose(): void {}
 }
 
