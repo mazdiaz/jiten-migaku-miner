@@ -23,6 +23,15 @@ test.describe("large dataset performance", () => {
       await expect(page.locator("#resultsList .mining-entry")).toHaveCount(50);
       const firstQueryDuration = Date.now() - importStarted;
 
+      // Coverage request (fired by the controller after the dataset load)
+      // completes inside the worker without mounting extra result rows: the
+      // summary populates while the mounted entry count stays at the page
+      // size. Generous timeout only — no wall-clock assertion on coverage.
+      await expect
+        .poll(async () => page.locator("#coverageSummary").textContent(), { timeout: 120_000 })
+        .toMatch(/^\d+\.\d{2}%$/);
+      await expect(page.locator("#resultsList .mining-entry")).toHaveCount(50);
+
       await page.locator("#advancedToggle").click();
       await page.locator("#pageSize").selectOption("all");
       await expect(page.locator("#resultStats")).toContainText("99,800 currently shown", { timeout: 60_000 });
