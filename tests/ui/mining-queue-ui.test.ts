@@ -1,11 +1,11 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { bindControls } from "../../src/ui/controls";
-import { getDomMap, type DomMap } from "../../src/ui/dom";
-import { createRenderer, renderEntryNode } from "../../src/ui/renderer";
 import type { AppState, FileSource, MinerController } from "../../src/app/state";
 import { createInitialAppState } from "../../src/app/state";
 import type { EntryWithKnown, QueryState } from "../../src/domain/types";
+import { bindControls } from "../../src/ui/controls";
+import { type DomMap, getDomMap } from "../../src/ui/dom";
+import { createRenderer, renderEntryNode } from "../../src/ui/renderer";
 
 type Listener = (state: Readonly<AppState>) => void;
 
@@ -48,7 +48,14 @@ function seedDom(): DomMap {
   const advancedPanel = add("advancedPanel", "div");
   advancedPanel.hidden = true;
   add("stickySearch", "input").setAttribute("type", "search");
-  for (const id of ["hideKnown", "hideKanaOnly", "showFurigana", "pillHighlight", "showHighlight", "showDefinitions"]) {
+  for (const id of [
+    "hideKnown",
+    "hideKanaOnly",
+    "showFurigana",
+    "pillHighlight",
+    "showHighlight",
+    "showDefinitions",
+  ]) {
     add(id, "input").setAttribute("type", "checkbox");
   }
   add("minOccurrences", "input").setAttribute("type", "number");
@@ -64,13 +71,35 @@ function seedDom(): DomMap {
     return select;
   };
 
-  withOptions("sentenceFilter", [["any", "any"], ["has", "has"], ["none", "none"]]);
-  withOptions("sortSelect", [["occ-desc", "occ-desc"], ["occ-asc", "occ-asc"], ["original", "original"]]);
-  withOptions("pageSize", [["25", "25"], ["50", "50"], ["100", "100"], ["all", "all"]]);
-  withOptions("decisionFilter", [["all", "All decisions"], ["unreviewed", "Unreviewed"]]);
+  withOptions("sentenceFilter", [
+    ["any", "any"],
+    ["has", "has"],
+    ["none", "none"],
+  ]);
+  withOptions("sortSelect", [
+    ["occ-desc", "occ-desc"],
+    ["occ-asc", "occ-asc"],
+    ["original", "original"],
+  ]);
+  withOptions("pageSize", [
+    ["25", "25"],
+    ["50", "50"],
+    ["100", "100"],
+    ["all", "all"],
+  ]);
+  withOptions("decisionFilter", [
+    ["all", "All decisions"],
+    ["unreviewed", "Unreviewed"],
+  ]);
 
-  withOptions("sentenceSize", [["medium", "medium"], ["large", "large"]]);
-  withOptions("density", [["comfortable", "comfortable"], ["compact", "compact"]]);
+  withOptions("sentenceSize", [
+    ["medium", "medium"],
+    ["large", "large"],
+  ]);
+  withOptions("density", [
+    ["comfortable", "comfortable"],
+    ["compact", "compact"],
+  ]);
   add("results", "section");
   add("resultsHeading", "h2");
   add("resultStats", "p");
@@ -127,7 +156,12 @@ function seedDom(): DomMap {
   const coverageBody = add("coverageBody", "div");
   coverageBody.hidden = true;
   coveragePanel.appendChild(coverageBody);
-  for (const id of ["coverageUniqueWords", "coverageKnownOccurrences", "coveragePercent", "coverageTargets"]) {
+  for (const id of [
+    "coverageUniqueWords",
+    "coverageKnownOccurrences",
+    "coveragePercent",
+    "coverageTargets",
+  ]) {
     coverageBody.appendChild(add(id, "div"));
   }
   const coverageError = add("coverageError", "p");
@@ -247,8 +281,15 @@ function queueState(words: string[], mode: "normal" | "queue" = "normal"): Parti
 function datasetState(): Partial<AppState> {
   return {
     dataset: {
-      id: "dataset-1", name: "book.csv", sourceType: "file", sourceName: "book.csv",
-      headers: ["Word"], entryCount: 3, createdAt: "x", updatedAt: "x", schemaVersion: 1,
+      id: "dataset-1",
+      name: "book.csv",
+      sourceType: "file",
+      sourceName: "book.csv",
+      headers: ["Word"],
+      entryCount: 3,
+      createdAt: "x",
+      updatedAt: "x",
+      schemaVersion: 1,
     },
     status: "ready",
   };
@@ -266,7 +307,7 @@ function setup(initial?: Partial<AppState>, confirmResult = true): Harness {
   const renderer = createRenderer(dom);
   const unsubscribe = controller.subscribe((state) => renderer.render(state));
   const bindings = bindControls(dom, controller, {
-    confirmQueueClear: (message: string) => confirmResult,
+    confirmQueueClear: (_message: string) => confirmResult,
   });
   return {
     dom,
@@ -285,7 +326,9 @@ beforeEach(() => {
 describe("entry queue controls", () => {
   it("queue button toggles membership via controller", () => {
     const harness = setup();
-    harness.dom.resultsList.appendChild(renderEntryNode(makeEntry(), 1, createInitialAppState("memory").view));
+    harness.dom.resultsList.appendChild(
+      renderEntryNode(makeEntry(), 1, createInitialAppState("memory").view),
+    );
 
     const button = harness.dom.resultsList.querySelector<HTMLButtonElement>("[data-queue-action]")!;
     expect(button.textContent).toBe("+ Queue");
@@ -298,7 +341,9 @@ describe("entry queue controls", () => {
   it("clicking a pressed queue button removes the word instead", () => {
     const harness = setup(queueState(["言葉"]));
     harness.dom.resultsList.appendChild(
-      renderEntryNode(makeEntry(), 1, createInitialAppState("memory").view, { queued: true }),
+      renderEntryNode(makeEntry(), 1, createInitialAppState("memory").view, {
+        queued: true,
+      }),
     );
 
     const button = harness.dom.resultsList.querySelector<HTMLButtonElement>("[data-queue-action]")!;
@@ -335,11 +380,21 @@ describe("entry queue controls", () => {
     renderer.render({
       ...base,
       ...datasetState(),
-      queue: { datasetId: "dataset-1", normalizedWords: ["nhk"], mode: "normal" },
+      queue: {
+        datasetId: "dataset-1",
+        normalizedWords: ["nhk"],
+        mode: "normal",
+      },
       result: {
         items: [makeEntry({ word: "NHK", normalizedWord: "NHK" })],
-        page: 1, totalPages: 1, totalEntries: 1, startIndex: 1, endIndex: 1,
-        pageSize: 50, knownCount: 0, windowed: false,
+        page: 1,
+        totalPages: 1,
+        totalEntries: 1,
+        startIndex: 1,
+        endIndex: 1,
+        pageSize: 50,
+        knownCount: 0,
+        windowed: false,
       },
     });
 
@@ -375,8 +430,14 @@ describe("entry queue controls", () => {
       ...datasetState(),
       result: {
         items: [makeEntry()],
-        page: 1, totalPages: 1, totalEntries: 1, startIndex: 1, endIndex: 1,
-        pageSize: 50, knownCount: 0, windowed: false,
+        page: 1,
+        totalPages: 1,
+        totalEntries: 1,
+        startIndex: 1,
+        endIndex: 1,
+        pageSize: 50,
+        knownCount: 0,
+        windowed: false,
       },
     });
 
@@ -389,12 +450,19 @@ describe("entry queue controls", () => {
       ...queueState(["言葉"]),
       result: {
         items: [makeEntry()],
-        page: 1, totalPages: 1, totalEntries: 1, startIndex: 1, endIndex: 1,
-        pageSize: 50, knownCount: 0, windowed: false,
+        page: 1,
+        totalPages: 1,
+        totalEntries: 1,
+        startIndex: 1,
+        endIndex: 1,
+        pageSize: 50,
+        knownCount: 0,
+        windowed: false,
       },
     });
 
-    const updated = harness.dom.resultsList.querySelector<HTMLButtonElement>("[data-queue-action]")!;
+    const updated =
+      harness.dom.resultsList.querySelector<HTMLButtonElement>("[data-queue-action]")!;
     expect(updated.getAttribute("aria-pressed")).toBe("true");
     expect(updated.textContent).toBe("✓ Queued");
     expect(document.activeElement).toBe(updated);
@@ -402,17 +470,22 @@ describe("entry queue controls", () => {
 
   it("decision buttons still call the controller and sentence DOM stays button-free", () => {
     const harness = setup();
-    const view = { ...createInitialAppState("memory").view, showHighlight: true };
+    const view = {
+      ...createInitialAppState("memory").view,
+      showHighlight: true,
+    };
     const plain = renderEntryNode(makeEntry(), 1, view);
     const queued = renderEntryNode(makeEntry(), 1, view, { queued: true });
 
-    expect(queued.querySelector(".sentence")?.innerHTML).toBe(plain.querySelector(".sentence")?.innerHTML);
+    expect(queued.querySelector(".sentence")?.innerHTML).toBe(
+      plain.querySelector(".sentence")?.innerHTML,
+    );
     expect(queued.querySelector(".sentence")?.querySelectorAll("button")).toHaveLength(0);
     expect(queued.querySelector(".sentence")?.textContent).toContain("が好き。");
     harness.dom.resultsList.appendChild(queued);
     harness.dom.resultsList
-      .querySelector<HTMLButtonElement>('[data-decision-action="mined"]')!
-      .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      .querySelector<HTMLButtonElement>('[data-decision-action="mined"]')
+      ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     expect(harness.controller.calls.setWordDecision).toEqual([["言葉", "mined"]]);
   });
 });
@@ -428,8 +501,14 @@ describe("queue mode view", () => {
       ...queueState(["言葉", "いぬ"], "queue"),
       result: {
         items: [makeEntry(), makeEntry({ id: "e2", word: "いぬ", normalizedWord: "いぬ" })],
-        page: 1, totalPages: 1, totalEntries: 2, startIndex: 1, endIndex: 2,
-        pageSize: "all", knownCount: 0, windowed: false,
+        page: 1,
+        totalPages: 1,
+        totalEntries: 2,
+        startIndex: 1,
+        endIndex: 2,
+        pageSize: "all",
+        knownCount: 0,
+        windowed: false,
       },
     });
 
@@ -451,18 +530,30 @@ describe("queue mode view", () => {
       ...datasetState(),
       ...queueState([], "queue"),
       result: {
-        items: [], page: 0, totalPages: 0, totalEntries: 0,
-        startIndex: 0, endIndex: 0, pageSize: "all", knownCount: 0, windowed: false,
+        items: [],
+        page: 0,
+        totalPages: 0,
+        totalEntries: 0,
+        startIndex: 0,
+        endIndex: 0,
+        pageSize: "all",
+        knownCount: 0,
+        windowed: false,
       },
     });
 
     expect(dom.queueHeading.textContent).toBe("Mining Queue — 0 words");
     expect(dom.queueStats.textContent).toBe("Mining queue complete.");
-    expect(dom.resultsList.querySelector(".empty-state")?.textContent).toBe("Mining queue complete.");
+    expect(dom.resultsList.querySelector(".empty-state")?.textContent).toBe(
+      "Mining queue complete.",
+    );
   });
 
   it("exit button leaves queue mode", () => {
-    const harness = setup({ ...datasetState(), ...queueState(["いぬ"], "queue") });
+    const harness = setup({
+      ...datasetState(),
+      ...queueState(["いぬ"], "queue"),
+    });
     harness.dom.exitQueue.dispatchEvent(new Event("click"));
     expect(harness.controller.calls.stopQueueMode).toBe(1);
   });
@@ -479,7 +570,10 @@ describe("queue mode view", () => {
   });
 
   it("list paging shortcuts are suppressed in queue mode", () => {
-    const harness = setup({ ...datasetState(), ...queueState(["いぬ"], "queue") });
+    const harness = setup({
+      ...datasetState(),
+      ...queueState(["いぬ"], "queue"),
+    });
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "n", bubbles: true }));
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
     expect(harness.controller.calls.updateQuery).toEqual([]);

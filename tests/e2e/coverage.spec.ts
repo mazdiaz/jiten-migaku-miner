@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 
 // Deterministic weighted fixture — hand-computed arithmetic (documented):
 //
@@ -35,7 +35,14 @@ import { expect, test, type Page } from "@playwright/test";
 //   Reload (step 11): persisted state = known list + 未知語一 mined decision
 //   -> coverage recomputes to 90.00% again.
 
-const UNKNOWN_ORDER = ["未知語一", "未知語二", "未知語三", "未知語四", "未知語五", "未知語六"] as const;
+const UNKNOWN_ORDER = [
+  "未知語一",
+  "未知語二",
+  "未知語三",
+  "未知語四",
+  "未知語五",
+  "未知語六",
+] as const;
 const UNKNOWN_OCCURRENCES = [20, 12, 8, 5, 3, 2] as const;
 
 function entryByWord(page: Page, word: string): ReturnType<Page["locator"]> {
@@ -49,23 +56,29 @@ function decisionButton(page: Page, word: string, action: string) {
 }
 
 test.describe("coverage analysis", () => {
-  test("tracks occurrence coverage through import, decisions, focus, and reload", async ({ page }) => {
+  test("tracks occurrence coverage through import, decisions, focus, and reload", async ({
+    page,
+  }) => {
     const directory = mkdtempSync(join(tmpdir(), "jiten-miner-coverage-"));
     try {
       const csvPath = join(directory, "weighted.csv");
       const knownPath = join(directory, "weighted-known.txt");
-      writeFileSync(csvPath, [
-        "Word,Occurences,ExampleSentence,Definitions,ReadingFurigana",
-        "既知語一,300,\"これは**既知語一**の例文です。\",\"known one\",",
-        "既知語二,150,\"これは**既知語二**の例文です。\",\"known two\",",
-        "未知語一,20,\"これは**未知語一**の例文です。\",\"unknown one\",",
-        "未知語二,12,\"これは**未知語二**の例文です。\",\"unknown two\",",
-        "未知語三,8,\"これは**未知語三**の例文です。\",\"unknown three\",",
-        "未知語四,5,\"これは**未知語四**の例文です。\",\"unknown four\",",
-        "未知語五,3,\"これは**未知語五**の例文です。\",\"unknown five\",",
-        "未知語六,2,\"これは**未知語六**の例文です。\",\"unknown six\",",
-        "", // trailing newline
-      ].join("\n"), "utf8");
+      writeFileSync(
+        csvPath,
+        [
+          "Word,Occurences,ExampleSentence,Definitions,ReadingFurigana",
+          '既知語一,300,"これは**既知語一**の例文です。","known one",',
+          '既知語二,150,"これは**既知語二**の例文です。","known two",',
+          '未知語一,20,"これは**未知語一**の例文です。","unknown one",',
+          '未知語二,12,"これは**未知語二**の例文です。","unknown two",',
+          '未知語三,8,"これは**未知語三**の例文です。","unknown three",',
+          '未知語四,5,"これは**未知語四**の例文です。","unknown four",',
+          '未知語五,3,"これは**未知語五**の例文です。","unknown five",',
+          '未知語六,2,"これは**未知語六**の例文です。","unknown six",',
+          "", // trailing newline
+        ].join("\n"),
+        "utf8",
+      );
       writeFileSync(knownPath, "既知語一\n既知語二\n", "utf8");
 
       // Step 1: import CSV.
@@ -109,7 +122,10 @@ test.describe("coverage analysis", () => {
 
       // Step 4: mark the highest-occurrence unknown word Known.
       await decisionButton(page, "未知語一", "known").click();
-      await expect(decisionButton(page, "未知語一", "known")).toHaveAttribute("aria-pressed", "true");
+      await expect(decisionButton(page, "未知語一", "known")).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      );
 
       // Step 5: verify coverage increases (450 -> 470 of 500 = 94.00%).
       await expect(page.locator("#coverageSummary")).toHaveText("94.00%");
@@ -123,7 +139,10 @@ test.describe("coverage analysis", () => {
 
       // Step 7: mark it Mined instead.
       await decisionButton(page, "未知語一", "mined").click();
-      await expect(decisionButton(page, "未知語一", "mined")).toHaveAttribute("aria-pressed", "true");
+      await expect(decisionButton(page, "未知語一", "mined")).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      );
 
       // Step 8: Mined is not known — coverage must NOT increase.
       await expect(page.locator("#coverageSummary")).toHaveText("90.00%");
@@ -147,7 +166,9 @@ test.describe("coverage analysis", () => {
           `×${UNKNOWN_OCCURRENCES[index]}`,
         );
       }
-      await expect(entryByWord(page, "未知語一").locator(".entry-badge-decision")).toHaveText("Mined");
+      await expect(entryByWord(page, "未知語一").locator(".entry-badge-decision")).toHaveText(
+        "Mined",
+      );
 
       // Step 11: reload; coverage derives from persisted state (known list +
       // mined decision) and comes back as 90.00% with the Mined word intact.
@@ -155,7 +176,9 @@ test.describe("coverage analysis", () => {
       await expect(page.locator("#resultsList .mining-entry")).toHaveCount(6);
       await expect(page.locator("#coveragePanel")).toBeVisible();
       await expect(page.locator("#coverageSummary")).toHaveText("90.00%");
-      await expect(entryByWord(page, "未知語一").locator(".entry-badge-decision")).toHaveText("Mined");
+      await expect(entryByWord(page, "未知語一").locator(".entry-badge-decision")).toHaveText(
+        "Mined",
+      );
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }

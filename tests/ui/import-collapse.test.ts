@@ -1,12 +1,12 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { bindControls } from "../../src/ui/controls";
-import { getDomMap } from "../../src/ui/dom";
-import type { DomMap } from "../../src/ui/dom";
-import { createRenderer } from "../../src/ui/renderer";
 import type { AppState, FileSource, MinerController } from "../../src/app/state";
 import { createInitialAppState } from "../../src/app/state";
 import type { QueryState } from "../../src/domain/types";
+import { bindControls } from "../../src/ui/controls";
+import type { DomMap } from "../../src/ui/dom";
+import { getDomMap } from "../../src/ui/dom";
+import { createRenderer } from "../../src/ui/renderer";
 
 type Listener = (state: Readonly<AppState>) => void;
 
@@ -49,7 +49,14 @@ function seedDom(): DomMap {
   const advancedPanel = add("advancedPanel", "div");
   advancedPanel.hidden = true;
   add("stickySearch", "input").setAttribute("type", "search");
-  for (const id of ["hideKnown", "hideKanaOnly", "showFurigana", "pillHighlight", "showHighlight", "showDefinitions"]) {
+  for (const id of [
+    "hideKnown",
+    "hideKanaOnly",
+    "showFurigana",
+    "pillHighlight",
+    "showHighlight",
+    "showDefinitions",
+  ]) {
     add(id, "input").setAttribute("type", "checkbox");
   }
   add("minOccurrences", "input").setAttribute("type", "number");
@@ -65,13 +72,32 @@ function seedDom(): DomMap {
     return select;
   };
 
-  withOptions("sentenceFilter", [["any", "any"], ["has", "has"], ["none", "none"]]);
-  withOptions("sortSelect", [["occ-desc", "occ-desc"], ["occ-asc", "occ-asc"], ["original", "original"]]);
-  withOptions("pageSize", [["25", "25"], ["50", "50"], ["100", "100"], ["all", "all"]]);
+  withOptions("sentenceFilter", [
+    ["any", "any"],
+    ["has", "has"],
+    ["none", "none"],
+  ]);
+  withOptions("sortSelect", [
+    ["occ-desc", "occ-desc"],
+    ["occ-asc", "occ-asc"],
+    ["original", "original"],
+  ]);
+  withOptions("pageSize", [
+    ["25", "25"],
+    ["50", "50"],
+    ["100", "100"],
+    ["all", "all"],
+  ]);
   withOptions("decisionFilter", [["all", "All decisions"]]);
 
-  withOptions("sentenceSize", [["medium", "medium"], ["large", "large"]]);
-  withOptions("density", [["comfortable", "comfortable"], ["compact", "compact"]]);
+  withOptions("sentenceSize", [
+    ["medium", "medium"],
+    ["large", "large"],
+  ]);
+  withOptions("density", [
+    ["comfortable", "comfortable"],
+    ["compact", "compact"],
+  ]);
   add("results", "section");
   add("resultsHeading", "h2");
   add("resultStats", "p");
@@ -85,7 +111,19 @@ function seedDom(): DomMap {
   const reviewPanel = add("reviewPanel", "div");
   reviewPanel.setAttribute("tabindex", "-1");
   reviewOverlay.appendChild(reviewPanel);
-  for (const id of ["reviewHeading", "reviewProgress", "reviewContent", "reviewComplete", "reviewReturn", "reviewExit", "reviewKnown", "reviewMined", "reviewSkip", "reviewLater", "reviewUndo"]) {
+  for (const id of [
+    "reviewHeading",
+    "reviewProgress",
+    "reviewContent",
+    "reviewComplete",
+    "reviewReturn",
+    "reviewExit",
+    "reviewKnown",
+    "reviewMined",
+    "reviewSkip",
+    "reviewLater",
+    "reviewUndo",
+  ]) {
     const element = add(id, "div");
     reviewPanel.appendChild(element);
   }
@@ -114,7 +152,12 @@ function seedDom(): DomMap {
   const coverageBody = add("coverageBody", "div");
   coverageBody.hidden = true;
   coveragePanel.appendChild(coverageBody);
-  for (const id of ["coverageUniqueWords", "coverageKnownOccurrences", "coveragePercent", "coverageTargets"]) {
+  for (const id of [
+    "coverageUniqueWords",
+    "coverageKnownOccurrences",
+    "coveragePercent",
+    "coverageTargets",
+  ]) {
     coverageBody.appendChild(add(id, "div"));
   }
   const coverageError = add("coverageError", "p");
@@ -172,8 +215,15 @@ function createFakeController(initial?: Partial<AppState>): FakeController {
 
 function dataset(id = "d1"): NonNullable<AppState["dataset"]> {
   return {
-    id, name: "book.csv", sourceType: "file", sourceName: "book.csv",
-    headers: ["Word"], entryCount: 3, createdAt: "x", updatedAt: "x", schemaVersion: 1,
+    id,
+    name: "book.csv",
+    sourceType: "file",
+    sourceName: "book.csv",
+    headers: ["Word"],
+    entryCount: 3,
+    createdAt: "x",
+    updatedAt: "x",
+    schemaVersion: 1,
   };
 }
 
@@ -268,7 +318,11 @@ describe("import panel collapse", () => {
       expect(harness.dom.importSummary.hidden).toBe(true);
       expect(harness.dom.changeFiles.hidden).toBe(true);
 
-      harness.render({ dataset: dataset(), status: "error", errorMessage: "Import failed" });
+      harness.render({
+        dataset: dataset(),
+        status: "error",
+        errorMessage: "Import failed",
+      });
       expect(harness.dom.importGrid.hidden).toBe(false);
       expect(harness.dom.importSummary.hidden).toBe(true);
       expect(harness.dom.changeFiles.hidden).toBe(false);
@@ -283,7 +337,10 @@ describe("import panel collapse", () => {
       harness.dom.changeFiles.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       expect(harness.dom.importGrid.hidden).toBe(false);
 
-      harness.controller.publishState({ dataset: dataset("d2"), status: "ready" });
+      harness.controller.publishState({
+        dataset: dataset("d2"),
+        status: "ready",
+      });
       expect(harness.dom.importGrid.hidden).toBe(true);
       expect(harness.dom.importSummary.hidden).toBe(false);
       expect(harness.dom.changeFiles.getAttribute("aria-expanded")).toBe("false");

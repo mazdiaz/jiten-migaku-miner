@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it } from "vitest";
-import { renderEntryNode, renderReviewEntryNode } from "../../src/ui/renderer";
 import { createInitialAppState } from "../../src/app/state";
 import type { EntryWithKnown } from "../../src/domain/types";
+import { renderEntryNode, renderReviewEntryNode } from "../../src/ui/renderer";
 
 function makeEntry(overrides: Partial<EntryWithKnown> = {}): EntryWithKnown {
   return {
@@ -49,7 +49,10 @@ describe("renderEntryNode structure", () => {
   });
 
   it("skips the definitions node when hidden or absent", () => {
-    const hidden = renderEntryNode(makeEntry(), 1, { ...view, showDefinitions: false });
+    const hidden = renderEntryNode(makeEntry(), 1, {
+      ...view,
+      showDefinitions: false,
+    });
     expect(hidden.querySelector(".entry-definitions")).toBeNull();
 
     const bare = renderEntryNode(
@@ -85,7 +88,9 @@ describe("renderEntryNode structure", () => {
       expect(button.dataset.word).toBe("言葉");
     }
     for (const status of ["known", "mined", "skip", "later"]) {
-      expect(actions.querySelector(`[data-decision-action='${status}']`)?.getAttribute("aria-pressed")).toBe("false");
+      expect(
+        actions.querySelector(`[data-decision-action='${status}']`)?.getAttribute("aria-pressed"),
+      ).toBe("false");
     }
     const reset = actions.querySelector<HTMLButtonElement>("[data-decision-action='unreviewed']");
     expect(reset?.getAttribute("aria-pressed")).toBeNull();
@@ -99,16 +104,22 @@ describe("renderEntryNode structure", () => {
 
   it("renders the pressed queue toggle inside the merged toolbar", () => {
     const article = renderEntryNode(makeEntry(), 1, view, { queued: true });
-    const toggle = article.querySelector<HTMLButtonElement>(".entry-actions [data-queue-action='toggle']");
+    const toggle = article.querySelector<HTMLButtonElement>(
+      ".entry-actions [data-queue-action='toggle']",
+    );
     expect(toggle?.textContent).toBe("✓ Queued");
     expect(toggle?.getAttribute("aria-pressed")).toBe("true");
   });
 
   it("keeps pressed decision state on the merged buttons", () => {
     const article = renderEntryNode(makeEntry({ decision: "mined" }), 1, view);
-    const pressed = article.querySelector<HTMLButtonElement>(".entry-actions [data-decision-action='mined']");
+    const pressed = article.querySelector<HTMLButtonElement>(
+      ".entry-actions [data-decision-action='mined']",
+    );
     expect(pressed?.getAttribute("aria-pressed")).toBe("true");
-    const reset = article.querySelector<HTMLButtonElement>(".entry-actions [data-decision-action='unreviewed']");
+    const reset = article.querySelector<HTMLButtonElement>(
+      ".entry-actions [data-decision-action='unreviewed']",
+    );
     expect(reset?.disabled).toBe(false);
   });
 
@@ -138,11 +149,7 @@ describe("renderEntryNode structure", () => {
   });
 
   it("keeps badges in the header and definitions out of it", () => {
-    const article = renderEntryNode(
-      makeEntry({ knownByMigaku: true, decision: "mined" }),
-      1,
-      view,
-    );
+    const article = renderEntryNode(makeEntry({ knownByMigaku: true, decision: "mined" }), 1, view);
     const header = article.querySelector<HTMLElement>(".entry-header");
     expect(header).not.toBeNull();
     expect(header?.querySelector(".entry-badge-migaku")?.textContent).toBe("Migaku known");
@@ -159,7 +166,9 @@ describe("renderEntryNode structure", () => {
     expect(details).not.toBeNull();
     expect(details?.open).toBe(false);
     expect(details?.querySelector("summary")?.textContent).toBe("Show full definition");
-    expect(details?.querySelector(".entry-defs-full")?.textContent).toBe("word, term, expression, phrase");
+    expect(details?.querySelector(".entry-defs-full")?.textContent).toBe(
+      "word, term, expression, phrase",
+    );
     expect(definitions?.getAttribute("title")).toBeNull();
   });
 
@@ -180,7 +189,9 @@ describe("renderEntryNode structure", () => {
 
   it("does not set surface index when highlighting is off", () => {
     const article = renderEntryNode(
-      makeEntry({ sentenceRaw: "**\u8A00\u8449**\u304C**\u8A00\u8449**\u3060\u3002" }),
+      makeEntry({
+        sentenceRaw: "**\u8A00\u8449**\u304C**\u8A00\u8449**\u3060\u3002",
+      }),
       1,
       view,
     );
@@ -194,7 +205,9 @@ describe("renderEntryNode structure", () => {
     expect(once.querySelector<HTMLElement>(".sentence")?.dataset.surfaceIndex).toBe("0");
 
     const article = renderEntryNode(
-      makeEntry({ sentenceRaw: "**\u8A00\u8449**\u304C**\u8A00\u8449**\u3060\u3002" }),
+      makeEntry({
+        sentenceRaw: "**\u8A00\u8449**\u304C**\u8A00\u8449**\u3060\u3002",
+      }),
       1,
       highlighted,
     );

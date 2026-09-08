@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 
 const SMALL_CSV = "tests/fixtures/jiten-small.csv";
 
@@ -32,12 +32,16 @@ test.describe("active filter chips", () => {
     const chips = page.locator("#filterChips button[data-filter-chip]");
     await expect(page.locator("#filterChips")).toBeVisible();
     await expect(chips).toHaveCount(2);
-    await expect(page.locator('#filterChips [data-filter-chip="search"]')).toHaveText('Search: "プール"');
+    await expect(page.locator('#filterChips [data-filter-chip="search"]')).toHaveText(
+      'Search: "プール"',
+    );
     await expect(page.locator('#filterChips [data-filter-chip="search"]')).toHaveAttribute(
       "aria-label",
       'Remove Search: "プール" filter',
     );
-    await expect(page.locator('#filterChips [data-filter-chip="decision"]')).toHaveText("Decision: unreviewed");
+    await expect(page.locator('#filterChips [data-filter-chip="decision"]')).toHaveText(
+      "Decision: unreviewed",
+    );
     await expect(page.locator("#resetFilters")).toBeVisible();
 
     await page.locator('#filterChips [data-filter-chip="search"]').click();
@@ -53,7 +57,9 @@ test.describe("active filter chips", () => {
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
   });
 
-  test("filtered-empty state shows message, hint, chips, and recovers via reset", async ({ page }) => {
+  test("filtered-empty state shows message, hint, chips, and recovers via reset", async ({
+    page,
+  }) => {
     await page.goto("/");
     await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);

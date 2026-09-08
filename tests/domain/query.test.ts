@@ -101,13 +101,17 @@ describe("filterEntries", () => {
 
   it("searches normalized words and plain sentence text", () => {
     expect(
-      filterEntries(searchableEntries, queryState({ search: "  気になる  " })).map((entry) => entry.id),
+      filterEntries(searchableEntries, queryState({ search: "  気になる  " })).map(
+        (entry) => entry.id,
+      ),
     ).toEqual(["word-match"]);
-    expect(filterEntries(searchableEntries, queryState({ search: "プール" })).map((entry) => entry.id)).toEqual([
-      "sentence-match",
-    ]);
     expect(
-      filterEntries(searchableEntries, queryState({ search: "raw-word-value" })).map((entry) => entry.id),
+      filterEntries(searchableEntries, queryState({ search: "プール" })).map((entry) => entry.id),
+    ).toEqual(["sentence-match"]);
+    expect(
+      filterEntries(searchableEntries, queryState({ search: "raw-word-value" })).map(
+        (entry) => entry.id,
+      ),
     ).toEqual(["raw-word-match"]);
   });
 
@@ -118,34 +122,48 @@ describe("filterEntries", () => {
       entryWithKnown({ id: "kanji", word: "静か", normalizedWord: "静か" }),
     ];
 
-    expect(filterEntries(source, queryState({ hideKnown: true })).map((entry) => entry.id)).toEqual([
-      "kana",
-      "kanji",
-    ]);
-    expect(filterEntries(source, queryState({ hideKanaOnly: true })).map((entry) => entry.id)).toEqual([
-      "known",
-      "kanji",
-    ]);
+    expect(filterEntries(source, queryState({ hideKnown: true })).map((entry) => entry.id)).toEqual(
+      ["kana", "kanji"],
+    );
+    expect(
+      filterEntries(source, queryState({ hideKanaOnly: true })).map((entry) => entry.id),
+    ).toEqual(["known", "kanji"]);
   });
 
   it("filters by sentence presence and minimum occurrences", () => {
     const source = [
-      entryWithKnown({ id: "none", hasSentence: false, sentenceRaw: "", occurrences: 0 }),
-      entryWithKnown({ id: "low", hasSentence: true, sentenceRaw: "例文", occurrences: 3 }),
-      entryWithKnown({ id: "high", hasSentence: true, sentenceRaw: "別の例文", occurrences: 8 }),
+      entryWithKnown({
+        id: "none",
+        hasSentence: false,
+        sentenceRaw: "",
+        occurrences: 0,
+      }),
+      entryWithKnown({
+        id: "low",
+        hasSentence: true,
+        sentenceRaw: "例文",
+        occurrences: 3,
+      }),
+      entryWithKnown({
+        id: "high",
+        hasSentence: true,
+        sentenceRaw: "別の例文",
+        occurrences: 8,
+      }),
     ];
 
-    expect(filterEntries(source, queryState({ sentence: "has" })).map((entry) => entry.id)).toEqual([
-      "low",
-      "high",
-    ]);
-    expect(filterEntries(source, queryState({ sentence: "none" })).map((entry) => entry.id)).toEqual(["none"]);
-    expect(filterEntries(source, queryState({ minOccurrences: 4 })).map((entry) => entry.id)).toEqual(["high"]);
-    expect(filterEntries(source, queryState({ minOccurrences: -4 })).map((entry) => entry.id)).toEqual([
-      "none",
-      "low",
-      "high",
-    ]);
+    expect(filterEntries(source, queryState({ sentence: "has" })).map((entry) => entry.id)).toEqual(
+      ["low", "high"],
+    );
+    expect(
+      filterEntries(source, queryState({ sentence: "none" })).map((entry) => entry.id),
+    ).toEqual(["none"]);
+    expect(
+      filterEntries(source, queryState({ minOccurrences: 4 })).map((entry) => entry.id),
+    ).toEqual(["high"]);
+    expect(
+      filterEntries(source, queryState({ minOccurrences: -4 })).map((entry) => entry.id),
+    ).toEqual(["none", "low", "high"]);
   });
 });
 
@@ -236,7 +254,9 @@ describe("paginateEntries", () => {
   });
 
   it("skips the known tally for raw index lists when countKnown is disabled", () => {
-    const result = paginateEntries([7, 8, 9, 10, 11], 1, 2, undefined, { countKnown: false });
+    const result = paginateEntries([7, 8, 9, 10, 11], 1, 2, undefined, {
+      countKnown: false,
+    });
 
     expect(result).toMatchObject({
       items: [7, 8],
@@ -252,9 +272,24 @@ describe("paginateEntries", () => {
 describe("queryEntries", () => {
   it("applies known-word marking, filters, sorting, and pagination", () => {
     const source = [
-      entryWithKnown({ id: "first", originalIndex: 2, normalizedWord: "猫", occurrences: 5 }),
-      entryWithKnown({ id: "known", originalIndex: 1, normalizedWord: "犬", occurrences: 9 }),
-      entryWithKnown({ id: "last", originalIndex: 0, normalizedWord: "鳥", occurrences: 7 }),
+      entryWithKnown({
+        id: "first",
+        originalIndex: 2,
+        normalizedWord: "猫",
+        occurrences: 5,
+      }),
+      entryWithKnown({
+        id: "known",
+        originalIndex: 1,
+        normalizedWord: "犬",
+        occurrences: 9,
+      }),
+      entryWithKnown({
+        id: "last",
+        originalIndex: 0,
+        normalizedWord: "鳥",
+        occurrences: 7,
+      }),
     ];
 
     const result = queryEntries(
@@ -280,7 +315,10 @@ describe("queryEntries", () => {
       page: 1,
       decision: "all",
     };
-    const result = queryEntries(entries, new Set(), query, { start: 100, size: 25 });
+    const result = queryEntries(entries, new Set(), query, {
+      start: 100,
+      size: 25,
+    });
     expect(result.windowed).toBe(true);
     expect(result.items).toHaveLength(25);
     expect(result.totalEntries).toBe(entries.length);
@@ -372,13 +410,17 @@ describe("word decisions", () => {
 
   it("filters unreviewed decisions", () => {
     expect(
-      filterEntries(entriesWithDecisions(), queryState({ decision: "unreviewed" })).map((entry) => entry.id),
+      filterEntries(entriesWithDecisions(), queryState({ decision: "unreviewed" })).map(
+        (entry) => entry.id,
+      ),
     ).toEqual(["unreviewed-word", "migaku-known"]);
   });
 
   it("filters mined decisions", () => {
     expect(
-      filterEntries(entriesWithDecisions(), queryState({ decision: "mined" })).map((entry) => entry.id),
+      filterEntries(entriesWithDecisions(), queryState({ decision: "mined" })).map(
+        (entry) => entry.id,
+      ),
     ).toEqual(["mined-word"]);
   });
 
@@ -392,7 +434,9 @@ describe("word decisions", () => {
 
   it("hideKnown does not remove mined/skip/later entries", () => {
     expect(
-      filterEntries(entriesWithDecisions(), queryState({ hideKnown: true })).map((entry) => entry.id),
+      filterEntries(entriesWithDecisions(), queryState({ hideKnown: true })).map(
+        (entry) => entry.id,
+      ),
     ).toEqual(["unreviewed-word", "mined-word", "skip-word", "later-word"]);
   });
 

@@ -4,14 +4,19 @@ const SIXTY_CSV = "tests/fixtures/jiten-60.csv";
 
 const LONG_DEFS_CSV = [
   "Word,Occurences,ExampleSentence,Definitions,ReadingFurigana",
-  "試験,4,\"**試験**は明日だ。\",\"exam, test, trial, quiz, assessment\",試験[しけん]",
+  '試験,4,"**試験**は明日だ。","exam, test, trial, quiz, assessment",試験[しけん]',
 ].join("\n");
 
 test.describe("accessibility remainder", () => {
-  test("markup: labels, lang scoping, live regions, single dropzone focus stop", async ({ page }) => {
+  test("markup: labels, lang scoping, live regions, single dropzone focus stop", async ({
+    page,
+  }) => {
     await page.goto("/");
 
-    await expect(page.locator("#stickySearch")).toHaveAttribute("aria-label", "Search mining results");
+    await expect(page.locator("#stickySearch")).toHaveAttribute(
+      "aria-label",
+      "Search mining results",
+    );
     await expect(page.locator("#reviewContent")).not.toHaveAttribute("lang");
     await expect(page.locator("#results")).not.toHaveAttribute("aria-live");
     await expect(page.locator("#resultStats")).toHaveAttribute("aria-live", "polite");
@@ -28,20 +33,30 @@ test.describe("accessibility remainder", () => {
 
     await page.locator("body").press("ArrowRight");
     await expect(page.locator("#stickyPage")).toHaveText("Page 2 / 2");
-    await expect.poll(() =>
-      page.evaluate(() => (document.activeElement instanceof HTMLElement ? document.activeElement.id : "")),
-    ).toBe("resultsHeading");
-    await expect.poll(() =>
-      page.locator("#resultsHeading").evaluate((el) => el.getBoundingClientRect().top),
-    ).toBeLessThanOrEqual(140.5);
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          document.activeElement instanceof HTMLElement ? document.activeElement.id : "",
+        ),
+      )
+      .toBe("resultsHeading");
+    await expect
+      .poll(() => page.locator("#resultsHeading").evaluate((el) => el.getBoundingClientRect().top))
+      .toBeLessThanOrEqual(140.5);
 
     // Once scrolled, the toolbar is stuck near the top: the heading must sit
     // at or below the sticky toolbar, not underneath it.
-    await expect.poll(async () => {
-      const toolbarBottom = await page.locator("#stickyToolbar").evaluate((el) => el.getBoundingClientRect().bottom);
-      const headingTop = await page.locator("#resultsHeading").evaluate((el) => el.getBoundingClientRect().top);
-      return headingTop - toolbarBottom;
-    }).toBeGreaterThanOrEqual(-1);
+    await expect
+      .poll(async () => {
+        const toolbarBottom = await page
+          .locator("#stickyToolbar")
+          .evaluate((el) => el.getBoundingClientRect().bottom);
+        const headingTop = await page
+          .locator("#resultsHeading")
+          .evaluate((el) => el.getBoundingClientRect().top);
+        return headingTop - toolbarBottom;
+      })
+      .toBeGreaterThanOrEqual(-1);
   });
 
   test("pager click focuses the results heading clear of the toolbar", async ({ page }) => {
@@ -51,21 +66,33 @@ test.describe("accessibility remainder", () => {
 
     await page.locator("#stickyNext").click();
     await expect(page.locator("#stickyPage")).toHaveText("Page 2 / 2");
-    await expect.poll(() =>
-      page.evaluate(() => (document.activeElement instanceof HTMLElement ? document.activeElement.id : "")),
-    ).toBe("resultsHeading");
-    await expect.poll(() =>
-      page.locator("#resultsHeading").evaluate((el) => el.getBoundingClientRect().top),
-    ).toBeLessThanOrEqual(140.5);
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          document.activeElement instanceof HTMLElement ? document.activeElement.id : "",
+        ),
+      )
+      .toBe("resultsHeading");
+    await expect
+      .poll(() => page.locator("#resultsHeading").evaluate((el) => el.getBoundingClientRect().top))
+      .toBeLessThanOrEqual(140.5);
 
-    await expect.poll(async () => {
-      const toolbarBottom = await page.locator("#stickyToolbar").evaluate((el) => el.getBoundingClientRect().bottom);
-      const headingTop = await page.locator("#resultsHeading").evaluate((el) => el.getBoundingClientRect().top);
-      return headingTop - toolbarBottom;
-    }).toBeGreaterThanOrEqual(-1);
+    await expect
+      .poll(async () => {
+        const toolbarBottom = await page
+          .locator("#stickyToolbar")
+          .evaluate((el) => el.getBoundingClientRect().bottom);
+        const headingTop = await page
+          .locator("#resultsHeading")
+          .evaluate((el) => el.getBoundingClientRect().top);
+        return headingTop - toolbarBottom;
+      })
+      .toBeGreaterThanOrEqual(-1);
   });
 
-  test("expanded filters panel keeps the focused heading clear of the toolbar", async ({ page }) => {
+  test("expanded filters panel keeps the focused heading clear of the toolbar", async ({
+    page,
+  }) => {
     await page.goto("/");
     await page.locator("#jitenInput").setInputFiles(SIXTY_CSV);
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(50);
@@ -76,15 +103,25 @@ test.describe("accessibility remainder", () => {
 
     await page.locator("#stickyNext").click();
     await expect(page.locator("#stickyPage")).toHaveText("Page 2 / 2");
-    await expect.poll(() =>
-      page.evaluate(() => (document.activeElement instanceof HTMLElement ? document.activeElement.id : "")),
-    ).toBe("resultsHeading");
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          document.activeElement instanceof HTMLElement ? document.activeElement.id : "",
+        ),
+      )
+      .toBe("resultsHeading");
 
-    await expect.poll(async () => {
-      const toolbarBottom = await page.locator("#stickyToolbar").evaluate((el) => el.getBoundingClientRect().bottom);
-      const headingTop = await page.locator("#resultsHeading").evaluate((el) => el.getBoundingClientRect().top);
-      return headingTop - toolbarBottom;
-    }).toBeGreaterThanOrEqual(-1);
+    await expect
+      .poll(async () => {
+        const toolbarBottom = await page
+          .locator("#stickyToolbar")
+          .evaluate((el) => el.getBoundingClientRect().bottom);
+        const headingTop = await page
+          .locator("#resultsHeading")
+          .evaluate((el) => el.getBoundingClientRect().top);
+        return headingTop - toolbarBottom;
+      })
+      .toBeGreaterThanOrEqual(-1);
 
     await page.locator("#advancedToggle").click();
     await expect(page.locator("#advancedPanel")).toBeHidden();
@@ -110,11 +147,15 @@ test.describe("accessibility remainder", () => {
     await summary.focus();
     await page.keyboard.press("Enter");
     await expect(details).toHaveJSProperty("open", true);
-    await expect(definitions.locator(".entry-defs-full")).toHaveText("exam, test, trial, quiz, assessment");
+    await expect(definitions.locator(".entry-defs-full")).toHaveText(
+      "exam, test, trial, quiz, assessment",
+    );
     await expect(definitions.locator(".entry-defs-full")).toBeVisible();
   });
 
-  test("letter shortcuts are inert inside the toolbar while buttons stay native", async ({ page }) => {
+  test("letter shortcuts are inert inside the toolbar while buttons stay native", async ({
+    page,
+  }) => {
     await page.goto("/");
     await page.locator("#jitenInput").setInputFiles(SIXTY_CSV);
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(50);
@@ -124,9 +165,13 @@ test.describe("accessibility remainder", () => {
     await expect(page.locator("#stickyPage")).toHaveText("Page 1 / 2");
     await page.keyboard.press("ArrowRight");
     await expect(page.locator("#stickyPage")).toHaveText("Page 1 / 2");
-    await expect.poll(() =>
-      page.evaluate(() => (document.activeElement instanceof HTMLElement ? document.activeElement.id : "")),
-    ).toBe("stickyNext");
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          document.activeElement instanceof HTMLElement ? document.activeElement.id : "",
+        ),
+      )
+      .toBe("stickyNext");
 
     // Native button activation is untouched.
     await page.keyboard.press("Enter");

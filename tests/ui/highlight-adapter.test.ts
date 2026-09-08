@@ -185,7 +185,11 @@ describe("highlight adapter", () => {
     const rt = document.createElement("rt");
     rt.textContent = "\u3053\u3068\u3070";
     ruby.append(rb, rt);
-    const node = sentence("\u8A00\u8449", "\u8A00\u8449", [text("\u8A00\u8449\u306F"), ruby, text("\u3002")]);
+    const node = sentence("\u8A00\u8449", "\u8A00\u8449", [
+      text("\u8A00\u8449\u306F"),
+      ruby,
+      text("\u3002"),
+    ]);
     node.dataset.surfaceIndex = "1";
     root.appendChild(node);
     const adapter = createHighlightAdapter(root);
@@ -218,7 +222,9 @@ describe("highlight adapter", () => {
     const wrappers = [...node.querySelectorAll("span.th-wrap")];
     expect(wrappers.map((wrapper) => wrapper.textContent).join("")).toBe("\u8A00\u8449");
     expect(wrappers[0]?.closest(".target-highlight")).not.toBeNull();
-    expect(wrappers.some((wrapper) => wrapper.parentElement?.classList.contains("th-wrap"))).toBe(false);
+    expect(wrappers.some((wrapper) => wrapper.parentElement?.classList.contains("th-wrap"))).toBe(
+      false,
+    );
     expect(node.textContent).toBe("\u8A00\u8449\u306F\u8A00\u8449\u304C\u597D\u304D\u3002");
     adapter.destroy();
   });
@@ -238,7 +244,9 @@ describe("highlight adapter", () => {
     adapter.reconcile(root);
 
     const wrappers = [...node.querySelectorAll("span.th-wrap")];
-    expect(wrappers.filter((wrapper) => wrapper.parentElement?.classList.contains("th-wrap"))).toHaveLength(0);
+    expect(
+      wrappers.filter((wrapper) => wrapper.parentElement?.classList.contains("th-wrap")),
+    ).toHaveLength(0);
     expect(wrappers).toHaveLength(2);
     expect(node.textContent).toBe("彼は気になる");
     adapter.destroy();

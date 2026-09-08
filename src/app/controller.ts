@@ -1,31 +1,33 @@
 import type {
   Entry,
-  EntryWithKnown,
   QueryResult,
   QueryState,
   ViewState,
   WordDecision,
   WordDecisionStatus,
 } from "../domain/types";
-import { normalizeText } from "../domain/text";
-import { parseBackup, serializeBackup, type MinerBackupV1 } from "../domain/backup";
 import { createSessionQueueStore, type SessionQueueStore } from "../platform/session-queue";
-import { createIndexedDbAppStore } from "../storage/indexed-db";
-import { createMemoryAppStore } from "../storage/memory-store";
-import { clearLegacyData } from "../storage/legacy";
 import type { AppStore, DatasetMetadata } from "../storage/contracts";
+import { isStorageUnavailableError } from "../storage/fallback";
+import { createIndexedDbAppStore } from "../storage/indexed-db";
+import { clearLegacyData } from "../storage/legacy";
+import { createMemoryAppStore } from "../storage/memory-store";
 import { migrateLegacy } from "./migrate-legacy";
+import { BackupService, MAX_BACKUP_BYTES } from "./services/backup-service";
+import { type ControllerCore, errorMessage } from "./services/context";
+import { CoverageService } from "./services/coverage-service";
+import { DecisionService } from "./services/decision-service";
+import { MiningQueueService } from "./services/mining-queue-service";
+import { ReviewSession } from "./services/review-session";
 import {
-  createInitialAppState,
+  type AppState,
   cloneAppState,
-  snapshotAppState,
+  createInitialAppState,
   DEFAULT_QUERY,
   DEFAULT_VIEW,
-  EMPTY_REVIEW,
-  EMPTY_UNDO,
-  type AppState,
   type FileSource,
   type MinerController,
+  snapshotAppState,
 } from "./state";
 import {
   createWorkerClient,
@@ -33,6 +35,8 @@ import {
   type KnownImportChunk,
   type WorkerClient,
 } from "./worker-client";
+
+export { MAX_BACKUP_BYTES };
 
 export interface MinerControllerOptions {
   store?: AppStore;
@@ -42,10 +46,6 @@ export interface MinerControllerOptions {
   sessionQueueStore?: SessionQueueStore;
   now?: () => string;
   createId?: (kind: "dataset" | "known") => string;
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 function defaultId(kind: "dataset" | "known"): string {
@@ -64,23 +64,6 @@ function defaultLegacyStorage(): Storage | null {
 }
 
 const VIEWPORT_WINDOW_SIZE = 100;
-const QUEUE_SAFETY_THRESHOLD = 5_000;
-export const MAX_BACKUP_BYTES = 25 * 1024 * 1024;
-
-interface UserStateSnapshot {
-  known: { id: string; name: string; words: Set<string> } | null;
-  decisions: WordDecision[];
-  preferences: { query: QueryState; view: ViewState; page: number } | null;
-}
-
-function orderByQueue(items: readonly EntryWithKnown[], queue: readonly string[]): EntryWithKnown[] {
-  const order = new Map(queue.map((word, index) => [word.toLocaleLowerCase(), index]));
-  return [...items].sort((left, right) =>
-    (order.get(left.normalizedWord.toLocaleLowerCase()) ?? Number.MAX_SAFE_INTEGER) -
-      (order.get(right.normalizedWord.toLocaleLowerCase()) ?? Number.MAX_SAFE_INTEGER) ||
-    left.originalIndex - right.originalIndex,
-  );
-}
 
 async function* copiedEntryChunks(chunks: readonly Entry[][]): AsyncIterable<readonly Entry[]> {
   for (const chunk of chunks) yield chunk;
@@ -90,23 +73,18 @@ interface ImportSnapshot {
   state: AppState;
 }
 
-// The single undo entry: the decision status and queue membership that
-// existed BEFORE the last applied decision. Captured pre-mutation inside
-// applyWordDecision; consumed by undoLastDecision (one step only).
-interface UndoRecord {
-  normalizedWord: string;
-  previousStatus: WordDecisionStatus | "unreviewed";
-  previousQueueMembership: boolean;
-}
-
-const UNDO_STATUS_LABELS: Record<WordDecisionStatus | "unreviewed", string> = {
-  known: "Known",
-  mined: "Mined",
-  skip: "Skip",
-  later: "Later",
-  unreviewed: "Unreviewed",
-};
-
+/**
+ * Public façade. Feature logic lives in src/app/services/*:
+ * BackupService, CoverageService, DecisionService, MiningQueueService, and
+ * ReviewSession. The controller owns the shared infrastructure those
+ * services reach through ControllerCore: the AppState, the import/user-state
+ * locks, the userStateEpoch, importGeneration, queryGeneration, viewport
+ * tracking, persistence of preferences, and the storage fallback.
+ *
+ * Lock ordering (never violated): import commit sections and clearSavedData
+ * nest userStateLock inside importLock; nothing ever acquires importLock
+ * while holding userStateLock.
+ */
 class MinerControllerImpl implements MinerController {
   private store: AppStore;
   private readonly worker: WorkerClient;
@@ -126,40 +104,80 @@ class MinerControllerImpl implements MinerController {
   private warningMessage: string | null = null;
   private fallbackWarning: string | null = null;
   private persistentStore: AppStore | null = null;
-  // Imports hold importLock; user-state mutations hold userStateLock; import
-  // commit sections and clearSavedData nest userStateLock inside importLock,
-  // so nothing ever acquires importLock while holding userStateLock.
+  // Imports hold importLock; user-state mutations hold userStateLock.
   private importLock: Promise<unknown> = Promise.resolve();
   private userStateLock: Promise<unknown> = Promise.resolve();
   private userStateEpoch = 0;
-  // Generation that owns the in-flight review decision, or null when idle.
-  // Busy is only consulted within its own generation: a session restarted
-  // mid-decision (stopReview bumps reviewGeneration) does not inherit the
-  // superseded session's busy flag, and the stale decision's finally cannot
-  // clear a newer generation's flag.
-  private reviewBusyGeneration: number | null = null;
-  // Bumped whenever a review session ends (stopReview or dataset change);
-  // in-flight continuations compare their captured value to detect staleness.
-  private reviewGeneration = 0;
   // Bumped whenever the dataset/user-state identity the coverage stats
-  // describe changes (dataset swap, clear, restore attempts); in-flight
-  // coverage responses compare their captured value and stale ones are
-  // dropped. Every request also bumps, so the newest request always wins.
-  private coverageGeneration = 0;
-  // The last successfully applied decision's undo record, mirrored into
-  // state.undo for the UI. Null when undo is unavailable.
-  private undoRecord: UndoRecord | null = null;
+  // describe changes (see CoverageService) — owned by CoverageService.
+  private readonly coverageService: CoverageService;
+  private readonly reviewSession: ReviewSession;
+  private readonly queueService: MiningQueueService;
+  private readonly decisionService: DecisionService;
+  private readonly backupService: BackupService;
 
   constructor(options: MinerControllerOptions) {
     this.storeWasProvided = options.store !== undefined;
-    this.store = options.store ?? (options.indexedDbStoreFactory ?? (() => createIndexedDbAppStore()))();
+    this.store =
+      options.store ?? (options.indexedDbStoreFactory ?? (() => createIndexedDbAppStore()))();
     this.indexedDbStoreFactory = options.indexedDbStoreFactory ?? (() => createIndexedDbAppStore());
     this.worker = options.worker ?? createWorkerClient();
-    this.legacyStorage = options.legacyStorage === undefined ? defaultLegacyStorage() : options.legacyStorage;
+    this.legacyStorage =
+      options.legacyStorage === undefined ? defaultLegacyStorage() : options.legacyStorage;
     this.sessionQueue = options.sessionQueueStore ?? createSessionQueueStore();
     this.now = options.now ?? (() => new Date().toISOString());
     this.createId = options.createId ?? defaultId;
     this.state = createInitialAppState(this.storeWasProvided ? "memory" : "indexeddb");
+
+    const impl = this;
+    const core: ControllerCore = {
+      worker: this.worker,
+      sessionQueue: this.sessionQueue,
+      now: this.now,
+      createId: this.createId,
+      get state() {
+        return impl.state;
+      },
+      publish: () => impl.publish(),
+      setState: (patch) => impl.setState(patch),
+      storageOperation: (operation) => impl.storageOperation(operation),
+      withUserStateLock: (action) => impl.withUserStateLock(action),
+      withImportLock: (action) => impl.withImportLock(action),
+      getUserStateEpoch: () => impl.userStateEpoch,
+      bumpUserStateEpoch: () => {
+        impl.userStateEpoch += 1;
+      },
+      bumpQueryGeneration: () => {
+        impl.queryGeneration += 1;
+        return impl.queryGeneration;
+      },
+      getQueryGeneration: () => impl.queryGeneration,
+      invalidateQueries: () => {
+        impl.queryGeneration += 1;
+      },
+      getWarningMessage: () => impl.warningMessage,
+      getViewportStart: () => impl.viewportStart,
+      setViewportStart: (value) => {
+        impl.viewportStart = value;
+      },
+      persistPreferencesUnlocked: (triggerEpoch) => impl.persistPreferencesUnlocked(triggerEpoch),
+      runQuery: (options) => impl.runQuery(options),
+      loadAndQuery: (datasetId, expectedEntryCount, options) =>
+        impl.loadAndQuery(datasetId, expectedEntryCount, options),
+      decisionTuples: () => impl.decisionTuples(),
+      countChangeSinceExport: () => impl.countChangeSinceExport(),
+    };
+    this.coverageService = new CoverageService(core);
+    this.queueService = new MiningQueueService(core);
+    this.decisionService = new DecisionService(core, this.queueService, this.coverageService);
+    this.reviewSession = new ReviewSession(core, this.decisionService);
+    this.backupService = new BackupService(
+      core,
+      this.reviewSession,
+      this.coverageService,
+      this.decisionService,
+      this.queueService,
+    );
   }
 
   subscribe(listener: (state: Readonly<AppState>) => void): () => void {
@@ -193,13 +211,19 @@ class MinerControllerImpl implements MinerController {
     try {
       const text = await source.text();
       const chunks: Entry[][] = [];
-      const complete = await this.worker.importJiten(source.name, text, (chunk: JitenImportChunk) => {
-        chunks.push(chunk.entries);
-      });
+      const complete = await this.worker.importJiten(
+        source.name,
+        text,
+        (chunk: JitenImportChunk) => {
+          chunks.push(chunk.entries);
+        },
+      );
       if (generation !== this.importGeneration) return;
       const receivedCount = chunks.reduce((count, chunk) => count + chunk.length, 0);
       if (receivedCount !== complete.entryCount) {
-        throw new Error(`Jiten import count did not match worker output: expected ${complete.entryCount}, found ${receivedCount}`);
+        throw new Error(
+          `Jiten import count did not match worker output: expected ${complete.entryCount}, found ${receivedCount}`,
+        );
       }
 
       const dataset = this.datasetMetadata(
@@ -209,7 +233,9 @@ class MinerControllerImpl implements MinerController {
         complete.entryCount,
       );
       stagedDataset = dataset;
-      await this.storageOperation((store) => store.datasets.stage(dataset, copiedEntryChunks(chunks)));
+      await this.storageOperation((store) =>
+        store.datasets.stage(dataset, copiedEntryChunks(chunks)),
+      );
       if (generation !== this.importGeneration) {
         this.mergeWarning(await this.removeStagedDataset(dataset.id));
         return;
@@ -217,12 +243,13 @@ class MinerControllerImpl implements MinerController {
 
       const staged = await this.readDatasetChunks(dataset.id);
       if (staged.entryCount !== dataset.entryCount) {
-        throw new Error(`Staged dataset entry count did not match metadata: expected ${dataset.entryCount}, found ${staged.entryCount}`);
+        throw new Error(
+          `Staged dataset entry count did not match metadata: expected ${dataset.entryCount}, found ${staged.entryCount}`,
+        );
       }
       await this.worker.loadDataset(dataset.id, copiedEntryChunks(staged.values));
-      const candidateWindow = this.state.query.pageSize === "all"
-        ? { start: 0, size: VIEWPORT_WINDOW_SIZE }
-        : undefined;
+      const candidateWindow =
+        this.state.query.pageSize === "all" ? { start: 0, size: VIEWPORT_WINDOW_SIZE } : undefined;
       candidateResult = await this.worker.query({
         datasetId: dataset.id,
         knownWords: [...this.state.knownWords],
@@ -237,33 +264,31 @@ class MinerControllerImpl implements MinerController {
       }
 
       activationAttempted = true;
-      committed = await this.withImportLock(() => this.withUserStateLock(async () => {
-        await this.activateAndVerify(dataset);
-        if (generation !== this.importGeneration) return false;
-        this.state.dataset = dataset;
-        this.state.page = 1;
-        this.state.query = { ...this.state.query, page: 1 };
-        this.state.result = candidateResult;
-        // A newly activated dataset starts with a fresh queue association.
-        this.state.queue = { datasetId: dataset.id, normalizedWords: [], mode: "normal" };
-        this.sessionQueue.clear();
-        // The committed dataset change invalidates any pending undo record:
-        // its word/queue context belongs to the replaced dataset.
-        this.undoRecord = null;
-        this.state.undo = { ...EMPTY_UNDO };
-        this.viewportStart = 0;
-        this.queryGeneration += 1;
-        // Dataset identity changed: stale coverage responses are dead and the
-        // old dataset's stats no longer describe the active dataset.
-        this.coverageGeneration += 1;
-        this.state.coverage = null;
-        // The dataset changed; a stale review card must not survive the commit.
-        if (this.state.review.active) this.stopReview();
-        this.setState({ status: "ready", errorMessage: this.warningMessage });
-        // Already inside withUserStateLock: the lock-free form (see site map).
-        await this.persistPreferencesUnlocked();
-        return true;
-      }));
+      committed = await this.withImportLock(() =>
+        this.withUserStateLock(async () => {
+          await this.activateAndVerify(dataset);
+          if (generation !== this.importGeneration) return false;
+          this.state.dataset = dataset;
+          this.state.query = { ...this.state.query, page: 1 };
+          this.state.result = candidateResult;
+          // A newly activated dataset starts with a fresh queue association.
+          this.queueService.beginDataset(dataset.id);
+          // The committed dataset change invalidates any pending undo record:
+          // its word/queue context belongs to the replaced dataset.
+          this.decisionService.clearUndo();
+          this.viewportStart = 0;
+          this.queryGeneration += 1;
+          // Dataset identity changed: stale coverage responses are dead and the
+          // old dataset's stats no longer describe the active dataset.
+          this.coverageService.reset();
+          // The dataset changed; a stale review card must not survive the commit.
+          if (this.state.review.active) this.stopReview();
+          this.setState({ status: "ready", errorMessage: this.warningMessage });
+          // Already inside withUserStateLock: the lock-free form (see site map).
+          await this.persistPreferencesUnlocked();
+          return true;
+        }),
+      );
       if (committed) {
         await this.runQuery();
         await this.requestCoverage();
@@ -275,12 +300,15 @@ class MinerControllerImpl implements MinerController {
     } catch (error) {
       if (activationAttempted) {
         try {
-          await this.withImportLock(() => this.rollbackActivation(stagedDataset!.id, previous.state.dataset));
+          await this.withImportLock(() =>
+            this.rollbackActivation(stagedDataset!.id, previous.state.dataset),
+          );
         } catch {
           // The primary import error remains the actionable failure.
         }
       }
-      const cleanupWarning = stagedDataset === null ? null : await this.removeStagedDataset(stagedDataset.id);
+      const cleanupWarning =
+        stagedDataset === null ? null : await this.removeStagedDataset(stagedDataset.id);
       if (generation !== this.importGeneration) {
         this.mergeWarning(cleanupWarning);
         return;
@@ -293,7 +321,8 @@ class MinerControllerImpl implements MinerController {
           this.state.result = previous.state.result;
         }
       }
-      const message = cleanupWarning === null ? errorMessage(error) : `${errorMessage(error)} ${cleanupWarning}`;
+      const message =
+        cleanupWarning === null ? errorMessage(error) : `${errorMessage(error)} ${cleanupWarning}`;
       this.setState({ status: "error", errorMessage: message });
     }
   }
@@ -306,31 +335,44 @@ class MinerControllerImpl implements MinerController {
     try {
       const text = await source.text();
       const chunks: string[][] = [];
-      const complete = await this.worker.importKnown(source.name, text, (chunk: KnownImportChunk) => {
-        chunks.push(chunk.words);
-      });
+      const complete = await this.worker.importKnown(
+        source.name,
+        text,
+        (chunk: KnownImportChunk) => {
+          chunks.push(chunk.words);
+        },
+      );
       if (generation !== this.importGeneration) return;
 
       const words = new Set<string>();
       for (const chunk of chunks) for (const word of chunk) words.add(word);
-      if (words.size !== complete.wordCount) throw new Error("Known-word import count did not match worker output");
+      if (words.size !== complete.wordCount)
+        throw new Error("Known-word import count did not match worker output");
       const knownId = this.createId("known");
       const saved = await this.withImportLock(async () => {
         if (generation !== this.importGeneration) return false;
         const epoch = this.userStateEpoch;
         return this.withUserStateLock(async () => {
           if (epoch !== this.userStateEpoch) return false;
-          const previousKnown = await this.storageOperation((store) => store.knownWords.getActive());
-          await this.storageOperation((store) => store.knownWords.save(knownId, source.name, words));
+          const previousKnown = await this.storageOperation((store) =>
+            store.knownWords.getActive(),
+          );
+          await this.storageOperation((store) =>
+            store.knownWords.save(knownId, source.name, words),
+          );
           try {
-            const activeKnown = await this.storageOperation((store) => store.knownWords.getActive());
+            const activeKnown = await this.storageOperation((store) =>
+              store.knownWords.getActive(),
+            );
             if (
               activeKnown === null ||
               activeKnown.id !== knownId ||
               activeKnown.words.size !== words.size ||
               [...words].some((word) => !activeKnown.words.has(word))
             ) {
-              throw new Error("Known-word import verification failed: saved words differ from the imported set");
+              throw new Error(
+                "Known-word import verification failed: saved words differ from the imported set",
+              );
             }
           } catch (error) {
             const rollbackWarning = await this.rollbackKnownWords(knownId, previousKnown);
@@ -342,9 +384,11 @@ class MinerControllerImpl implements MinerController {
           this.state.knownWords = words;
           this.state.knownWordsName = source.name;
           this.state.query = { ...this.state.query, hideKnown: true, page: 1 };
-          this.state.page = 1;
           this.state.result = null;
-          this.setState({ status: this.state.dataset === null ? "empty" : "loading", errorMessage: this.warningMessage });
+          this.setState({
+            status: this.state.dataset === null ? "empty" : "loading",
+            errorMessage: this.warningMessage,
+          });
           return true;
         });
       });
@@ -363,9 +407,11 @@ class MinerControllerImpl implements MinerController {
   updateQuery(patch: Partial<QueryState>): void {
     const page = patch.page === undefined ? 1 : patch.page;
     this.state.query = { ...this.state.query, ...patch, page };
-    this.state.page = page;
     this.viewportStart = 0;
-    this.setState({ status: this.state.dataset === null ? "empty" : "loading", errorMessage: this.warningMessage });
+    this.setState({
+      status: this.state.dataset === null ? "empty" : "loading",
+      errorMessage: this.warningMessage,
+    });
     void this.runQuery();
   }
 
@@ -387,161 +433,115 @@ class MinerControllerImpl implements MinerController {
   changePage(delta: number): void {
     const numericDelta = Number.isFinite(delta) ? Math.trunc(delta) : 0;
     const totalPages = this.state.result?.totalPages ?? 1;
-    const currentPage = this.state.page > 0 ? this.state.page : 1;
+    const currentPage = this.state.query.page > 0 ? this.state.query.page : 1;
     const nextPage = Math.min(Math.max(1, totalPages), Math.max(1, currentPage + numericDelta));
     if (nextPage === currentPage) return;
 
-    this.state.page = nextPage;
     this.state.query = { ...this.state.query, page: nextPage };
-    this.setState({ status: this.state.dataset === null ? "empty" : "loading", errorMessage: this.warningMessage });
+    this.setState({
+      status: this.state.dataset === null ? "empty" : "loading",
+      errorMessage: this.warningMessage,
+    });
     void this.runQuery();
   }
 
-  async setWordDecision(normalizedWord: string, status: WordDecisionStatus | "unreviewed"): Promise<void> {
-    if (normalizeText(normalizedWord).toLocaleLowerCase().length === 0) {
-      throw new Error("Word decision requires a non-empty normalized word");
-    }
-    const epoch = this.userStateEpoch;
-    await this.applyWordDecision(normalizedWord, status, epoch).catch((error: unknown) => {
-      if (epoch !== this.userStateEpoch) return;
-      this.setState({ errorMessage: `Word decision could not be saved: ${errorMessage(error)}` });
-    });
+  setWordDecision(
+    normalizedWord: string,
+    status: WordDecisionStatus | "unreviewed",
+  ): Promise<void> {
+    return this.decisionService.setWordDecision(normalizedWord, status);
   }
 
-  async undoLastDecision(): Promise<void> {
-    const record = this.undoRecord;
-    if (record === null) return;
-    // Consume the record first: undo is single-step, and a second call while
-    // a re-apply is still in flight must no-op.
-    this.undoRecord = null;
-    const priorUndo = this.state.undo;
-    this.state.undo = { ...EMPTY_UNDO };
-    // Undo is itself a user action: capture its own epoch so a concurrent
-    // clear/restore that wins the lock first drops this re-apply.
-    const epoch = this.userStateEpoch;
-    try {
-      // Re-apply through the SAME decision path (locks, epoch checks, queue
-      // removal, coverage refresh) rather than a raw store write — without
-      // capturing a fresh undo record, so one undo does not become redo.
-      await this.applyWordDecision(record.normalizedWord, record.previousStatus, epoch, { captureUndo: false });
-      // A concurrent clear/restore bumped the epoch and dropped the re-apply:
-      // the record stays consumed (the restored/cleared world replaced the
-      // context it described), and the queue re-add must not half-apply on
-      // top of that replaced state.
-      if (epoch !== this.userStateEpoch) return;
-      // Restore queue membership the decision's auto-removal dropped. The
-      // word is APPENDED to the end: original position is not tracked, and
-      // one-step undo only promises the word returns to the queue.
-      if (record.previousQueueMembership) {
-        const queueDatasetId = this.state.queue.datasetId;
-        if (
-          queueDatasetId !== null
-          && !this.state.queue.normalizedWords.includes(record.normalizedWord)
-        ) {
-          this.setQueueWords(queueDatasetId, [...this.state.queue.normalizedWords, record.normalizedWord]);
-        }
-      }
-    } catch (error) {
-      if (epoch === this.userStateEpoch) {
-        // The re-apply failed without mutating anything: put the record back
-        // so undo can be retried once the cause is resolved.
-        this.undoRecord = record;
-        this.state.undo = priorUndo;
-        this.setState({ errorMessage: `Undo could not be saved: ${errorMessage(error)}` });
-      }
-    }
+  undoLastDecision(): Promise<void> {
+    return this.decisionService.undoLastDecision();
   }
 
-  async startReview(): Promise<void> {
-    if (this.state.review.active || this.state.dataset === null) return;
-    this.state.review = { ...EMPTY_REVIEW, active: true, status: "loading" };
-    this.publish();
-    await this.runReviewQuery({ captureInitial: true });
+  startReview(): Promise<void> {
+    return this.reviewSession.start();
   }
 
   stopReview(): void {
-    if (!this.state.review.active) return;
-    this.reviewGeneration += 1;
-    this.state.review = { ...EMPTY_REVIEW };
-    this.publish();
+    this.reviewSession.stop();
   }
 
-  async reviewDecision(status: WordDecisionStatus): Promise<void> {
-    const review = this.state.review;
-    if (
-      !review.active
-      || review.status !== "ready"
-      || review.current === null
-      || this.reviewBusyGeneration === this.reviewGeneration
-    ) return;
-    const generation = this.reviewGeneration;
-    const word = review.current.normalizedWord;
-    this.reviewBusyGeneration = generation;
-    this.state.review = { ...review, status: "loading", errorMessage: null };
-    this.publish();
-
-    const epoch = this.userStateEpoch;
-    try {
-      await this.applyWordDecision(word, status, epoch);
-      if (generation !== this.reviewGeneration || !this.state.review.active) return;
-      this.state.review = {
-        ...this.state.review,
-        processed: this.state.review.processed + 1,
-        status: "loading",
-      };
-      this.publish();
-      await this.runReviewQuery();
-    } catch (error) {
-      if (generation !== this.reviewGeneration || !this.state.review.active) return;
-      this.state.review = {
-        ...this.state.review,
-        status: this.state.review.current === null ? "complete" : "ready",
-        errorMessage: `Word decision could not be saved: ${errorMessage(error)}`,
-      };
-      this.publish();
-    } finally {
-      if (this.reviewBusyGeneration === generation) this.reviewBusyGeneration = null;
-    }
+  reviewDecision(status: WordDecisionStatus): Promise<void> {
+    return this.reviewSession.reviewDecision(status);
   }
 
   toggleQueued(normalizedWord: string): void {
-    const dataset = this.state.dataset;
-    if (dataset === null) return;
-    const word = normalizeText(normalizedWord).toLocaleLowerCase();
-    if (word.length === 0) return;
-    const words = this.state.queue.normalizedWords;
-    // Adding an already-queued word leaves the queue unchanged; removal is a
-    // separate explicit action.
-    if (words.includes(word)) return;
-    this.setQueueWords(dataset.id, [...words, word]);
+    this.queueService.toggleQueued(normalizedWord);
   }
 
   removeQueued(normalizedWord: string): void {
-    const dataset = this.state.dataset;
-    if (dataset === null) return;
-    const word = normalizeText(normalizedWord).toLocaleLowerCase();
-    this.setQueueWords(dataset.id, this.state.queue.normalizedWords.filter((queued) => queued !== word));
-  }  clearQueue(): void {
-    const dataset = this.state.dataset;
-    if (dataset === null) return;
-    this.setQueueWords(dataset.id, []);
+    this.queueService.removeQueued(normalizedWord);
   }
 
-  async startQueueMode(): Promise<void> {
-    const dataset = this.state.dataset;
-    if (dataset === null || this.state.queue.mode === "queue") return;
-    // An empty queue cannot enter mining mode.
-    if (this.state.queue.normalizedWords.length === 0) return;
-    this.state.queue = { ...this.state.queue, mode: "queue" };
-    this.publish();
-    await this.runQueueQuery();
+  clearQueue(): void {
+    this.queueService.clearQueue();
+  }
+
+  startQueueMode(): Promise<void> {
+    return this.queueService.startQueueMode();
   }
 
   stopQueueMode(): void {
-    if (this.state.queue.mode !== "queue") return;
-    this.state.queue = { ...this.state.queue, mode: "normal" };
-    this.publish();
-    void this.runQuery();
+    this.queueService.stopQueueMode();
+  }
+
+  exportBackup(): Promise<string> {
+    return this.backupService.exportBackup();
+  }
+
+  restoreBackup(text: string): Promise<void> {
+    return this.backupService.restoreBackup(text);
+  }
+
+  async clearSavedData(): Promise<void> {
+    await this.withImportLock(() =>
+      this.withUserStateLock(async () => {
+        this.userStateEpoch += 1;
+        this.importGeneration += 1;
+        this.queryGeneration += 1;
+        this.reviewSession.invalidate();
+        this.coverageService.invalidate();
+        const clearFailures: string[] = [];
+        try {
+          await this.storageOperation((store) => store.clearAll());
+        } catch (error) {
+          clearFailures.push(`Saved data could not be fully cleared: ${errorMessage(error)}`);
+        }
+        if (this.persistentStore !== null) {
+          try {
+            await this.persistentStore.clearAll();
+          } catch (error) {
+            clearFailures.push(
+              `Saved data could not be cleared from persistent storage: ${errorMessage(error)}`,
+            );
+          }
+        }
+        if (this.legacyStorage !== null) {
+          try {
+            clearLegacyData(this.legacyStorage);
+          } catch (error) {
+            clearFailures.push(`Legacy saved data could not be cleared: ${errorMessage(error)}`);
+          }
+        }
+        this.worker.dispose();
+        this.sessionQueue.clear();
+        // Fresh initial state nulls lastExportAt and zeroes changesSinceExport:
+        // clearing saved data also wipes the export this session referred to.
+        this.state = createInitialAppState(this.state.persistence);
+        // The service-owned undo record described the cleared world; drop it.
+        this.decisionService.clearUndo();
+        this.warningMessage =
+          [this.fallbackWarning, ...clearFailures]
+            .filter((part): part is string => part !== null)
+            .join(" ")
+            .trim() || null;
+        this.state.errorMessage = this.warningMessage;
+        this.publish();
+      }),
+    );
   }
 
   // Backup freshness (session-only): bump after any logical durable user-state
@@ -556,289 +556,6 @@ class MinerControllerImpl implements MinerController {
     this.state.changesSinceExport += 1;
   }
 
-  async exportBackup(): Promise<string> {
-    return this.withUserStateLock(async () => {
-      const known = await this.storageOperation((store) => store.knownWords.getActive());
-      const knownWords = known === null
-        ? null
-        : { name: known.name, words: [...known.words] };
-      const exportedAt = this.now();
-      const json = serializeBackup({
-        exportedAt,
-        knownWords,
-        wordDecisions: this.state.wordDecisions.values(),
-        preferences: {
-          query: { ...this.state.query, page: this.state.page },
-          view: { ...this.state.view },
-          page: this.state.page,
-        },
-      });
-      // A completed export resets the freshness signal. Publish inside the
-      // existing lock so the Data area line updates immediately.
-      this.state.lastExportAt = exportedAt;
-      this.state.changesSinceExport = 0;
-      this.publish();
-      return json;
-    });
-  }
-
-  async restoreBackup(text: string): Promise<void> {
-    if (text.length > MAX_BACKUP_BYTES) {
-      const message = `Backup is too large: ${text.length} bytes exceeds the ${MAX_BACKUP_BYTES} byte limit`;
-      this.queryGeneration += 1;
-      // A review continuation in flight across the failure must not publish
-      // into the post-failure state; mirror clearSavedData's invalidation.
-      this.reviewGeneration += 1;
-      this.coverageGeneration += 1;
-      this.setState({ errorMessage: `Backup could not be restored: ${message}` });
-      throw new Error(message);
-    }
-    let backup: MinerBackupV1;
-    try {
-      backup = parseBackup(text);
-    } catch (error) {
-      this.queryGeneration += 1;
-      // Same invalidation as the size-limit exit above.
-      this.reviewGeneration += 1;
-      this.coverageGeneration += 1;
-      this.setState({ errorMessage: `Backup could not be restored: ${errorMessage(error)}` });
-      throw error;
-    }
-
-    await this.withUserStateLock(async () => {
-      this.userStateEpoch += 1;
-      const snapshot = await this.storageOperation(async (store) => ({
-        known: await store.knownWords.getActive(),
-        decisions: await store.wordDecisions.list(),
-        preferences: await store.preferences.load(),
-      }));
-
-      const knownId = this.createId("known");
-      const preferences = backup.preferences ?? {
-        query: { ...DEFAULT_QUERY, page: 1 },
-        view: { ...DEFAULT_VIEW },
-        page: 1,
-      };
-
-      // Single-transaction fast path: stores implementing restoreUserState
-      // commit every category in one durable transaction, so process death
-      // mid-restore leaves the pre-restore state intact and app-level
-      // rollback is unnecessary. Presence is checked inside the operation
-      // because storageOperation may retry on a different (memory) store.
-      const restoredAtomically = await this.storageOperation(async (store) => {
-        if (store.restoreUserState === undefined) return false;
-        await store.restoreUserState({
-          knownWords: backup.knownWords === null
-            ? null
-            : {
-                id: knownId,
-                name: backup.knownWords.name,
-                words: new Set(backup.knownWords.words),
-              },
-          decisions: backup.wordDecisions,
-          preferences,
-        });
-        return true;
-      }).catch((error: unknown) => {
-        // The atomic transaction aborted; the storage engine rolled
-        // everything back, so no app-level rollback writes are needed.
-        this.queryGeneration += 1;
-        // Same invalidation as the size-limit exit above.
-        this.reviewGeneration += 1;
-        this.coverageGeneration += 1;
-        this.setState({ errorMessage: `Backup could not be restored: ${errorMessage(error)}` });
-        throw error;
-      });
-
-      if (!restoredAtomically) {
-        let decisionsWritten = false;
-        let preferencesWritten = false;
-        try {
-          await this.writeRestoredKnownWords(knownId, backup);
-          await this.storageOperation((store) => store.wordDecisions.replaceAll(backup.wordDecisions));
-          decisionsWritten = true;
-          await this.storageOperation((store) => store.preferences.save(preferences));
-          preferencesWritten = true;
-        } catch (error) {
-          const rollbackWarning = await this.rollbackUserState(snapshot, {
-            knownWritten: true,
-            decisionsWritten,
-            preferencesWritten,
-          });
-          const message = rollbackWarning === null
-            ? errorMessage(error)
-            : `${errorMessage(error)} ${rollbackWarning}`;
-          this.queryGeneration += 1;
-          // Same invalidation as the size-limit exit above.
-          this.reviewGeneration += 1;
-          this.coverageGeneration += 1;
-          this.setState({ errorMessage: `Backup could not be restored: ${message}` });
-          throw error;
-        }
-      }
-
-      this.applyRestoredState(backup);
-      // Queue contents and review session are transient; restore never injects
-      // them, and mining/review mode cannot continue over replaced decisions.
-      if (this.state.queue.mode === "queue") {
-        this.state.queue = { ...this.state.queue, mode: "normal" };
-      }
-      if (this.state.review.active) this.stopReview();
-      // One committed restore is one counted change regardless of how many
-      // decisions/known words it replaced (single logical user action).
-      this.countChangeSinceExport();
-      const dataset = this.state.dataset;
-      if (dataset === null) {
-        this.setState({ status: "empty", errorMessage: this.warningMessage });
-        // Already inside withUserStateLock: the lock-free form (see site map).
-        await this.persistPreferencesUnlocked();
-        return;
-      }
-      this.setState({ status: "loading", errorMessage: this.warningMessage });
-      await this.loadAndQuery(dataset.id, dataset.entryCount, { callerHoldsUserStateLock: true });
-    });
-  }
-
-  private async writeRestoredKnownWords(knownId: string, backup: MinerBackupV1): Promise<void> {
-    if (backup.knownWords === null) {
-      const active = await this.storageOperation((store) => store.knownWords.getActive());
-      if (active === null) return;
-      await this.storageOperation(async (store) => {
-        if (store.knownWords.remove === undefined) throw new Error("Known-word store cannot remove records");
-        await store.knownWords.remove(active.id);
-      });
-      return;
-    }
-    const words = new Set(backup.knownWords.words);
-    await this.storageOperation((store) => store.knownWords.save(knownId, backup.knownWords!.name, words));
-  }
-
-  private async rollbackUserState(
-    snapshot: UserStateSnapshot,
-    written: { knownWritten: boolean; decisionsWritten: boolean; preferencesWritten: boolean },
-  ): Promise<string | null> {
-    const failures: string[] = [];
-    if (written.preferencesWritten) {
-      try {
-        if (snapshot.preferences !== null) {
-          await this.storageOperation((store) => store.preferences.save(snapshot.preferences!));
-        } else {
-          await this.storageOperation(async (store) => {
-            if (store.preferences.clear === undefined) throw new Error("Preference store cannot clear records");
-            await store.preferences.clear();
-          });
-        }
-      } catch (error) {
-        failures.push(`Preferences rollback failed: ${errorMessage(error)}`);
-      }
-    }
-    if (written.decisionsWritten) {
-      try {
-        await this.storageOperation((store) => store.wordDecisions.replaceAll(snapshot.decisions));
-      } catch (error) {
-        failures.push(`Word decision rollback failed: ${errorMessage(error)}`);
-      }
-    }
-    if (written.knownWritten) {
-      try {
-        if (snapshot.known !== null) {
-          await this.storageOperation((store) =>
-            store.knownWords.save(snapshot.known!.id, snapshot.known!.name, snapshot.known!.words)
-          );
-        } else {
-          const active = await this.storageOperation((store) => store.knownWords.getActive());
-          if (active !== null) {
-            await this.storageOperation(async (store) => {
-              if (store.knownWords.remove === undefined) throw new Error("Known-word store cannot remove records");
-              await store.knownWords.remove(active.id);
-            });
-          }
-        }
-      } catch (error) {
-        failures.push(`Known-word rollback failed: ${errorMessage(error)}`);
-      }
-    }
-    return failures.length === 0 ? null : failures.join(" ");
-  }
-
-  private applyRestoredState(backup: MinerBackupV1): void {
-    if (backup.knownWords === null) {
-      this.state.knownWords = new Set<string>();
-      this.state.knownWordsName = null;
-    } else {
-      this.state.knownWords = new Set(backup.knownWords.words);
-      this.state.knownWordsName = backup.knownWords.name;
-    }
-    this.state.wordDecisions = new Map(
-      backup.wordDecisions.map((decision) => [decision.normalizedWord, { ...decision }]),
-    );
-    const preferences = backup.preferences;
-    if (preferences === null) {
-      this.state.query = { ...DEFAULT_QUERY };
-      this.state.view = { ...DEFAULT_VIEW };
-      this.state.page = 1;
-    } else {
-      this.state.query = { ...DEFAULT_QUERY, ...preferences.query, page: preferences.page };
-      this.state.view = { ...preferences.view };
-      this.state.page = preferences.page;
-    }
-    this.viewportStart = 0;
-    this.queryGeneration += 1;
-    this.state.result = null;
-    // Restored decisions replaced the pre-restore ones, so the pending undo
-    // record no longer describes any live decision.
-    this.undoRecord = null;
-    this.state.undo = { ...EMPTY_UNDO };
-    // Restored user state invalidates any in-flight coverage computation, and
-    // the pre-restore stats no longer describe the restored known/decisions.
-    this.coverageGeneration += 1;
-    this.state.coverage = null;
-    this.state.coverageStatus = "idle";
-    this.state.coverageErrorMessage = null;
-  }
-
-  async clearSavedData(): Promise<void> {
-    await this.withImportLock(() => this.withUserStateLock(async () => {
-      this.userStateEpoch += 1;
-      this.importGeneration += 1;
-      this.queryGeneration += 1;
-      this.reviewGeneration += 1;
-      this.coverageGeneration += 1;
-      const clearFailures: string[] = [];
-      try {
-        await this.storageOperation((store) => store.clearAll());
-      } catch (error) {
-        clearFailures.push(`Saved data could not be fully cleared: ${errorMessage(error)}`);
-      }
-      if (this.persistentStore !== null) {
-        try {
-          await this.persistentStore.clearAll();
-        } catch (error) {
-          clearFailures.push(`Saved data could not be cleared from persistent storage: ${errorMessage(error)}`);
-        }
-      }
-      if (this.legacyStorage !== null) {
-        try {
-          clearLegacyData(this.legacyStorage);
-        } catch (error) {
-          clearFailures.push(`Legacy saved data could not be cleared: ${errorMessage(error)}`);
-        }
-      }
-      this.worker.dispose();
-      this.sessionQueue.clear();
-      this.undoRecord = null;
-      // Fresh initial state nulls lastExportAt and zeroes changesSinceExport:
-      // clearing saved data also wipes the export this session referred to.
-      this.state = createInitialAppState(this.state.persistence);
-      this.warningMessage = [this.fallbackWarning, ...clearFailures]
-        .filter((part): part is string => part !== null)
-        .join(" ")
-        .trim() || null;
-      this.state.errorMessage = this.warningMessage;
-      this.publish();
-    }));
-  }
-
   private async initialize(): Promise<void> {
     await this.ensureStorage();
 
@@ -851,10 +568,15 @@ class MinerControllerImpl implements MinerController {
         query: this.state.query,
         view: this.state.view,
         now: this.now,
-        createId: (kind: "media" | "known") => this.createId(kind === "media" ? "dataset" : "known"),
+        createId: (kind: "media" | "known") =>
+          this.createId(kind === "media" ? "dataset" : "known"),
       });
       let migration = await migrateLegacy(migrationOptions());
-      if (migration.storageFailure && !this.storeWasProvided && this.state.persistence === "indexeddb") {
+      if (
+        migration.storageFailure &&
+        !this.storeWasProvided &&
+        this.state.persistence === "indexeddb"
+      ) {
         await this.switchToMemory(migration.warning ?? "Legacy migration persistence failed.");
         migration = await migrateLegacy(migrationOptions());
       }
@@ -866,12 +588,14 @@ class MinerControllerImpl implements MinerController {
     let decisions: WordDecision[];
     let preferences: { query: QueryState; view: ViewState; page: number } | null;
     try {
-      [active, known, decisions, preferences] = await this.storageOperation((store) => Promise.all([
-        store.datasets.getActive(),
-        store.knownWords.getActive(),
-        store.wordDecisions.list(),
-        store.preferences.load(),
-      ]));
+      [active, known, decisions, preferences] = await this.storageOperation((store) =>
+        Promise.all([
+          store.datasets.getActive(),
+          store.knownWords.getActive(),
+          store.wordDecisions.list(),
+          store.preferences.load(),
+        ]),
+      );
     } catch (error) {
       this.setState({ status: "error", errorMessage: errorMessage(error) });
       return;
@@ -881,17 +605,22 @@ class MinerControllerImpl implements MinerController {
       this.state.knownWords = new Set(known.words);
       this.state.knownWordsName = known.name;
     }
-    this.state.wordDecisions = new Map(decisions.map((decision) => [decision.normalizedWord, decision]));
+    this.state.wordDecisions = new Map(
+      decisions.map((decision) => [decision.normalizedWord, decision]),
+    );
     if (preferences !== null) {
       // Preferences written before word decisions lack query.decision; DEFAULT_QUERY fills it as "all".
-      this.state.query = { ...DEFAULT_QUERY, ...preferences.query, page: preferences.page };
+      this.state.query = {
+        ...DEFAULT_QUERY,
+        ...preferences.query,
+        page: preferences.page,
+      };
       // Same additive fill for the view: records stored before the reading
       // display controls shipped lack sentenceSize/density.
       this.state.view = { ...DEFAULT_VIEW, ...preferences.view };
-      this.state.page = preferences.page;
     }
     this.state.dataset = active;
-    this.restoreQueueSnapshot(active);
+    this.queueService.restoreSnapshot(active);
     this.publish();
 
     if (active === null) {
@@ -914,6 +643,11 @@ class MinerControllerImpl implements MinerController {
       return await operation(this.store);
     } catch (error) {
       if (this.storeWasProvided || this.state.persistence !== "indexeddb") throw error;
+      // Only a genuinely unavailable/unusable storage backend may trigger
+      // the memory fallback. Application/domain invariant failures surface
+      // here so a bug or malformed record cannot silently hide behind a
+      // store switch (see storage/fallback.ts).
+      if (!isStorageUnavailableError(error)) throw error;
       await this.switchToMemory(error);
       return operation(this.store);
     }
@@ -943,9 +677,9 @@ class MinerControllerImpl implements MinerController {
     }
     try {
       await replacement.preferences.save({
-        query: { ...this.state.query, page: this.state.page },
+        query: { ...this.state.query },
         view: { ...this.state.view },
-        page: this.state.page,
+        page: this.state.query.page,
       });
     } catch {
       // Preferences are non-critical; visible state retains them.
@@ -998,10 +732,14 @@ class MinerControllerImpl implements MinerController {
   private async activateAndVerify(dataset: DatasetMetadata): Promise<void> {
     await this.storageOperation((store) => store.datasets.activate(dataset.id));
     const active = await this.storageOperation((store) => store.datasets.getActive());
-    if (active?.id !== dataset.id) throw new Error(`Dataset activation could not be verified: ${dataset.id}`);
+    if (active?.id !== dataset.id)
+      throw new Error(`Dataset activation could not be verified: ${dataset.id}`);
   }
 
-  private async rollbackActivation(datasetId: string, previousDataset: DatasetMetadata | null): Promise<void> {
+  private async rollbackActivation(
+    datasetId: string,
+    previousDataset: DatasetMetadata | null,
+  ): Promise<void> {
     const current = await this.storageOperation((store) => store.datasets.getActive());
     if (current?.id !== datasetId) return;
     if (previousDataset !== null) {
@@ -1016,14 +754,17 @@ class MinerControllerImpl implements MinerController {
     const failures: string[] = [];
     if (previous !== null) {
       try {
-        await this.storageOperation((store) => store.knownWords.save(previous.id, previous.name, previous.words));
+        await this.storageOperation((store) =>
+          store.knownWords.save(previous.id, previous.name, previous.words),
+        );
       } catch (error) {
         failures.push(`Known-word rollback failed: ${errorMessage(error)}`);
       }
     } else {
       try {
         await this.storageOperation(async (store) => {
-          if (store.knownWords.remove === undefined) throw new Error("Known-word store cannot remove records");
+          if (store.knownWords.remove === undefined)
+            throw new Error("Known-word store cannot remove records");
           await store.knownWords.remove(knownId);
         });
       } catch (error) {
@@ -1035,177 +776,33 @@ class MinerControllerImpl implements MinerController {
 
   private mergeWarning(warning: string | null): void {
     if (warning === null) return;
-    this.warningMessage = this.warningMessage === null ? warning : `${this.warningMessage} ${warning}`;
+    this.warningMessage =
+      this.warningMessage === null ? warning : `${this.warningMessage} ${warning}`;
   }
 
   private withImportLock<T>(action: () => Promise<T>): Promise<T> {
     const result = this.importLock.then(action, action);
-    this.importLock = result.then(() => undefined, () => undefined);
+    this.importLock = result.then(
+      () => undefined,
+      () => undefined,
+    );
     return result;
   }
 
   private withUserStateLock<T>(action: () => Promise<T>): Promise<T> {
     const result = this.userStateLock.then(action, action);
-    this.userStateLock = result.then(() => undefined, () => undefined);
+    this.userStateLock = result.then(
+      () => undefined,
+      () => undefined,
+    );
     return result;
   }
 
   private decisionTuples(): Array<[string, WordDecisionStatus]> {
-    return [...this.state.wordDecisions.values()].map((decision) => [decision.normalizedWord, decision.status]);
-  }
-
-  private setQueueWords(datasetId: string, words: string[]): void {
-    this.state.queue = { ...this.state.queue, datasetId, normalizedWords: words };
-    this.sessionQueue.save({ version: 1, datasetId, normalizedWords: words });
-    this.publish();
-    if (this.state.queue.mode === "queue") void this.runQueueQuery();
-  }
-
-  private restoreQueueSnapshot(active: DatasetMetadata | null): void {
-    if (active === null) return;
-    const snapshot = this.sessionQueue.load();
-    const words = snapshot !== null && snapshot.datasetId === active.id ? [...snapshot.normalizedWords] : [];
-    this.state.queue = { datasetId: active.id, normalizedWords: words, mode: "normal" };
-  }
-
-  private async runQueueQuery(): Promise<void> {
-    const dataset = this.state.dataset;
-    if (dataset === null || this.state.queue.mode !== "queue") return;
-    const words = this.state.queue.normalizedWords;
-    // Above the safety threshold keep worker paging / the virtual list; the
-    // simple path mounts every queued entry ordered by time added.
-    const bounded = words.length > QUEUE_SAFETY_THRESHOLD;
-    const queueQuery: QueryState = bounded
-      ? { ...this.state.query, page: Math.max(1, this.state.page) }
-      : { ...this.state.query, pageSize: "all", page: 1 };
-    const window = bounded && this.state.query.pageSize === "all"
-      ? { start: this.viewportStart, size: VIEWPORT_WINDOW_SIZE }
-      : undefined;
-    const generation = ++this.queryGeneration;
-    try {
-      const result = await this.worker.query({
-        datasetId: dataset.id,
-        knownWords: [...this.state.knownWords],
-        decisions: this.decisionTuples(),
-        includeNormalizedWords: [...words],
-        query: queueQuery,
-        queryChannel: "queue",
-        ...(window === undefined ? {} : { window }),
-      });
-      if (generation !== this.queryGeneration || this.state.queue.mode !== "queue") return;
-      this.state.result = {
-        ...result,
-        items: bounded ? result.items : orderByQueue(result.items, words),
-      };
-      this.setState({ status: "ready", errorMessage: this.warningMessage });
-    } catch (error) {
-      if (generation !== this.queryGeneration) return;
-      this.setState({ status: "error", errorMessage: errorMessage(error) });
-    }
-  }
-
-  private async runReviewQuery(options: { captureInitial?: boolean } = {}): Promise<void> {
-    const dataset = this.state.dataset;
-    if (dataset === null || !this.state.review.active) return;
-    const generation = this.reviewGeneration;
-    // Always ask for page 1: after a decision the current entry leaves the
-    // unreviewed set, so the first remaining candidate shifts into page 1.
-    const reviewQuery: QueryState = {
-      ...this.state.query,
-      hideKnown: true,
-      decision: "unreviewed",
-      page: 1,
-      pageSize: 1,
-    };
-    try {
-      const result = await this.worker.query({
-        datasetId: dataset.id,
-        knownWords: [...this.state.knownWords],
-        decisions: this.decisionTuples(),
-        query: reviewQuery,
-        queryChannel: "review",
-      });
-      if (generation !== this.reviewGeneration || !this.state.review.active) return;
-      const current = result.items[0] ?? null;
-      this.state.review = {
-        ...this.state.review,
-        initialTotal: options.captureInitial ? result.totalEntries : this.state.review.initialTotal,
-        remaining: result.totalEntries,
-        current,
-        status: current === null ? "complete" : "ready",
-        errorMessage: null,
-      };
-      this.publish();
-    } catch (error) {
-      if (generation !== this.reviewGeneration || !this.state.review.active) return;
-      this.state.review = {
-        ...this.state.review,
-        status: "error",
-        errorMessage: errorMessage(error),
-      };
-      this.publish();
-    }
-  }
-
-  private async applyWordDecision(
-    normalizedWord: string,
-    status: WordDecisionStatus | "unreviewed",
-    epoch: number,
-    options: { captureUndo?: boolean } = {},
-  ): Promise<void> {
-    // Single canonicalization choke point: every caller (list clicks, review
-    // triage) funnels raw words through here so persisted keys always use the
-    // canonical lowercase identity.
-    const canonical = normalizeText(normalizedWord).toLocaleLowerCase();
-    if (canonical.length === 0) {
-      throw new Error("Word decision requires a non-empty normalized word");
-    }
-    await this.withUserStateLock(async () => {
-      if (epoch !== this.userStateEpoch) return;
-      // Snapshot the undo record BEFORE any mutation: the prior decision
-      // status and the prior queue membership (a decision auto-removes
-      // queued words further down). Only committed once the write succeeds,
-      // so a failed decision leaves the previous record intact.
-      const pendingUndo = options.captureUndo === false ? null : {
-        normalizedWord: canonical,
-        previousStatus: this.state.wordDecisions.get(canonical)?.status ?? ("unreviewed" as const),
-        previousQueueMembership: this.state.queue.normalizedWords.includes(canonical),
-      };
-      if (status === "unreviewed") {
-        await this.storageOperation((store) => store.wordDecisions.remove(canonical));
-        if (epoch !== this.userStateEpoch) return;
-        this.state.wordDecisions.delete(canonical);
-      } else {
-        const decision: WordDecision = { normalizedWord: canonical, status, updatedAt: this.now() };
-        await this.storageOperation((store) => store.wordDecisions.set(decision));
-        if (epoch !== this.userStateEpoch) return;
-        this.state.wordDecisions.set(canonical, decision);
-      }
-      // A successful decision removes the word from the mining queue; a failed
-      // write leaves the queue untouched so the word can be retried.
-      const queueDatasetId = this.state.queue.datasetId;
-      if (queueDatasetId !== null && this.state.queue.normalizedWords.includes(canonical)) {
-        const remaining = this.state.queue.normalizedWords.filter((queued) => queued !== canonical);
-        this.state.queue = { ...this.state.queue, normalizedWords: remaining };
-        this.sessionQueue.save({ version: 1, datasetId: queueDatasetId, normalizedWords: remaining });
-      }
-      if (pendingUndo !== null) {
-        this.undoRecord = pendingUndo;
-        this.state.undo = {
-          available: true,
-          label: `Undo ${UNDO_STATUS_LABELS[status]} — ${normalizedWord}`,
-        };
-      }
-    });
-    if (epoch !== this.userStateEpoch) return;
-    // Counted change (see countChangeSinceExport): the write committed and
-    // the epoch survived, so this decision genuinely landed. Undo re-applies
-    // through this same path and counts exactly once — never doubled by a
-    // separate undo-side increment.
-    this.countChangeSinceExport();
-    this.publish();
-    await this.runQuery();
-    await this.requestCoverage();
+    return [...this.state.wordDecisions.values()].map((decision) => [
+      decision.normalizedWord,
+      decision.status,
+    ]);
   }
 
   private async loadAndQuery(
@@ -1216,7 +813,9 @@ class MinerControllerImpl implements MinerController {
     try {
       const loaded = await this.readDatasetChunks(datasetId);
       if (loaded.entryCount !== expectedEntryCount) {
-        throw new Error(`Dataset entry count did not match metadata: expected ${expectedEntryCount}, found ${loaded.entryCount}`);
+        throw new Error(
+          `Dataset entry count did not match metadata: expected ${expectedEntryCount}, found ${loaded.entryCount}`,
+        );
       }
       await this.worker.loadDataset(datasetId, copiedEntryChunks(loaded.values));
       await this.runQuery(options);
@@ -1226,57 +825,18 @@ class MinerControllerImpl implements MinerController {
     }
   }
 
-  // Coverage describes the whole active dataset, so it refreshes only after
-  // dataset/known/decision identity changes (dataset load, known import,
-  // decision apply, restore) — never for view/page/search-only updates that
-  // route through runQuery alone. Errors are nonfatal: they land in
-  // coverageStatus/coverageErrorMessage while the results list stays intact.
-  private async requestCoverage(): Promise<void> {
-    const dataset = this.state.dataset;
-    if (dataset === null) {
-      if (
-        this.state.coverage !== null ||
-        this.state.coverageStatus !== "idle" ||
-        this.state.coverageErrorMessage !== null
-      ) {
-        this.state.coverage = null;
-        this.state.coverageStatus = "idle";
-        this.state.coverageErrorMessage = null;
-        this.publish();
-      }
-      return;
-    }
-
-    const generation = ++this.coverageGeneration;
-    this.state.coverageStatus = "loading";
-    this.state.coverageErrorMessage = null;
-    this.publish();
-    try {
-      // Targets stay unset: the worker applies the domain defaults
-      // [98, 98.5, 99, 99.5].
-      const stats = await this.worker.coverage({
-        datasetId: dataset.id,
-        knownWords: [...this.state.knownWords],
-        decisions: this.decisionTuples(),
-      });
-      if (generation !== this.coverageGeneration) return;
-      this.state.coverage = stats;
-      this.state.coverageStatus = "ready";
-      this.publish();
-    } catch (error) {
-      if (generation !== this.coverageGeneration) return;
-      this.state.coverageStatus = "error";
-      this.state.coverageErrorMessage = errorMessage(error);
-      this.publish();
-    }
+  private requestCoverage(): Promise<void> {
+    return this.coverageService.request();
   }
 
-  private async runQuery(options: { silent?: boolean; callerHoldsUserStateLock?: boolean } = {}): Promise<void> {
+  private async runQuery(
+    options: { silent?: boolean; callerHoldsUserStateLock?: boolean } = {},
+  ): Promise<void> {
     // Single mode-aware dispatch point: every caller becomes queue-aware, so
     // filters/paging/viewport edits during Queue Mode cannot leak unqueued
     // words into the queue view.
     if (this.state.queue.mode === "queue" && this.state.dataset !== null) {
-      await this.runQueueQuery();
+      await this.queueService.runQueueQuery();
       return;
     }
     const dataset = this.state.dataset;
@@ -1286,16 +846,17 @@ class MinerControllerImpl implements MinerController {
       return;
     }
 
-    const window = this.state.query.pageSize === "all"
-      ? { start: this.viewportStart, size: VIEWPORT_WINDOW_SIZE }
-      : undefined;
+    const window =
+      this.state.query.pageSize === "all"
+        ? { start: this.viewportStart, size: VIEWPORT_WINDOW_SIZE }
+        : undefined;
     const generation = ++this.queryGeneration;
     try {
       const result = await this.worker.query({
         datasetId: dataset.id,
         knownWords: [...this.state.knownWords],
         decisions: this.decisionTuples(),
-        query: { ...this.state.query, page: this.state.page },
+        query: { ...this.state.query },
         queryChannel: "user",
         ...(window === undefined ? {} : { window }),
       });
@@ -1303,7 +864,6 @@ class MinerControllerImpl implements MinerController {
       this.state.result = result;
       if (result.windowed) this.viewportStart = Math.max(0, result.startIndex - 1);
       const page = result.page > 0 ? result.page : 1;
-      this.state.page = page;
       this.state.query = { ...this.state.query, page };
       this.setState({ status: "ready", errorMessage: this.warningMessage });
       if (!options.silent) await this.persistPreferences(options);
@@ -1313,7 +873,9 @@ class MinerControllerImpl implements MinerController {
     }
   }
 
-  private async persistPreferences(options: { callerHoldsUserStateLock?: boolean } = {}): Promise<void> {
+  private async persistPreferences(
+    options: { callerHoldsUserStateLock?: boolean } = {},
+  ): Promise<void> {
     // Capture the epoch BEFORE acquiring the lock: if a clear or restore
     // wins the lock first, this persist was triggered against state that has
     // since been replaced, and the stale write is skipped inside.
@@ -1329,24 +891,30 @@ class MinerControllerImpl implements MinerController {
   // commit sections, restoreBackup, and the query paths they drive).
   // withUserStateLock is not reentrant — routing those callers through the
   // public persistPreferences would self-deadlock.
-  private async persistPreferencesUnlocked(triggerEpoch: number = this.userStateEpoch): Promise<void> {
+  private async persistPreferencesUnlocked(
+    triggerEpoch: number = this.userStateEpoch,
+  ): Promise<void> {
     // The epoch cannot change while the caller holds userStateLock, so a
     // mismatch means the trigger snapshot predates a committed clear/restore.
     if (triggerEpoch !== this.userStateEpoch) return;
     const epoch = this.userStateEpoch;
     try {
-      await this.storageOperation((store) => store.preferences.save({
-        query: { ...this.state.query, page: this.state.page },
-        view: { ...this.state.view },
-        page: this.state.page,
-      }));
+      await this.storageOperation((store) =>
+        store.preferences.save({
+          query: { ...this.state.query },
+          view: { ...this.state.view },
+          page: this.state.query.page,
+        }),
+      );
     } catch (error) {
       if (epoch !== this.userStateEpoch) return;
       this.setState({ errorMessage: `Preferences could not be saved: ${errorMessage(error)}` });
     }
   }
 
-  private async readDatasetChunks(datasetId: string): Promise<{ values: Entry[][]; entryCount: number }> {
+  private async readDatasetChunks(
+    datasetId: string,
+  ): Promise<{ values: Entry[][]; entryCount: number }> {
     return this.storageOperation(async (store) => {
       const values: Entry[][] = [];
       let entryCount = 0;

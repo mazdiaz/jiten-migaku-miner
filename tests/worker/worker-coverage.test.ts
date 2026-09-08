@@ -1,16 +1,16 @@
 import { describe, expect, it } from "vitest";
-import type { Entry, QueryState } from "../../src/domain/types";
 import { computeCoverage, DEFAULT_COVERAGE_TARGETS } from "../../src/domain/coverage";
+import type { Entry, QueryState } from "../../src/domain/types";
+import { dispatchWorkerRequest } from "../../src/worker/miner.worker";
 import {
+  type CoverageRequest,
   isWorkerRequest,
   parseWorkerRequest,
-  type CoverageRequest,
   type QueryRequest,
   type WorkerRequest,
   type WorkerResponse,
 } from "../../src/worker/protocol";
 import { WorkerEngine } from "../../src/worker/worker-engine";
-import { dispatchWorkerRequest } from "../../src/worker/miner.worker";
 
 function entry(index: number, word = `word-${index}`, occurrences = index): Entry {
   return {
@@ -28,7 +28,7 @@ function entry(index: number, word = `word-${index}`, occurrences = index): Entr
 
 function coverageRequest(overrides: Partial<CoverageRequest> = {}): CoverageRequest {
   return {
-    protocolVersion: 1,
+    protocolVersion: 2,
     type: "coverage",
     requestId: "coverage-1",
     datasetId: "dataset-1",
@@ -55,7 +55,7 @@ function queryState(overrides: Partial<QueryState> = {}): QueryState {
 
 function queryRequest(overrides: Partial<QueryRequest> = {}): QueryRequest {
   return {
-    protocolVersion: 1,
+    protocolVersion: 2,
     type: "query",
     requestId: "query-1",
     datasetId: "dataset-1",
@@ -77,7 +77,7 @@ function loadDataset(engine: WorkerEngine, datasetId: string, entries: Entry[]):
 
 describe("worker coverage protocol", () => {
   const validCoverageRequest: WorkerRequest = {
-    protocolVersion: 1,
+    protocolVersion: 2,
     type: "coverage",
     requestId: "coverage-1",
     datasetId: "dataset-1",
@@ -90,7 +90,9 @@ describe("worker coverage protocol", () => {
     expect(parseWorkerRequest(validCoverageRequest)).toEqual(validCoverageRequest);
     expect(isWorkerRequest(validCoverageRequest)).toBe(true);
 
-    const withoutTargets = { ...validCoverageRequest } as Partial<CoverageRequest>;
+    const withoutTargets = {
+      ...validCoverageRequest,
+    } as Partial<CoverageRequest>;
     delete withoutTargets.targets;
     expect(parseWorkerRequest(withoutTargets)).toEqual(withoutTargets);
     expect(isWorkerRequest(withoutTargets)).toBe(true);
@@ -122,7 +124,7 @@ describe("worker coverage protocol", () => {
     const responses: WorkerResponse[] = [];
     await dispatchWorkerRequest(
       {
-        protocolVersion: 1,
+        protocolVersion: 2,
         type: "coverage",
         requestId: "cov-dispatch",
         datasetId: "dataset-1",
@@ -140,7 +142,7 @@ describe("worker coverage protocol", () => {
     );
     expect(responses).toEqual([
       {
-        protocolVersion: 1,
+        protocolVersion: 2,
         type: "coverage-result",
         requestId: "cov-dispatch",
         datasetId: "dataset-1",
@@ -154,7 +156,7 @@ describe("worker coverage protocol", () => {
 
     await dispatchWorkerRequest(
       {
-        protocolVersion: 1,
+        protocolVersion: 2,
         type: "coverage",
         requestId: "cov-missing",
         datasetId: "missing",
@@ -167,7 +169,7 @@ describe("worker coverage protocol", () => {
 
     expect(responses).toEqual([
       {
-        protocolVersion: 1,
+        protocolVersion: 2,
         type: "error",
         requestId: "cov-missing",
         code: "dataset-not-found",
@@ -180,15 +182,14 @@ describe("worker coverage protocol", () => {
 describe("worker engine coverage", () => {
   it("matches the pure domain coverage function for the same fixtures", async () => {
     const engine = new WorkerEngine();
-    const source = [
-      entry(0, "alpha", 50),
-      entry(1, "beta", 30),
-      entry(2, "gamma", 20),
-    ];
+    const source = [entry(0, "alpha", 50), entry(1, "beta", 30), entry(2, "gamma", 20)];
     loadDataset(engine, "dataset-1", source);
 
     const knownWords = ["alpha"];
-    const decisions: CoverageRequest["decisions"] = [["gamma", "mined"], ["beta", "skip"]];
+    const decisions: CoverageRequest["decisions"] = [
+      ["gamma", "mined"],
+      ["beta", "skip"],
+    ];
     const targets = [50, 98, 99.5];
 
     const responses: WorkerResponse[] = [];
@@ -200,7 +201,7 @@ describe("worker engine coverage", () => {
     const expected = computeCoverage(source, new Set(knownWords), new Map(decisions), targets);
     expect(responses).toHaveLength(1);
     expect(responses[0]).toMatchObject({
-      protocolVersion: 1,
+      protocolVersion: 2,
       type: "coverage-result",
       requestId: "cov-1",
       datasetId: "dataset-1",
@@ -213,10 +214,14 @@ describe("worker engine coverage", () => {
     loadDataset(engine, "dataset-1", [entry(0, "alpha", 50), entry(1, "beta", 50)]);
 
     const responses: WorkerResponse[] = [];
-    await engine.coverage(coverageRequest({ requestId: "cov-default" }), (response) => responses.push(response));
+    await engine.coverage(coverageRequest({ requestId: "cov-default" }), (response) =>
+      responses.push(response),
+    );
 
     const result = responses[0]?.type === "coverage-result" ? responses[0].result : null;
-    expect(result?.targets.map((target) => target.targetPercent)).toEqual([...DEFAULT_COVERAGE_TARGETS]);
+    expect(result?.targets.map((target) => target.targetPercent)).toEqual([
+      ...DEFAULT_COVERAGE_TARGETS,
+    ]);
   });
 
   it("returns typed errors for missing or not-ready datasets", async () => {
@@ -240,7 +245,9 @@ describe("worker engine coverage", () => {
     loadDataset(engine, "dataset-1", source);
 
     const withoutKnown: WorkerResponse[] = [];
-    await engine.coverage(coverageRequest({ requestId: "k-0", knownWords: [] }), (r) => withoutKnown.push(r));
+    await engine.coverage(coverageRequest({ requestId: "k-0", knownWords: [] }), (r) =>
+      withoutKnown.push(r),
+    );
     const withKnown: WorkerResponse[] = [];
     await engine.coverage(
       coverageRequest({ requestId: "k-1", knownWords: ["alpha", "beta"] }),
@@ -281,7 +288,9 @@ describe("worker engine coverage", () => {
 
   it("leaves normal query windows unaffected when interleaved with coverage", async () => {
     const engine = new WorkerEngine();
-    const source = Array.from({ length: 10 }, (_, index) => entry(index, `word-${index}`, 10 - index));
+    const source = Array.from({ length: 10 }, (_, index) =>
+      entry(index, `word-${index}`, 10 - index),
+    );
     loadDataset(engine, "dataset-1", source);
 
     const beforeResponses: WorkerResponse[] = [];
@@ -312,7 +321,8 @@ describe("worker engine coverage", () => {
 
     const before = beforeResponses[0]?.type === "query-result" ? beforeResponses[0].result : null;
     const after = afterResponses[0]?.type === "query-result" ? afterResponses[0].result : null;
-    const coverage = coverageResponses[0]?.type === "coverage-result" ? coverageResponses[0].result : null;
+    const coverage =
+      coverageResponses[0]?.type === "coverage-result" ? coverageResponses[0].result : null;
 
     expect(before?.items.map((item) => item.id)).toEqual(["entry-0", "entry-1", "entry-2"]);
     expect(after?.items.map((item) => item.id)).toEqual(["entry-0", "entry-1", "entry-2"]);
@@ -323,12 +333,15 @@ describe("worker engine coverage", () => {
 
   it("suppresses stale coverage results after a dataset swap", async () => {
     const engine = new WorkerEngine();
-    loadDataset(engine, "dataset-1", Array.from({ length: 4001 }, (_, index) => entry(index, `old-${index}`)));
+    loadDataset(
+      engine,
+      "dataset-1",
+      Array.from({ length: 4001 }, (_, index) => entry(index, `old-${index}`)),
+    );
 
     const staleResponses: WorkerResponse[] = [];
-    const staleCoverage = engine.coverage(
-      coverageRequest({ requestId: "stale-cov" }),
-      (response) => staleResponses.push(response),
+    const staleCoverage = engine.coverage(coverageRequest({ requestId: "stale-cov" }), (response) =>
+      staleResponses.push(response),
     );
     await new Promise((resolve) => setTimeout(resolve, 0));
     loadDataset(engine, "dataset-1", [entry(9999, "新しい", 7)]);
@@ -337,9 +350,8 @@ describe("worker engine coverage", () => {
     expect(staleResponses.some((response) => response.type === "coverage-result")).toBe(false);
 
     const freshResponses: WorkerResponse[] = [];
-    await engine.coverage(
-      coverageRequest({ requestId: "fresh-cov" }),
-      (response) => freshResponses.push(response),
+    await engine.coverage(coverageRequest({ requestId: "fresh-cov" }), (response) =>
+      freshResponses.push(response),
     );
     const fresh = freshResponses[0]?.type === "coverage-result" ? freshResponses[0].result : null;
     expect(fresh?.totalUniqueWords).toBe(1);
@@ -348,11 +360,17 @@ describe("worker engine coverage", () => {
 
   it("does not emit a coverage result when cancelled mid-operation", async () => {
     const engine = new WorkerEngine();
-    loadDataset(engine, "dataset-1", Array.from({ length: 4001 }, (_, index) => entry(index)));
+    loadDataset(
+      engine,
+      "dataset-1",
+      Array.from({ length: 4001 }, (_, index) => entry(index)),
+    );
 
     const responses: WorkerResponse[] = [];
     setTimeout(() => engine.cancel("cancel-cov"), 0);
-    await engine.coverage(coverageRequest({ requestId: "cancel-cov" }), (response) => responses.push(response));
+    await engine.coverage(coverageRequest({ requestId: "cancel-cov" }), (response) =>
+      responses.push(response),
+    );
 
     expect(responses.some((response) => response.type === "coverage-result")).toBe(false);
   });
@@ -372,9 +390,8 @@ describe("worker engine coverage", () => {
 
     for (const datasetId of ["dataset-a", "dataset-c", "dataset-d"]) {
       const responses: WorkerResponse[] = [];
-      await engine.query(
-        queryRequest({ requestId: `kept-${datasetId}`, datasetId }),
-        (response) => responses.push(response),
+      await engine.query(queryRequest({ requestId: `kept-${datasetId}`, datasetId }), (response) =>
+        responses.push(response),
       );
       expect(responses).toHaveLength(1);
     }

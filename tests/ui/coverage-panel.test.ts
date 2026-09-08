@@ -2,13 +2,13 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { bindControls } from "../../src/ui/controls";
-import { getDomMap } from "../../src/ui/dom";
-import type { DomMap } from "../../src/ui/dom";
-import { createRenderer } from "../../src/ui/renderer";
 import type { AppState, FileSource, MinerController } from "../../src/app/state";
 import { createInitialAppState } from "../../src/app/state";
 import type { CoverageStats, QueryState } from "../../src/domain/types";
+import { bindControls } from "../../src/ui/controls";
+import type { DomMap } from "../../src/ui/dom";
+import { getDomMap } from "../../src/ui/dom";
+import { createRenderer } from "../../src/ui/renderer";
 
 type Listener = (state: Readonly<AppState>) => void;
 
@@ -51,7 +51,14 @@ function seedDom(): DomMap {
   const advancedPanel = add("advancedPanel", "div");
   advancedPanel.hidden = true;
   add("stickySearch", "input").setAttribute("type", "search");
-  for (const id of ["hideKnown", "hideKanaOnly", "showFurigana", "pillHighlight", "showHighlight", "showDefinitions"]) {
+  for (const id of [
+    "hideKnown",
+    "hideKanaOnly",
+    "showFurigana",
+    "pillHighlight",
+    "showHighlight",
+    "showDefinitions",
+  ]) {
     add(id, "input").setAttribute("type", "checkbox");
   }
   add("minOccurrences", "input").setAttribute("type", "number");
@@ -67,9 +74,22 @@ function seedDom(): DomMap {
     return select;
   };
 
-  withOptions("sentenceFilter", [["any", "any"], ["has", "has"], ["none", "none"]]);
-  withOptions("sortSelect", [["occ-desc", "occ-desc"], ["occ-asc", "occ-asc"], ["original", "original"]]);
-  withOptions("pageSize", [["25", "25"], ["50", "50"], ["100", "100"], ["all", "all"]]);
+  withOptions("sentenceFilter", [
+    ["any", "any"],
+    ["has", "has"],
+    ["none", "none"],
+  ]);
+  withOptions("sortSelect", [
+    ["occ-desc", "occ-desc"],
+    ["occ-asc", "occ-asc"],
+    ["original", "original"],
+  ]);
+  withOptions("pageSize", [
+    ["25", "25"],
+    ["50", "50"],
+    ["100", "100"],
+    ["all", "all"],
+  ]);
   withOptions("decisionFilter", [
     ["all", "All decisions"],
     ["unreviewed", "Unreviewed"],
@@ -79,8 +99,14 @@ function seedDom(): DomMap {
     ["later", "Later"],
   ]);
 
-  withOptions("sentenceSize", [["medium", "medium"], ["large", "large"]]);
-  withOptions("density", [["comfortable", "comfortable"], ["compact", "compact"]]);
+  withOptions("sentenceSize", [
+    ["medium", "medium"],
+    ["large", "large"],
+  ]);
+  withOptions("density", [
+    ["comfortable", "comfortable"],
+    ["compact", "compact"],
+  ]);
   add("results", "section");
   add("resultsHeading", "h2");
   add("resultStats", "p");
@@ -131,7 +157,8 @@ function seedDom(): DomMap {
   coverageBody.appendChild(coverageTargets);
   const note = document.createElement("p");
   note.className = "coverage-note";
-  note.textContent = "Based on occurrence counts in this Jiten export. This is not guaranteed raw-text comprehension coverage.";
+  note.textContent =
+    "Based on occurrence counts in this Jiten export. This is not guaranteed raw-text comprehension coverage.";
   coverageBody.appendChild(note);
   const coverageError = add("coverageError", "p");
   coverageError.hidden = true;
@@ -148,7 +175,19 @@ function seedDom(): DomMap {
   const reviewPanel = add("reviewPanel", "div");
   reviewPanel.setAttribute("tabindex", "-1");
   reviewOverlay.appendChild(reviewPanel);
-  for (const id of ["reviewHeading", "reviewProgress", "reviewContent", "reviewComplete", "reviewReturn", "reviewExit", "reviewKnown", "reviewMined", "reviewSkip", "reviewLater", "reviewUndo"]) {
+  for (const id of [
+    "reviewHeading",
+    "reviewProgress",
+    "reviewContent",
+    "reviewComplete",
+    "reviewReturn",
+    "reviewExit",
+    "reviewKnown",
+    "reviewMined",
+    "reviewSkip",
+    "reviewLater",
+    "reviewUndo",
+  ]) {
     const element = add(id, "div");
     reviewPanel.appendChild(element);
   }
@@ -218,8 +257,15 @@ function createFakeController(initial?: Partial<AppState>): FakeController {
 
 function dataset(id = "d1"): NonNullable<AppState["dataset"]> {
   return {
-    id, name: "book.csv", sourceType: "file", sourceName: "book.csv",
-    headers: ["Word"], entryCount: 8, createdAt: "x", updatedAt: "x", schemaVersion: 1,
+    id,
+    name: "book.csv",
+    sourceType: "file",
+    sourceName: "book.csv",
+    headers: ["Word"],
+    entryCount: 8,
+    createdAt: "x",
+    updatedAt: "x",
+    schemaVersion: 1,
   };
 }
 
@@ -235,10 +281,30 @@ function sampleStats(): CoverageStats {
     unknownTrackedOccurrences: 687,
     coveragePercent: 98.4241,
     targets: [
-      { targetPercent: 98, reached: true, additionalWords: 0, additionalTrackedOccurrences: 0 },
-      { targetPercent: 98.5, reached: false, additionalWords: 4, additionalTrackedOccurrences: 45 },
-      { targetPercent: 99, reached: false, additionalWords: 37, additionalTrackedOccurrences: 412 },
-      { targetPercent: 99.5, reached: false, additionalWords: 141, additionalTrackedOccurrences: 688 },
+      {
+        targetPercent: 98,
+        reached: true,
+        additionalWords: 0,
+        additionalTrackedOccurrences: 0,
+      },
+      {
+        targetPercent: 98.5,
+        reached: false,
+        additionalWords: 4,
+        additionalTrackedOccurrences: 45,
+      },
+      {
+        targetPercent: 99,
+        reached: false,
+        additionalWords: 37,
+        additionalTrackedOccurrences: 412,
+      },
+      {
+        targetPercent: 99.5,
+        reached: false,
+        additionalWords: 141,
+        additionalTrackedOccurrences: 688,
+      },
     ],
   };
 }
@@ -303,10 +369,20 @@ describe("coverage panel", () => {
     try {
       expect(harness.dom.coveragePanel.hidden).toBe(true);
 
-      harness.controller.publishState({ dataset: dataset(), status: "ready", coverageStatus: "ready", coverage: sampleStats() });
+      harness.controller.publishState({
+        dataset: dataset(),
+        status: "ready",
+        coverageStatus: "ready",
+        coverage: sampleStats(),
+      });
       expect(harness.dom.coveragePanel.hidden).toBe(false);
 
-      harness.controller.publishState({ dataset: null, status: "empty", coverage: null, coverageStatus: "idle" });
+      harness.controller.publishState({
+        dataset: null,
+        status: "empty",
+        coverage: null,
+        coverageStatus: "idle",
+      });
       expect(harness.dom.coveragePanel.hidden).toBe(true);
     } finally {
       harness.dispose();
@@ -314,7 +390,12 @@ describe("coverage panel", () => {
   });
 
   it("formats the collapsed summary with two decimals", () => {
-    const harness = setup({ dataset: dataset(), status: "ready", coverageStatus: "ready", coverage: sampleStats() });
+    const harness = setup({
+      dataset: dataset(),
+      status: "ready",
+      coverageStatus: "ready",
+      coverage: sampleStats(),
+    });
     try {
       expect(harness.dom.coverageSummary.textContent).toBe("98.42%");
       expect(harness.dom.coverageToggle.textContent).toContain("Tracked vocabulary coverage:");
@@ -338,7 +419,12 @@ describe("coverage panel", () => {
   });
 
   it("expands on toggle and shows counts, coverage, target rows, and the note", () => {
-    const harness = setup({ dataset: dataset(), status: "ready", coverageStatus: "ready", coverage: sampleStats() });
+    const harness = setup({
+      dataset: dataset(),
+      status: "ready",
+      coverageStatus: "ready",
+      coverage: sampleStats(),
+    });
     try {
       expect(harness.dom.coverageBody.hidden).toBe(true);
       expect(harness.dom.coverageToggle.getAttribute("aria-expanded")).toBe("false");
@@ -376,12 +462,21 @@ describe("coverage panel", () => {
   });
 
   it("recollapses when a new dataset is imported", () => {
-    const harness = setup({ dataset: dataset("d1"), status: "ready", coverageStatus: "ready", coverage: sampleStats() });
+    const harness = setup({
+      dataset: dataset("d1"),
+      status: "ready",
+      coverageStatus: "ready",
+      coverage: sampleStats(),
+    });
     try {
       harness.dom.coverageToggle.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       expect(harness.dom.coverageBody.hidden).toBe(false);
 
-      harness.controller.publishState({ dataset: dataset("d2"), coverage: null, coverageStatus: "loading" });
+      harness.controller.publishState({
+        dataset: dataset("d2"),
+        coverage: null,
+        coverageStatus: "loading",
+      });
       expect(harness.dom.coverageBody.hidden).toBe(true);
       expect(harness.dom.coverageToggle.getAttribute("aria-expanded")).toBe("false");
     } finally {
@@ -390,13 +485,22 @@ describe("coverage panel", () => {
   });
 
   it("Focus calls updateQuery with exactly hideKnown + occ-desc + page 1", () => {
-    const harness = setup({ dataset: dataset(), status: "ready", coverageStatus: "ready", coverage: sampleStats() });
+    const harness = setup({
+      dataset: dataset(),
+      status: "ready",
+      coverageStatus: "ready",
+      coverage: sampleStats(),
+    });
     try {
       harness.dom.coverageToggle.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       harness.dom.coverageFocus.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 
       expect(harness.controller.calls.updateQuery).toHaveLength(1);
-      expect(harness.controller.calls.updateQuery[0]).toEqual({ hideKnown: true, sort: "occ-desc", page: 1 });
+      expect(harness.controller.calls.updateQuery[0]).toEqual({
+        hideKnown: true,
+        sort: "occ-desc",
+        page: 1,
+      });
     } finally {
       harness.dispose();
     }
@@ -414,7 +518,13 @@ describe("coverage panel", () => {
       page: 4,
       decision: "mined",
     };
-    const harness = setup({ dataset: dataset(), status: "ready", query, coverageStatus: "ready", coverage: sampleStats() });
+    const harness = setup({
+      dataset: dataset(),
+      status: "ready",
+      query,
+      coverageStatus: "ready",
+      coverage: sampleStats(),
+    });
     try {
       harness.dom.coverageToggle.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       harness.dom.coverageFocus.dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -458,7 +568,12 @@ describe("coverage panel", () => {
   });
 
   it("keeps the Focus button enabled and focusable inside the normal panel", () => {
-    const harness = setup({ dataset: dataset(), status: "ready", coverageStatus: "ready", coverage: sampleStats() });
+    const harness = setup({
+      dataset: dataset(),
+      status: "ready",
+      coverageStatus: "ready",
+      coverage: sampleStats(),
+    });
     try {
       harness.dom.coverageToggle.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       expect(harness.dom.coverageFocus.disabled).toBe(false);

@@ -1,10 +1,4 @@
-import type {
-  Entry,
-  FuriganaRun,
-  QueryState,
-  ViewState,
-  WordDecision,
-} from "../domain/types";
+import type { Entry, FuriganaRun, QueryState, ViewState, WordDecision } from "../domain/types";
 import type {
   AppStore,
   DatasetMetadata,
@@ -57,10 +51,7 @@ class MemoryDatasetStore implements DatasetStore {
   private readonly stagingIds = new Set<string>();
   private activeDatasetId: string | null = null;
 
-  async stage(
-    metadata: DatasetMetadata,
-    chunks: AsyncIterable<readonly Entry[]>,
-  ): Promise<void> {
+  async stage(metadata: DatasetMetadata, chunks: AsyncIterable<readonly Entry[]>): Promise<void> {
     if (this.records.has(metadata.id) || this.stagingIds.has(metadata.id)) {
       throw new Error(`Dataset already exists: ${metadata.id}`);
     }
@@ -105,10 +96,7 @@ class MemoryDatasetStore implements DatasetStore {
       .map((record) => cloneMetadata(record.metadata));
   }
 
-  async *readChunks(
-    datasetId: string,
-    chunkSize: number,
-  ): AsyncGenerator<Entry[], void, unknown> {
+  async *readChunks(datasetId: string, chunkSize: number): AsyncGenerator<Entry[], void, unknown> {
     if (!Number.isInteger(chunkSize) || chunkSize <= 0) {
       throw new RangeError("chunkSize must be a positive integer");
     }
@@ -155,7 +143,11 @@ class MemoryKnownWordStore implements KnownWordStore {
     this.active = { id, name, words: new Set(words) };
   }
 
-  async getActive(): Promise<{ id: string; name: string; words: Set<string> } | null> {
+  async getActive(): Promise<{
+    id: string;
+    name: string;
+    words: Set<string>;
+  } | null> {
     if (this.active === null) {
       return null;
     }

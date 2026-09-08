@@ -8,26 +8,56 @@ import type {
   WordDecisionStatus,
 } from "../domain/types";
 
-export const WORKER_PROTOCOL_VERSION = 1 as const;
+/**
+ * Internal same-build assertion between the main thread and the worker
+ * bundle: the two sides are compiled together, so the only purpose of the
+ * version is to catch a mismatched cross-bundle load (stale cached worker,
+ * partial deploy). Bump it whenever a request/response shape changes
+ * materially - the schema now covers word decisions, queue include lists,
+ * and coverage request/response beyond the original import/query surface.
+ */
+export const WORKER_PROTOCOL_VERSION = 2 as const;
 export const WORKER_IMPORT_CHUNK_SIZE = 2_000 as const;
 
 const DECISION_STATUSES: readonly WordDecisionStatus[] = ["known", "mined", "skip", "later"];
 
 export type WorkerRequest =
-  | { protocolVersion: 1; type: "import-jiten"; requestId: string; name: string; text: string }
-  | { protocolVersion: 1; type: "import-known"; requestId: string; name: string; text: string }
-  | { protocolVersion: 1; type: "load-start"; requestId: string; datasetId: string }
   | {
-      protocolVersion: 1;
+      protocolVersion: 2;
+      type: "import-jiten";
+      requestId: string;
+      name: string;
+      text: string;
+    }
+  | {
+      protocolVersion: 2;
+      type: "import-known";
+      requestId: string;
+      name: string;
+      text: string;
+    }
+  | {
+      protocolVersion: 2;
+      type: "load-start";
+      requestId: string;
+      datasetId: string;
+    }
+  | {
+      protocolVersion: 2;
       type: "load-chunk";
       requestId: string;
       datasetId: string;
       chunkIndex: number;
       entries: Entry[];
     }
-  | { protocolVersion: 1; type: "load-complete"; requestId: string; datasetId: string }
   | {
-      protocolVersion: 1;
+      protocolVersion: 2;
+      type: "load-complete";
+      requestId: string;
+      datasetId: string;
+    }
+  | {
+      protocolVersion: 2;
       type: "query";
       requestId: string;
       datasetId: string;
@@ -38,7 +68,7 @@ export type WorkerRequest =
       window?: QueryWindow;
     }
   | {
-      protocolVersion: 1;
+      protocolVersion: 2;
       type: "coverage";
       requestId: string;
       datasetId: string;
@@ -46,15 +76,15 @@ export type WorkerRequest =
       decisions: Array<[string, WordDecisionStatus]>;
       targets?: number[];
     }
-  | { protocolVersion: 1; type: "cancel"; requestId: string }
-  | { protocolVersion: 1; type: "dispose"; requestId: string };
+  | { protocolVersion: 2; type: "cancel"; requestId: string }
+  | { protocolVersion: 2; type: "dispose"; requestId: string };
 
 export type QueryRequest = Extract<WorkerRequest, { type: "query" }>;
 export type CoverageRequest = Extract<WorkerRequest, { type: "coverage" }>;
 
 export type ImportChunkResponse =
   | {
-      protocolVersion: 1;
+      protocolVersion: 2;
       type: "import-chunk";
       requestId: string;
       kind: "jiten";
@@ -63,7 +93,7 @@ export type ImportChunkResponse =
       entries: Entry[];
     }
   | {
-      protocolVersion: 1;
+      protocolVersion: 2;
       type: "import-chunk";
       requestId: string;
       kind: "known";
@@ -74,7 +104,7 @@ export type ImportChunkResponse =
 
 export type ImportCompleteResponse =
   | {
-      protocolVersion: 1;
+      protocolVersion: 2;
       type: "import-complete";
       requestId: string;
       kind: "jiten";
@@ -84,7 +114,7 @@ export type ImportCompleteResponse =
       skippedRows: number;
     }
   | {
-      protocolVersion: 1;
+      protocolVersion: 2;
       type: "import-complete";
       requestId: string;
       kind: "known";
@@ -93,7 +123,7 @@ export type ImportCompleteResponse =
     };
 
 export type LoadCompleteResponse = {
-  protocolVersion: 1;
+  protocolVersion: 2;
   type: "load-complete";
   requestId: string;
   datasetId: string;
@@ -105,21 +135,21 @@ export type WorkerResponse =
   | ImportCompleteResponse
   | LoadCompleteResponse
   | {
-      protocolVersion: 1;
+      protocolVersion: 2;
       type: "query-result";
       requestId: string;
       datasetId: string;
       result: QueryResult;
     }
   | {
-      protocolVersion: 1;
+      protocolVersion: 2;
       type: "coverage-result";
       requestId: string;
       datasetId: string;
       result: CoverageStats;
     }
   | {
-      protocolVersion: 1;
+      protocolVersion: 2;
       type: "error";
       requestId: string;
       code: string;
@@ -205,7 +235,11 @@ function validateFuriganaRuns(value: unknown): Entry["furiganaRuns"] {
   if (!Array.isArray(value)) throw invalidMessage("entries.furiganaRuns must be an array");
 
   return value.map((run, index) => {
-    if (!isRecord(run) || typeof run.text !== "string" || (run.reading !== null && typeof run.reading !== "string")) {
+    if (
+      !isRecord(run) ||
+      typeof run.text !== "string" ||
+      (run.reading !== null && typeof run.reading !== "string")
+    ) {
       throw invalidMessage(`entries.furiganaRuns[${index}] is invalid`);
     }
 
@@ -240,7 +274,10 @@ function validateQuery(value: unknown): QueryState {
   const pageSize = value.pageSize;
   if (
     pageSize !== "all" &&
-    (typeof pageSize !== "number" || !Number.isFinite(pageSize) || !Number.isInteger(pageSize) || pageSize < 1)
+    (typeof pageSize !== "number" ||
+      !Number.isFinite(pageSize) ||
+      !Number.isInteger(pageSize) ||
+      pageSize < 1)
   ) {
     throw invalidMessage("query.pageSize must be a positive integer or all");
   }
@@ -258,7 +295,9 @@ function validateQuery(value: unknown): QueryState {
   const decision = value.decision;
   if (
     typeof decision !== "string" ||
-    (decision !== "all" && decision !== "unreviewed" && !DECISION_STATUSES.includes(decision as WordDecisionStatus))
+    (decision !== "all" &&
+      decision !== "unreviewed" &&
+      !DECISION_STATUSES.includes(decision as WordDecisionStatus))
   ) {
     throw invalidMessage("query.decision is invalid");
   }
@@ -288,7 +327,9 @@ function validateDecisions(value: unknown): Array<[string, WordDecisionStatus]> 
     const status = item[1];
     if (typeof word !== "string") throw invalidMessage(`decisions[${index}][0] must be a string`);
     if (typeof status !== "string" || !DECISION_STATUSES.includes(status as WordDecisionStatus)) {
-      throw invalidMessage(`decisions[${index}][1] must be one of: ${DECISION_STATUSES.join(", ")}`);
+      throw invalidMessage(
+        `decisions[${index}][1] must be one of: ${DECISION_STATUSES.join(", ")}`,
+      );
     }
 
     return [word, status] as [string, WordDecisionStatus];
@@ -297,7 +338,10 @@ function validateDecisions(value: unknown): Array<[string, WordDecisionStatus]> 
 
 function validateWindow(value: unknown): QueryWindow {
   if (!isRecord(value)) throw invalidMessage("window must be an object");
-  return { start: nonNegativeInteger(value, "start"), size: nonNegativeInteger(value, "size") };
+  return {
+    start: nonNegativeInteger(value, "start"),
+    size: nonNegativeInteger(value, "size"),
+  };
 }
 
 function validateKnownWords(value: unknown): string[] {
@@ -309,7 +353,10 @@ function validateKnownWords(value: unknown): string[] {
 }
 
 function validateIncludeNormalizedWords(value: unknown): string[] {
-  if (!Array.isArray(value) || value.some((word) => typeof word !== "string" || word.length === 0)) {
+  if (
+    !Array.isArray(value) ||
+    value.some((word) => typeof word !== "string" || word.length === 0)
+  ) {
     throw invalidMessage("includeNormalizedWords must be an array of non-empty strings");
   }
 
@@ -350,7 +397,10 @@ export function parseWorkerRequest(value: unknown): WorkerRequest {
     type !== "cancel" &&
     type !== "dispose"
   ) {
-    throw new WorkerProtocolError("unknown-message-type", `Unknown worker message type: ${String(type)}`);
+    throw new WorkerProtocolError(
+      "unknown-message-type",
+      `Unknown worker message type: ${String(type)}`,
+    );
   }
   const requestId = requiredString(value, "requestId");
 

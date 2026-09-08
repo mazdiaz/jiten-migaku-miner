@@ -1,7 +1,8 @@
 import type { Entry, QueryState, ViewState } from "../domain/types";
-import { WORKER_IMPORT_CHUNK_SIZE } from "../worker/protocol";
-import { hasMigrationMarker, readLegacyState, writeMigrationMarker } from "../storage/legacy";
 import type { AppStore, DatasetMetadata } from "../storage/contracts";
+import { isStorageUnavailableError } from "../storage/fallback";
+import { hasMigrationMarker, readLegacyState, writeMigrationMarker } from "../storage/legacy";
+import { WORKER_IMPORT_CHUNK_SIZE } from "../worker/protocol";
 import type { WorkerClient } from "./worker-client";
 
 const MIGRATION_VERSION = 1;
@@ -77,34 +78,51 @@ async function readPreviousRecords(store: AppStore): Promise<PreviousRecords> {
   return {
     dataset,
     known: known === null ? null : { id: known.id, name: known.name, words: new Set(known.words) },
-    preferences: preferences === null
-      ? null
-      : { query: { ...preferences.query }, view: { ...preferences.view }, page: preferences.page },
+    preferences:
+      preferences === null
+        ? null
+        : {
+            query: { ...preferences.query },
+            view: { ...preferences.view },
+            page: preferences.page,
+          },
   };
 }
 
 async function countEntries(store: AppStore, datasetId: string): Promise<number> {
   let count = 0;
-  for await (const chunk of store.datasets.readChunks(datasetId, WORKER_IMPORT_CHUNK_SIZE)) count += chunk.length;
+  for await (const chunk of store.datasets.readChunks(datasetId, WORKER_IMPORT_CHUNK_SIZE))
+    count += chunk.length;
   return count;
 }
 
 async function verifyStagedDataset(store: AppStore, metadata: DatasetMetadata): Promise<void> {
   const count = await countEntries(store, metadata.id);
   if (count !== metadata.entryCount) {
-    throw new Error(`Migrated dataset verification failed: expected ${metadata.entryCount} entries, found ${count}`);
+    throw new Error(
+      `Migrated dataset verification failed: expected ${metadata.entryCount} entries, found ${count}`,
+    );
   }
 }
 
 async function verifyActiveDataset(store: AppStore, metadata: DatasetMetadata): Promise<void> {
   const active = await store.datasets.getActive();
-  if (active?.id !== metadata.id) throw new Error(`Migrated dataset was not activated: ${metadata.id}`);
+  if (active?.id !== metadata.id)
+    throw new Error(`Migrated dataset was not activated: ${metadata.id}`);
   await verifyStagedDataset(store, metadata);
 }
 
-async function verifyKnownWords(store: AppStore, id: string, words: ReadonlySet<string>): Promise<void> {
+async function verifyKnownWords(
+  store: AppStore,
+  id: string,
+  words: ReadonlySet<string>,
+): Promise<void> {
   const active = await store.knownWords.getActive();
-  if (active?.id !== id || active.words.size !== words.size || [...words].some((word) => !active.words.has(word))) {
+  if (
+    active?.id !== id ||
+    active.words.size !== words.size ||
+    [...words].some((word) => !active.words.has(word))
+  ) {
     throw new Error("Migrated known-word set verification failed");
   }
 }
@@ -172,12 +190,16 @@ async function rollback(
       }
     });
     if (knownId !== null && knownId !== previous.known?.id) {
-      await attempt("known-word cleanup", () => removeIfSupported(store.knownWords, knownId!, "known-word"));
+      await attempt("known-word cleanup", () =>
+        removeIfSupported(store.knownWords, knownId!, "known-word"),
+      );
     }
   }
 
   if (datasetActivationAttempted && previous.dataset !== null) {
-    await attempt("dataset activation rollback", () => store.datasets.activate(previous.dataset!.id));
+    await attempt("dataset activation rollback", () =>
+      store.datasets.activate(previous.dataset!.id),
+    );
   }
   if (datasetId !== null) {
     await attempt("staged dataset cleanup", () => store.datasets.remove(datasetId));
@@ -186,7 +208,9 @@ async function rollback(
   return failures;
 }
 
-export async function migrateLegacy(options: LegacyMigrationOptions): Promise<LegacyMigrationResult> {
+export async function migrateLegacy(
+  options: LegacyMigrationOptions,
+): Promise<LegacyMigrationResult> {
   const emptyResult = (
     page: number,
     warning: string | null = null,
@@ -201,24 +225,33 @@ export async function migrateLegacy(options: LegacyMigrationOptions): Promise<Le
   });
 
   try {
-    if (hasMigrationMarker(options.storage, MIGRATION_VERSION)) return emptyResult(options.query.page);
+    if (hasMigrationMarker(options.storage, MIGRATION_VERSION))
+      return emptyResult(options.query.page);
     const legacy = readLegacyState(options.storage);
     if (legacy === null) return emptyResult(options.query.page);
     if (legacy.warning !== undefined) {
       return emptyResult(legacy.page, `${legacy.warning} Legacy keys were preserved.`);
     }
     if (malformedLegacyRecord(options.storage)) {
-      return emptyResult(legacy.page, "Legacy migration could not parse saved data; legacy keys were preserved.");
+      return emptyResult(
+        legacy.page,
+        "Legacy migration could not parse saved data; legacy keys were preserved.",
+      );
     }
 
     let previous: PreviousRecords;
     try {
       previous = await readPreviousRecords(options.store);
     } catch (error) {
+      // Only an unavailable storage backend forces the memory fallback; an
+      // invariant failure surfaces through the normal warning path instead.
+      const storageFailure = isStorageUnavailableError(error);
       return emptyResult(
         legacy.page,
-        `Legacy migration failed: ${errorMessage(error)}. Legacy keys were preserved.`,
-        true,
+        storageFailure
+          ? `Legacy migration failed: ${errorMessage(error)}. Legacy keys were preserved.`
+          : `Legacy migration could not read saved data: ${errorMessage(error)}. Legacy keys were preserved.`,
+        storageFailure,
       );
     }
     const now = options.now ?? (() => new Date().toISOString());
@@ -236,7 +269,9 @@ export async function migrateLegacy(options: LegacyMigrationOptions): Promise<Le
       });
       const receivedCount = chunks.reduce((count, chunk) => count + chunk.length, 0);
       if (receivedCount !== complete.entryCount) {
-        throw new Error(`Migrated dataset count mismatch: expected ${complete.entryCount}, found ${receivedCount}`);
+        throw new Error(
+          `Migrated dataset count mismatch: expected ${complete.entryCount}, found ${receivedCount}`,
+        );
       }
       const timestamp = now();
       datasetChunks = chunks;
@@ -261,7 +296,9 @@ export async function migrateLegacy(options: LegacyMigrationOptions): Promise<Le
       });
       for (const chunk of chunks) for (const word of chunk) knownWords.add(word);
       if (knownWords.size !== complete.wordCount) {
-        throw new Error(`Migrated known-word count mismatch: expected ${complete.wordCount}, found ${knownWords.size}`);
+        throw new Error(
+          `Migrated known-word count mismatch: expected ${complete.wordCount}, found ${knownWords.size}`,
+        );
       }
     }
 
@@ -293,7 +330,11 @@ export async function migrateLegacy(options: LegacyMigrationOptions): Promise<Le
       if (legacy.knownText !== null) {
         knownSaveAttempted = true;
         knownId = createId("known");
-        await options.store.knownWords.save(knownId, legacy.knownFileName || "Migaku known words", knownWords);
+        await options.store.knownWords.save(
+          knownId,
+          legacy.knownFileName || "Migaku known words",
+          knownWords,
+        );
         const activeKnown = await options.store.knownWords.getActive();
         if (activeKnown === null) throw new Error("Migrated known-word set was not activated");
         await verifyKnownWords(options.store, knownId, knownWords);
@@ -304,7 +345,14 @@ export async function migrateLegacy(options: LegacyMigrationOptions): Promise<Le
       await verifyPreferences(options.store, migratedPreferences);
       if (options.persistentStore) writeMigrationMarker(options.storage, MIGRATION_VERSION);
 
-      return { migrated: true, warning: null, storageFailure: false, page, dataset, knownWords };
+      return {
+        migrated: true,
+        warning: null,
+        storageFailure: false,
+        page,
+        dataset,
+        knownWords,
+      };
     } catch (error) {
       const rollbackFailures = await rollback(
         options.store,
@@ -315,9 +363,8 @@ export async function migrateLegacy(options: LegacyMigrationOptions): Promise<Le
         knownSaveAttempted,
         preferencesSaveAttempted,
       );
-      const rollbackMessage = rollbackFailures.length > 0
-        ? ` Rollback warnings: ${rollbackFailures.join("; ")}.`
-        : "";
+      const rollbackMessage =
+        rollbackFailures.length > 0 ? ` Rollback warnings: ${rollbackFailures.join("; ")}.` : "";
       return emptyResult(
         page,
         `Legacy migration failed: ${errorMessage(error)}.${rollbackMessage} Legacy keys were preserved.`,
@@ -332,6 +379,9 @@ export async function migrateLegacy(options: LegacyMigrationOptions): Promise<Le
         return options.query.page;
       }
     })();
-    return emptyResult(page, `Legacy migration failed: ${errorMessage(error)}. Legacy keys were preserved.`);
+    return emptyResult(
+      page,
+      `Legacy migration failed: ${errorMessage(error)}. Legacy keys were preserved.`,
+    );
   }
 }

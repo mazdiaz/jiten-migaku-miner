@@ -1,5 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { describe, expect, it } from "vitest";
+import { ImportError, parseJitenCsv } from "../../src/domain/import";
 import {
   isKanaOnly,
   normalizeText,
@@ -9,8 +11,6 @@ import {
   parseKnownWords,
   sentencePlain,
 } from "../../src/domain/text";
-import { ImportError, parseJitenCsv } from "../../src/domain/import";
-import { describe, expect, it } from "vitest";
 
 const jitenFixture = readFileSync(
   fileURLToPath(new URL("../fixtures/jiten-small.csv", import.meta.url)),
@@ -34,13 +34,7 @@ function captureError(action: () => unknown): unknown {
 describe("parseJitenCsv", () => {
   it("parses deterministic fixture into entries with stable IDs", () => {
     expect(parseJitenCsv(jitenFixture)).toEqual({
-      headers: [
-        "Word",
-        "Occurences",
-        "ExampleSentence",
-        "Definitions",
-        "ReadingFurigana",
-      ],
+      headers: ["Word", "Occurences", "ExampleSentence", "Definitions", "ReadingFurigana"],
       entries: [
         {
           id: "entry-0",
@@ -76,7 +70,10 @@ describe("parseJitenCsv", () => {
           sentenceRaw: "",
           hasSentence: false,
           definitions: "quiet",
-          furiganaRuns: [{ text: "静", reading: "しず" }, { text: "か", reading: null }],
+          furiganaRuns: [
+            { text: "静", reading: "しず" },
+            { text: "か", reading: null },
+          ],
         },
       ],
       skippedRows: 0,
@@ -94,9 +91,7 @@ describe("parseJitenCsv", () => {
   });
 
   it("accepts a BOM and CRLF while keeping optional columns empty", () => {
-    const parsed = parseJitenCsv(
-      "\uFEFFWord,Occurences\r\n猫,not-a-number\r\n犬,-2\r\n",
-    );
+    const parsed = parseJitenCsv("\uFEFFWord,Occurences\r\n猫,not-a-number\r\n犬,-2\r\n");
 
     expect(parsed.headers).toEqual(["Word", "Occurences"]);
     expect(parsed.entries).toEqual([
@@ -114,17 +109,13 @@ describe("parseJitenCsv", () => {
   });
 
   it("treats occurrence values with trailing or decimal characters as invalid", () => {
-    const parsed = parseJitenCsv(
-      "Word,Occurences\n猫,12abc\n犬,1.5\n鳥, 42 \n鴨,0\n",
-    );
+    const parsed = parseJitenCsv("Word,Occurences\n猫,12abc\n犬,1.5\n鳥, 42 \n鴨,0\n");
 
     expect(parsed.entries.map((entry) => entry.occurrences)).toEqual([0, 0, 42, 0]);
   });
 
   it("ignores blank rows and counts non-empty rows without a word", () => {
-    const parsed = parseJitenCsv(
-      "Word,Definitions\n気,meaning\n,has data\n  ,   \n\n猫,animal\n",
-    );
+    const parsed = parseJitenCsv("Word,Definitions\n気,meaning\n,has data\n  ,   \n\n猫,animal\n");
 
     expect(parsed.skippedRows).toBe(1);
     expect(parsed.entries.map((entry) => [entry.id, entry.originalIndex])).toEqual([

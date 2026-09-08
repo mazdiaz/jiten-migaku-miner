@@ -1,18 +1,18 @@
 import { describe, expect, it } from "vitest";
-import type { Entry, EntryWithKnown, QueryResult, QueryState } from "../../src/domain/types";
-import type { AppState, FileSource } from "../../src/app/state";
-import { createMinerController } from "../../src/app/controller";
 import type { MinerControllerOptions } from "../../src/app/controller";
+import { createMinerController } from "../../src/app/controller";
+import type { AppState, FileSource } from "../../src/app/state";
 import type { WorkerClient, WorkerQueryInput } from "../../src/app/worker-client";
-import { createSessionQueueStore, SESSION_QUEUE_STORAGE_KEY } from "../../src/platform/session-queue";
-import { createMemoryAppStore } from "../../src/storage/memory-store";
+import type { Entry, EntryWithKnown, QueryResult, QueryState } from "../../src/domain/types";
+import {
+  createSessionQueueStore,
+  SESSION_QUEUE_STORAGE_KEY,
+} from "../../src/platform/session-queue";
 import type { AppStore, DatasetMetadata } from "../../src/storage/contracts";
-import type {
-  ImportCompleteResponse,
-  ImportChunkResponse,
-} from "../../src/worker/protocol";
+import { createMemoryAppStore } from "../../src/storage/memory-store";
+import type { ImportChunkResponse, ImportCompleteResponse } from "../../src/worker/protocol";
 
-const baseQuery: QueryState = {
+const _baseQuery: QueryState = {
   search: "",
   hideKnown: false,
   hideKanaOnly: false,
@@ -39,7 +39,13 @@ function entry(id: string, word: string, originalIndex = 0, occurrences = 3): En
 }
 
 function withKnown(value: Entry): EntryWithKnown {
-  return { ...value, known: false, knownByMigaku: false, knownByDecision: false, decision: "unreviewed" };
+  return {
+    ...value,
+    known: false,
+    knownByMigaku: false,
+    knownByDecision: false,
+    decision: "unreviewed",
+  };
 }
 
 function metadata(id: string, name = id): DatasetMetadata {
@@ -72,12 +78,24 @@ function result(items: EntryWithKnown[] = []): QueryResult {
 
 class FakeStorage implements Storage {
   readonly values = new Map<string, string>();
-  get length(): number { return this.values.size; }
-  clear(): void { this.values.clear(); }
-  getItem(key: string): string | null { return this.values.get(key) ?? null; }
-  key(index: number): string | null { return [...this.values.keys()][index] ?? null; }
-  removeItem(key: string): void { this.values.delete(key); }
-  setItem(key: string, value: string): void { this.values.set(key, value); }
+  get length(): number {
+    return this.values.size;
+  }
+  clear(): void {
+    this.values.clear();
+  }
+  getItem(key: string): string | null {
+    return this.values.get(key) ?? null;
+  }
+  key(index: number): string | null {
+    return [...this.values.keys()][index] ?? null;
+  }
+  removeItem(key: string): void {
+    this.values.delete(key);
+  }
+  setItem(key: string, value: string): void {
+    this.values.set(key, value);
+  }
 }
 
 class FakeWorkerClient implements WorkerClient {
@@ -98,7 +116,7 @@ class FakeWorkerClient implements WorkerClient {
     const importing = this.nextJiten ?? {
       chunks: [[entry("new-entry", "新しい")]],
       complete: {
-        protocolVersion: 1 as const,
+        protocolVersion: 2 as const,
         type: "import-complete" as const,
         requestId: "import",
         kind: "jiten" as const,
@@ -108,21 +126,23 @@ class FakeWorkerClient implements WorkerClient {
         skippedRows: 0,
       },
     };
-    importing.chunks.forEach((entries, chunkIndex) => onChunk?.({
-      protocolVersion: 1,
-      type: "import-chunk",
-      requestId: importing.complete.requestId,
-      kind: "jiten",
-      name,
-      chunkIndex,
-      entries,
-    }));
+    importing.chunks.forEach((entries, chunkIndex) => {
+      onChunk?.({
+        protocolVersion: 2,
+        type: "import-chunk",
+        requestId: importing.complete.requestId,
+        kind: "jiten",
+        name,
+        chunkIndex,
+        entries,
+      });
+    });
     return { ...importing.complete, name };
   }
 
   async importKnown(name: string): Promise<Extract<ImportCompleteResponse, { kind: "known" }>> {
     return {
-      protocolVersion: 1,
+      protocolVersion: 2,
       type: "import-complete",
       requestId: "known",
       kind: "known",
@@ -164,9 +184,12 @@ interface Setup {
 async function setup(activeDatasetId: string | null = "dataset-1"): Promise<Setup> {
   const store = createMemoryAppStore();
   if (activeDatasetId !== null) {
-    await store.datasets.stage(metadata(activeDatasetId), (async function* () {
-      yield [entry("one", "一", 0, 5)];
-    })());
+    await store.datasets.stage(
+      metadata(activeDatasetId),
+      (async function* () {
+        yield [entry("one", "一", 0, 5)];
+      })(),
+    );
     await store.datasets.activate(activeDatasetId);
   }
   const storage = new FakeStorage();
@@ -235,7 +258,9 @@ describe("mining queue controller operations", () => {
 
     controller.removeQueued("A");
     const afterRemove = env.storage.getItem(SESSION_QUEUE_STORAGE_KEY);
-    expect(JSON.parse(afterRemove ?? "{}")).toMatchObject({ normalizedWords: [] });
+    expect(JSON.parse(afterRemove ?? "{}")).toMatchObject({
+      normalizedWords: [],
+    });
   });
 
   it("restores the queue for the same dataset on a fresh controller", async () => {
@@ -257,12 +282,19 @@ describe("mining queue controller operations", () => {
   it("ignores a stored queue belonging to a different dataset", async () => {
     const env = await setup();
     const elsewhere = createSessionQueueStore(env.storage);
-    elsewhere.save({ version: 1, datasetId: "another-dataset", normalizedWords: ["x", "y"] });
+    elsewhere.save({
+      version: 1,
+      datasetId: "another-dataset",
+      normalizedWords: ["x", "y"],
+    });
 
     const controller = createMinerController(env.options());
     await controller.init();
 
-    expect(lastState(controller).queue).toMatchObject({ datasetId: "dataset-1", normalizedWords: [] });
+    expect(lastState(controller).queue).toMatchObject({
+      datasetId: "dataset-1",
+      normalizedWords: [],
+    });
   });
 
   it("starts a fresh queue association when a new dataset is imported", async () => {
@@ -274,7 +306,7 @@ describe("mining queue controller operations", () => {
     env.worker.nextJiten = {
       chunks: [[entry("new", "新しい", 0, 9)]],
       complete: {
-        protocolVersion: 1,
+        protocolVersion: 2,
         type: "import-complete",
         requestId: "import",
         kind: "jiten",
@@ -325,7 +357,8 @@ describe("queue mode", () => {
     controller.toggleQueued("A");
     controller.toggleQueued("B");
 
-    env.worker.queryHandler = async () => result([withKnown(entry("a", "a")), withKnown(entry("b", "b")), withKnown(entry("c", "c"))]);
+    env.worker.queryHandler = async () =>
+      result([withKnown(entry("a", "a")), withKnown(entry("b", "b")), withKnown(entry("c", "c"))]);
 
     await controller.startQueueMode();
 
@@ -375,7 +408,10 @@ describe("queue mode", () => {
     expect(state.query).toEqual(queryBefore);
     const restoreQuery = env.worker.queryCalls.at(-1);
     expect(restoreQuery?.queryChannel).toBe("user");
-    expect(restoreQuery?.query).toMatchObject({ search: "一", minOccurrences: 2 });
+    expect(restoreQuery?.query).toMatchObject({
+      search: "一",
+      minOccurrences: 2,
+    });
   });
 
   it("keeps worker paging instead of mounting everything past the safety threshold", async () => {
@@ -400,7 +436,11 @@ describe("queue mode", () => {
     await controller.init();
     controller.toggleQueued("A");
     env.worker.queryHandler = async (request) =>
-      result((request.includeNormalizedWords ?? []).map((word, index) => withKnown(entry(word, word, index))));
+      result(
+        (request.includeNormalizedWords ?? []).map((word, index) =>
+          withKnown(entry(word, word, index)),
+        ),
+      );
 
     await controller.startQueueMode();
     controller.updateQuery({ search: "b" });
@@ -419,7 +459,11 @@ describe("queue mode", () => {
     controller.toggleQueued("A");
     controller.toggleQueued("B");
     env.worker.queryHandler = async (request) => ({
-      ...result((request.includeNormalizedWords ?? []).map((word, index) => withKnown(entry(word, word, index)))),
+      ...result(
+        (request.includeNormalizedWords ?? []).map((word, index) =>
+          withKnown(entry(word, word, index)),
+        ),
+      ),
       totalPages: 2,
     });
 
@@ -430,7 +474,10 @@ describe("queue mode", () => {
     const fired = env.worker.queryCalls.at(-1);
     expect(fired?.queryChannel).toBe("queue");
     expect(fired?.includeNormalizedWords).toEqual(["a", "b"]);
-    expect(lastState(controller).result?.items.map((item) => item.normalizedWord)).toEqual(["a", "b"]);
+    expect(lastState(controller).result?.items.map((item) => item.normalizedWord)).toEqual([
+      "a",
+      "b",
+    ]);
   });
 
   it("keeps the queue include-list when the viewport updates during queue mode", async () => {
@@ -440,7 +487,11 @@ describe("queue mode", () => {
     controller.toggleQueued("A");
     controller.toggleQueued("B");
     env.worker.queryHandler = async (request) =>
-      result((request.includeNormalizedWords ?? []).map((word, index) => withKnown(entry(word, word, index))));
+      result(
+        (request.includeNormalizedWords ?? []).map((word, index) =>
+          withKnown(entry(word, word, index)),
+        ),
+      );
 
     await controller.startQueueMode();
     controller.updateQuery({ pageSize: "all" });
@@ -451,7 +502,10 @@ describe("queue mode", () => {
     const fired = env.worker.queryCalls.at(-1);
     expect(fired?.queryChannel).toBe("queue");
     expect(fired?.includeNormalizedWords).toEqual(["a", "b"]);
-    expect(lastState(controller).result?.items.map((item) => item.normalizedWord)).toEqual(["a", "b"]);
+    expect(lastState(controller).result?.items.map((item) => item.normalizedWord)).toEqual([
+      "a",
+      "b",
+    ]);
   });
 
   it("orders mixed-case queued entries by their lowercase queue keys", async () => {
@@ -459,11 +513,91 @@ describe("queue mode", () => {
     const controller = createMinerController(env.options());
     await controller.init();
     controller.toggleQueued("B");
-    env.worker.queryHandler = async () => result([withKnown(entry("c", "c", 0)), withKnown(entry("b-entry", "B", 1))]);
+    env.worker.queryHandler = async () =>
+      result([withKnown(entry("c", "c", 0)), withKnown(entry("b-entry", "B", 1))]);
 
     await controller.startQueueMode();
 
-    expect(lastState(controller).result?.items.map((item) => item.normalizedWord)).toEqual(["B", "c"]);
+    expect(lastState(controller).result?.items.map((item) => item.normalizedWord)).toEqual([
+      "B",
+      "c",
+    ]);
+  });
+
+  it("sends a neutral queue query so hidden normal-mode filters cannot drop queued words", async () => {
+    const env = await setup();
+    const controller = createMinerController(env.options());
+    await controller.init();
+    // Normal-mode filters that would narrow the queue invisibly (the queue UI
+    // hides filter controls and chips).
+    controller.updateQuery({
+      search: "猫",
+      hideKnown: true,
+      decision: "later",
+      minOccurrences: 5,
+      sentence: "has",
+    });
+    await flushMicrotasks();
+    controller.toggleQueued("A");
+    controller.toggleQueued("B");
+
+    await controller.startQueueMode();
+
+    const queueQuery = env.worker.queryCalls.at(-1);
+    expect(queueQuery?.queryChannel).toBe("queue");
+    expect(queueQuery?.query).toMatchObject({
+      search: "",
+      hideKnown: false,
+      hideKanaOnly: false,
+      sentence: "any",
+      minOccurrences: 0,
+      decision: "all",
+      sort: "original",
+      pageSize: "all",
+      page: 1,
+    });
+    expect(queueQuery?.includeNormalizedWords).toEqual(["a", "b"]);
+  });
+
+  it("shows queued words under active hideKnown when entering queue mode", async () => {
+    const env = await setup();
+    const controller = createMinerController(env.options());
+    await controller.init();
+    controller.updateQuery({ hideKnown: true });
+    await flushMicrotasks();
+    controller.toggleQueued("A");
+    env.worker.queryHandler = async (request) =>
+      result(
+        (request.includeNormalizedWords ?? []).map((word, index) =>
+          withKnown(entry(word, word, index)),
+        ),
+      );
+
+    await controller.startQueueMode();
+
+    expect(lastState(controller).result?.items.map((item) => item.normalizedWord)).toEqual(["a"]);
+  });
+
+  it("keeps the neutral query in bounded queue mode", async () => {
+    const env = await setup();
+    const controller = createMinerController(env.options());
+    await controller.init();
+    controller.updateQuery({ search: "猫", decision: "mined" });
+    await flushMicrotasks();
+
+    const many = Array.from({ length: 5_001 }, (_, index) => `word-${index}`);
+    for (const word of many) controller.toggleQueued(word);
+
+    await controller.startQueueMode();
+
+    const queueQuery = env.worker.queryCalls.at(-1);
+    expect(queueQuery?.queryChannel).toBe("queue");
+    expect(queueQuery?.query).toMatchObject({
+      search: "",
+      decision: "all",
+      sort: "original",
+      pageSize: 50,
+    });
   });
 });
 
@@ -522,7 +656,11 @@ describe("queue decision integration", () => {
     controller.toggleQueued("A");
     controller.toggleQueued("B");
     env.worker.queryHandler = async (request) =>
-      result((request.includeNormalizedWords ?? []).map((word, index) => withKnown(entry(word, word, index))));
+      result(
+        (request.includeNormalizedWords ?? []).map((word, index) =>
+          withKnown(entry(word, word, index)),
+        ),
+      );
 
     await controller.startQueueMode();
     await controller.setWordDecision("a", "mined");

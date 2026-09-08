@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import type { Entry, QueryState, WordDecisionStatus } from "../../src/domain/types";
 import { queryEntries } from "../../src/domain/query";
-import type { WorkerResponse, QueryRequest } from "../../src/worker/protocol";
-import { WorkerEngine, type DatasetState } from "../../src/worker/worker-engine";
+import type { Entry, QueryState, WordDecisionStatus } from "../../src/domain/types";
+import type { QueryRequest, WorkerResponse } from "../../src/worker/protocol";
+import { type DatasetState, WorkerEngine } from "../../src/worker/worker-engine";
 
 function entry(index: number, word = `word-${index}`, occurrences = index): Entry {
   return {
@@ -35,7 +35,7 @@ function queryState(overrides: Partial<QueryState> = {}): QueryState {
 
 function queryRequest(overrides: Partial<QueryRequest> = {}): QueryRequest {
   return {
-    protocolVersion: 1,
+    protocolVersion: 2,
     type: "query",
     requestId: "query-1",
     datasetId: "dataset-1",
@@ -89,7 +89,7 @@ describe("WorkerEngine", () => {
     );
     expect(chunks).toHaveLength(2);
     expect(chunks[0]).toMatchObject({
-      protocolVersion: 1,
+      protocolVersion: 2,
       requestId: "import-1",
       type: "import-chunk",
       kind: "jiten",
@@ -100,7 +100,7 @@ describe("WorkerEngine", () => {
     expect(chunks[0]?.entries[0]?.id).toBe("entry-0");
     expect(chunks[1]?.entries[0]?.id).toBe("entry-2000");
     expect(responses.at(-1)).toMatchObject({
-      protocolVersion: 1,
+      protocolVersion: 2,
       type: "import-complete",
       requestId: "import-1",
       kind: "jiten",
@@ -143,15 +143,23 @@ describe("WorkerEngine", () => {
 
     const pageResponses: WorkerResponse[] = [];
     await engine.query(
-      queryRequest({ requestId: "page-1", query: queryState({ pageSize: 2, page: 2 }) }),
+      queryRequest({
+        requestId: "page-1",
+        query: queryState({ pageSize: 2, page: 2 }),
+      }),
       (response) => pageResponses.push(response),
     );
     expect(pageResponses).toHaveLength(1);
-    expect(pageResponses[0]?.type === "query-result" ? pageResponses[0].result.items.map((item) => item.id) : []).toEqual([
-      "entry-2",
-      "entry-3",
-    ]);
-    expect(pageResponses[0]).toMatchObject({ protocolVersion: 1, requestId: "page-1", type: "query-result" });
+    expect(
+      pageResponses[0]?.type === "query-result"
+        ? pageResponses[0].result.items.map((item) => item.id)
+        : [],
+    ).toEqual(["entry-2", "entry-3"]);
+    expect(pageResponses[0]).toMatchObject({
+      protocolVersion: 2,
+      requestId: "page-1",
+      type: "query-result",
+    });
 
     const windowResponses: WorkerResponse[] = [];
     await engine.query(
@@ -162,12 +170,13 @@ describe("WorkerEngine", () => {
       }),
       (response) => windowResponses.push(response),
     );
-    expect(windowResponses[0]?.type === "query-result" ? windowResponses[0].result.items.map((item) => item.id) : []).toEqual([
-      "entry-2",
-      "entry-3",
-    ]);
+    expect(
+      windowResponses[0]?.type === "query-result"
+        ? windowResponses[0].result.items.map((item) => item.id)
+        : [],
+    ).toEqual(["entry-2", "entry-3"]);
     expect(windowResponses[0]).toMatchObject({
-      protocolVersion: 1,
+      protocolVersion: 2,
       requestId: "window-1",
       type: "query-result",
       result: { totalEntries: 5, windowed: true },
@@ -200,7 +209,9 @@ describe("WorkerEngine", () => {
 
     const responses: WorkerResponse[] = [];
     setTimeout(() => engine.cancel("cancel-query"), 0);
-    await engine.query(queryRequest({ requestId: "cancel-query" }), (response) => responses.push(response));
+    await engine.query(queryRequest({ requestId: "cancel-query" }), (response) =>
+      responses.push(response),
+    );
 
     expect(responses.some((response) => response.type === "query-result")).toBe(false);
   });
@@ -213,9 +224,8 @@ describe("WorkerEngine", () => {
 
     const responses: WorkerResponse[] = [];
     setTimeout(() => engine.cancel("cancel-short-query"), 0);
-    await engine.query(
-      queryRequest({ requestId: "cancel-short-query" }),
-      (response) => responses.push(response),
+    await engine.query(queryRequest({ requestId: "cancel-short-query" }), (response) =>
+      responses.push(response),
     );
 
     expect(responses.some((response) => response.type === "query-result")).toBe(false);
@@ -233,9 +243,13 @@ describe("WorkerEngine", () => {
     expect(() => engine.loadComplete("dataset-1", "reload-1")).toThrowError();
 
     const responses: WorkerResponse[] = [];
-    await engine.query(queryRequest({ requestId: "query-after-cancel" }), (response) => responses.push(response));
+    await engine.query(queryRequest({ requestId: "query-after-cancel" }), (response) =>
+      responses.push(response),
+    );
     expect(responses).toHaveLength(1);
-    expect(responses[0]?.type === "query-result" ? responses[0].result.items.map((item) => item.id) : []).toEqual(["entry-0"]);
+    expect(
+      responses[0]?.type === "query-result" ? responses[0].result.items.map((item) => item.id) : [],
+    ).toEqual(["entry-0"]);
   });
 
   it("allows a fresh load after a canceled request cleaned its staging", async () => {
@@ -249,25 +263,40 @@ describe("WorkerEngine", () => {
     engine.loadComplete("dataset-2", "load-3");
 
     const responses: WorkerResponse[] = [];
-    await engine.query(queryRequest({ requestId: "query-reload", datasetId: "dataset-2" }), (response) => responses.push(response));
-    expect(responses[0]?.type === "query-result" ? responses[0].result.items.map((item) => item.id) : []).toEqual(["entry-5"]);
+    await engine.query(
+      queryRequest({ requestId: "query-reload", datasetId: "dataset-2" }),
+      (response) => responses.push(response),
+    );
+    expect(
+      responses[0]?.type === "query-result" ? responses[0].result.items.map((item) => item.id) : [],
+    ).toEqual(["entry-5"]);
   });
 
   it("returns consistent windows across cached same-signature queries", async () => {
     const engine = new WorkerEngine();
-    const source = Array.from({ length: 10 }, (_, index) => entry(index, `word-${index}`, 10 - index));
+    const source = Array.from({ length: 10 }, (_, index) =>
+      entry(index, `word-${index}`, 10 - index),
+    );
     engine.loadStart("dataset-1");
     engine.loadChunk("dataset-1", 0, source);
     engine.loadComplete("dataset-1");
 
     const first: WorkerResponse[] = [];
     await engine.query(
-      queryRequest({ requestId: "w1", query: queryState({ pageSize: "all" }), window: { start: 0, size: 3 } }),
+      queryRequest({
+        requestId: "w1",
+        query: queryState({ pageSize: "all" }),
+        window: { start: 0, size: 3 },
+      }),
       (response) => first.push(response),
     );
     const second: WorkerResponse[] = [];
     await engine.query(
-      queryRequest({ requestId: "w2", query: queryState({ pageSize: "all" }), window: { start: 6, size: 3 } }),
+      queryRequest({
+        requestId: "w2",
+        query: queryState({ pageSize: "all" }),
+        window: { start: 6, size: 3 },
+      }),
       (response) => second.push(response),
     );
 
@@ -324,7 +353,11 @@ describe("WorkerEngine", () => {
 
     const before: WorkerResponse[] = [];
     await engine.query(
-      queryRequest({ requestId: "q1", query: queryState({ pageSize: "all" }), window: { start: 0, size: 10 } }),
+      queryRequest({
+        requestId: "q1",
+        query: queryState({ pageSize: "all" }),
+        window: { start: 0, size: 10 },
+      }),
       (response) => before.push(response),
     );
 
@@ -334,7 +367,11 @@ describe("WorkerEngine", () => {
 
     const after: WorkerResponse[] = [];
     await engine.query(
-      queryRequest({ requestId: "q2", query: queryState({ pageSize: "all" }), window: { start: 0, size: 10 } }),
+      queryRequest({
+        requestId: "q2",
+        query: queryState({ pageSize: "all" }),
+        window: { start: 0, size: 10 },
+      }),
       (response) => after.push(response),
     );
 
@@ -373,7 +410,11 @@ describe("WorkerEngine", () => {
     const originalResult = original[0]?.type === "query-result" ? original[0].result : null;
     const descendingResult = descending[0]?.type === "query-result" ? descending[0].result : null;
     expect(originalResult?.items.map((item) => item.id)).toEqual(["entry-0", "entry-1", "entry-2"]);
-    expect(descendingResult?.items.map((item) => item.id)).toEqual(["entry-5", "entry-4", "entry-3"]);
+    expect(descendingResult?.items.map((item) => item.id)).toEqual([
+      "entry-5",
+      "entry-4",
+      "entry-3",
+    ]);
   });
 
   it("filters by decision across the full dataset before pagination", async () => {
@@ -495,7 +536,15 @@ describe("WorkerEngine", () => {
       (response) => responses.push(response),
     );
     const result = responses[0]?.type === "query-result" ? responses[0].result : null;
-    expect(result?.items.map((item) => [item.id, item.known, item.knownByMigaku, item.knownByDecision, item.decision])).toEqual([
+    expect(
+      result?.items.map((item) => [
+        item.id,
+        item.known,
+        item.knownByMigaku,
+        item.knownByDecision,
+        item.decision,
+      ]),
+    ).toEqual([
       ["entry-0", true, false, true, "known"],
       ["entry-1", true, true, false, "unreviewed"],
       ["entry-2", true, true, false, "mined"],
@@ -552,7 +601,11 @@ describe("WorkerEngine", () => {
     await engine.query(
       queryRequest({
         requestId: "windowed-mined",
-        decisions: [["word-0", "mined"], ["word-4", "mined"], ["word-5", "mined"]],
+        decisions: [
+          ["word-0", "mined"],
+          ["word-4", "mined"],
+          ["word-5", "mined"],
+        ],
         query: queryState({ pageSize: "all", decision: "mined" }),
         window: { start: 1, size: 2 },
       }),
@@ -568,7 +621,9 @@ describe("WorkerEngine", () => {
 
   it("matches the domain query pipeline semantics for decision queries", async () => {
     const engine = new WorkerEngine();
-    const source = Array.from({ length: 10 }, (_, index) => entry(index, `word-${index}`, 10 - index));
+    const source = Array.from({ length: 10 }, (_, index) =>
+      entry(index, `word-${index}`, 10 - index),
+    );
     engine.loadStart("dataset-1");
     engine.loadChunk("dataset-1", 0, source);
     engine.loadComplete("dataset-1");
@@ -597,11 +652,22 @@ describe("WorkerEngine", () => {
     const engineResult = responses[0]?.type === "query-result" ? responses[0].result : null;
 
     const domainDecisions = new Map(
-      decisions.map(([normalizedWord, status]) => [normalizedWord, { normalizedWord, status, updatedAt: "2026-09-05T00:00:00.000Z" }]),
+      decisions.map(([normalizedWord, status]) => [
+        normalizedWord,
+        { normalizedWord, status, updatedAt: "2026-09-05T00:00:00.000Z" },
+      ]),
     );
-    const domainResult = queryEntries(source, new Set(knownWords), query, undefined, domainDecisions);
+    const domainResult = queryEntries(
+      source,
+      new Set(knownWords),
+      query,
+      undefined,
+      domainDecisions,
+    );
 
-    expect(engineResult?.items.map((item) => item.id)).toEqual(domainResult.items.map((item) => item.id));
+    expect(engineResult?.items.map((item) => item.id)).toEqual(
+      domainResult.items.map((item) => item.id),
+    );
     expect(engineResult?.totalEntries).toBe(domainResult.totalEntries);
     expect(engineResult?.totalPages).toBe(domainResult.totalPages);
     expect(engineResult?.page).toBe(domainResult.page);
@@ -612,28 +678,44 @@ describe("WorkerEngine", () => {
 
   it("numeric pagination reuses cached ordered indexes across pages", async () => {
     const engine = new ScanCountingEngine();
-    loadDataset(engine, "dataset-1", Array.from({ length: 120 }, (_, index) => entry(index)));
+    loadDataset(
+      engine,
+      "dataset-1",
+      Array.from({ length: 120 }, (_, index) => entry(index)),
+    );
 
     const first: WorkerResponse[] = [];
     await engine.query(
-      queryRequest({ requestId: "np-1", query: queryState({ pageSize: 50, page: 1 }) }),
+      queryRequest({
+        requestId: "np-1",
+        query: queryState({ pageSize: 50, page: 1 }),
+      }),
       (response) => first.push(response),
     );
     const second: WorkerResponse[] = [];
     await engine.query(
-      queryRequest({ requestId: "np-2", query: queryState({ pageSize: 50, page: 2 }) }),
+      queryRequest({
+        requestId: "np-2",
+        query: queryState({ pageSize: 50, page: 2 }),
+      }),
       (response) => second.push(response),
     );
 
-    const firstIds = first[0]?.type === "query-result" ? first[0].result.items.map((item) => item.id) : null;
-    const secondIds = second[0]?.type === "query-result" ? second[0].result.items.map((item) => item.id) : null;
+    const firstIds =
+      first[0]?.type === "query-result" ? first[0].result.items.map((item) => item.id) : null;
+    const secondIds =
+      second[0]?.type === "query-result" ? second[0].result.items.map((item) => item.id) : null;
     expect(firstIds?.[0]).toBe("entry-0");
     expect(secondIds).toEqual(Array.from({ length: 50 }, (_, index) => `entry-${50 + index}`));
     expect(engine.scanCalls).toBe(1);
 
     const changed: WorkerResponse[] = [];
     await engine.query(
-      queryRequest({ requestId: "np-3", knownWords: ["word-3"], query: queryState({ pageSize: 50, page: 2 }) }),
+      queryRequest({
+        requestId: "np-3",
+        knownWords: ["word-3"],
+        query: queryState({ pageSize: 50, page: 2 }),
+      }),
       (response) => changed.push(response),
     );
     expect(engine.scanCalls).toBe(2);
@@ -641,17 +723,26 @@ describe("WorkerEngine", () => {
 
   it("numeric pagination decorates only the requested page", async () => {
     const engine = new WorkerEngine();
-    loadDataset(engine, "dataset-1", Array.from({ length: 10000 }, (_, index) => entry(index)));
+    loadDataset(
+      engine,
+      "dataset-1",
+      Array.from({ length: 10000 }, (_, index) => entry(index)),
+    );
 
     const responses: WorkerResponse[] = [];
     await engine.query(
-      queryRequest({ requestId: "big-page-3", query: queryState({ pageSize: 50, page: 3 }) }),
+      queryRequest({
+        requestId: "big-page-3",
+        query: queryState({ pageSize: 50, page: 3 }),
+      }),
       (response) => responses.push(response),
     );
 
     const result = responses[0]?.type === "query-result" ? responses[0].result : null;
     expect(result?.items).toHaveLength(50);
-    expect(result?.items.map((item) => item.id)).toEqual(Array.from({ length: 50 }, (_, index) => `entry-${100 + index}`));
+    expect(result?.items.map((item) => item.id)).toEqual(
+      Array.from({ length: 50 }, (_, index) => `entry-${100 + index}`),
+    );
     expect(result?.page).toBe(3);
     expect(result?.totalPages).toBe(200);
     expect(result?.totalEntries).toBe(10000);
@@ -662,7 +753,11 @@ describe("WorkerEngine", () => {
 
   it("stale query does not publish or cache after dataset replacement", async () => {
     const engine = new WorkerEngine();
-    loadDataset(engine, "dataset-1", Array.from({ length: 4001 }, (_, index) => entry(index, `old-${index}`)));
+    loadDataset(
+      engine,
+      "dataset-1",
+      Array.from({ length: 4001 }, (_, index) => entry(index, `old-${index}`)),
+    );
 
     const staleResponses: WorkerResponse[] = [];
     const staleQuery = engine.query(
@@ -689,7 +784,9 @@ describe("WorkerEngine", () => {
       (response) => freshResponses.push(response),
     );
     expect(
-      freshResponses[0]?.type === "query-result" ? freshResponses[0].result.items.map((item) => item.id) : null,
+      freshResponses[0]?.type === "query-result"
+        ? freshResponses[0].result.items.map((item) => item.id)
+        : null,
     ).toEqual(["entry-9999"]);
   });
 
@@ -706,9 +803,8 @@ describe("WorkerEngine", () => {
 
     for (const datasetId of ["dataset-b", "dataset-c", "dataset-d"]) {
       const responses: WorkerResponse[] = [];
-      await engine.query(
-        queryRequest({ requestId: `kept-${datasetId}`, datasetId }),
-        (response) => responses.push(response),
+      await engine.query(queryRequest({ requestId: `kept-${datasetId}`, datasetId }), (response) =>
+        responses.push(response),
       );
       expect(responses).toHaveLength(1);
     }
@@ -728,9 +824,8 @@ describe("WorkerEngine", () => {
 
     for (const datasetId of ["dataset-a", "dataset-c", "dataset-d"]) {
       const responses: WorkerResponse[] = [];
-      await engine.query(
-        queryRequest({ requestId: `kept-${datasetId}`, datasetId }),
-        (response) => responses.push(response),
+      await engine.query(queryRequest({ requestId: `kept-${datasetId}`, datasetId }), (response) =>
+        responses.push(response),
       );
       expect(responses).toHaveLength(1);
     }
@@ -751,9 +846,8 @@ describe("WorkerEngine", () => {
 
     for (const datasetId of ["dataset-3", "dataset-4", "dataset-5"]) {
       const responses: WorkerResponse[] = [];
-      await engine.query(
-        queryRequest({ requestId: `kept-${datasetId}`, datasetId }),
-        (response) => responses.push(response),
+      await engine.query(queryRequest({ requestId: `kept-${datasetId}`, datasetId }), (response) =>
+        responses.push(response),
       );
       expect(responses).toHaveLength(1);
     }

@@ -1,13 +1,13 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { bindControls } from "../../src/ui/controls";
-import { getDomMap } from "../../src/ui/dom";
-import type { DomMap } from "../../src/ui/dom";
-import { createRenderer } from "../../src/ui/renderer";
-import type { Renderer } from "../../src/ui/renderer";
 import type { AppState, FileSource, MinerController } from "../../src/app/state";
 import { createInitialAppState, DEFAULT_QUERY } from "../../src/app/state";
 import type { EntryWithKnown, QueryResult, QueryState } from "../../src/domain/types";
+import { bindControls } from "../../src/ui/controls";
+import type { DomMap } from "../../src/ui/dom";
+import { getDomMap } from "../../src/ui/dom";
+import type { Renderer } from "../../src/ui/renderer";
+import { createRenderer } from "../../src/ui/renderer";
 
 type Listener = (state: Readonly<AppState>) => void;
 
@@ -50,7 +50,14 @@ function seedDom(): DomMap {
   const advancedPanel = add("advancedPanel", "div");
   advancedPanel.hidden = true;
   add("stickySearch", "input").setAttribute("type", "search");
-  for (const id of ["hideKnown", "hideKanaOnly", "showFurigana", "pillHighlight", "showHighlight", "showDefinitions"]) {
+  for (const id of [
+    "hideKnown",
+    "hideKanaOnly",
+    "showFurigana",
+    "pillHighlight",
+    "showHighlight",
+    "showDefinitions",
+  ]) {
     add(id, "input").setAttribute("type", "checkbox");
   }
   add("minOccurrences", "input").setAttribute("type", "number");
@@ -66,16 +73,39 @@ function seedDom(): DomMap {
     return select;
   };
 
-  withOptions("sentenceFilter", [["any", "any"], ["has", "has"], ["none", "none"]]);
-  withOptions("sortSelect", [["occ-desc", "occ-desc"], ["occ-asc", "occ-asc"], ["original", "original"]]);
-  withOptions("pageSize", [["25", "25"], ["50", "50"], ["100", "100"], ["all", "all"]]);
+  withOptions("sentenceFilter", [
+    ["any", "any"],
+    ["has", "has"],
+    ["none", "none"],
+  ]);
+  withOptions("sortSelect", [
+    ["occ-desc", "occ-desc"],
+    ["occ-asc", "occ-asc"],
+    ["original", "original"],
+  ]);
+  withOptions("pageSize", [
+    ["25", "25"],
+    ["50", "50"],
+    ["100", "100"],
+    ["all", "all"],
+  ]);
   withOptions("decisionFilter", [
-    ["all", "All decisions"], ["unreviewed", "Unreviewed"], ["known", "Known"],
-    ["mined", "Mined"], ["skip", "Skipped"], ["later", "Later"],
+    ["all", "All decisions"],
+    ["unreviewed", "Unreviewed"],
+    ["known", "Known"],
+    ["mined", "Mined"],
+    ["skip", "Skipped"],
+    ["later", "Later"],
   ]);
 
-  withOptions("sentenceSize", [["medium", "medium"], ["large", "large"]]);
-  withOptions("density", [["comfortable", "comfortable"], ["compact", "compact"]]);
+  withOptions("sentenceSize", [
+    ["medium", "medium"],
+    ["large", "large"],
+  ]);
+  withOptions("density", [
+    ["comfortable", "comfortable"],
+    ["compact", "compact"],
+  ]);
   add("results", "section");
   add("resultsHeading", "h2").setAttribute("tabindex", "-1");
   add("resultStats", "p");
@@ -142,7 +172,12 @@ function seedDom(): DomMap {
   const coverageBody = add("coverageBody", "div");
   coverageBody.hidden = true;
   coveragePanel.appendChild(coverageBody);
-  for (const id of ["coverageUniqueWords", "coverageKnownOccurrences", "coveragePercent", "coverageTargets"]) {
+  for (const id of [
+    "coverageUniqueWords",
+    "coverageKnownOccurrences",
+    "coveragePercent",
+    "coverageTargets",
+  ]) {
     coverageBody.appendChild(add(id, "div"));
   }
   const coverageError = add("coverageError", "p");
@@ -197,8 +232,15 @@ function createFakeController(initial?: Partial<AppState>): FakeController {
 function datasetReady(): Partial<AppState> {
   return {
     dataset: {
-      id: "d1", name: "book.csv", sourceType: "file", sourceName: "book.csv",
-      headers: ["Word"], entryCount: 3, createdAt: "x", updatedAt: "x", schemaVersion: 1,
+      id: "d1",
+      name: "book.csv",
+      sourceType: "file",
+      sourceName: "book.csv",
+      headers: ["Word"],
+      entryCount: 3,
+      createdAt: "x",
+      updatedAt: "x",
+      schemaVersion: 1,
     },
     status: "ready",
   };
@@ -318,7 +360,9 @@ describe("active filter chip derivation", () => {
     const harness = setup(datasetReady());
     try {
       publishQuery(harness, { search: "   " });
-      expect(chipsOf(harness).filter((chip) => chip.dataset.filterChip === "search")).toHaveLength(0);
+      expect(chipsOf(harness).filter((chip) => chip.dataset.filterChip === "search")).toHaveLength(
+        0,
+      );
     } finally {
       harness.dispose();
     }
@@ -345,7 +389,9 @@ describe("active filter chip derivation", () => {
       expect(chipsOf(harness)[0]?.textContent).toBe("Sentence: none");
 
       publishQuery(harness, { sentence: "any" });
-      expect(chipsOf(harness).filter((chip) => chip.dataset.filterChip === "sentence")).toHaveLength(0);
+      expect(
+        chipsOf(harness).filter((chip) => chip.dataset.filterChip === "sentence"),
+      ).toHaveLength(0);
     } finally {
       harness.dispose();
     }
@@ -366,7 +412,9 @@ describe("active filter chip derivation", () => {
         expect(chipsOf(harness)[0]?.textContent).toBe(label);
       }
       publishQuery(harness, { decision: "all" });
-      expect(chipsOf(harness).filter((chip) => chip.dataset.filterChip === "decision")).toHaveLength(0);
+      expect(
+        chipsOf(harness).filter((chip) => chip.dataset.filterChip === "decision"),
+      ).toHaveLength(0);
     } finally {
       harness.dispose();
     }
@@ -379,10 +427,14 @@ describe("active filter chip derivation", () => {
       expect(chipsOf(harness)[0]?.textContent).toBe("Min occurrences: 5");
 
       publishQuery(harness, { minOccurrences: 1 });
-      expect(chipsOf(harness).filter((chip) => chip.dataset.filterChip === "minOccurrences")).toHaveLength(0);
+      expect(
+        chipsOf(harness).filter((chip) => chip.dataset.filterChip === "minOccurrences"),
+      ).toHaveLength(0);
 
       publishQuery(harness, { minOccurrences: 0 });
-      expect(chipsOf(harness).filter((chip) => chip.dataset.filterChip === "minOccurrences")).toHaveLength(0);
+      expect(
+        chipsOf(harness).filter((chip) => chip.dataset.filterChip === "minOccurrences"),
+      ).toHaveLength(0);
     } finally {
       harness.dispose();
     }
@@ -421,7 +473,13 @@ describe("chip and reset interactions", () => {
   it("chip click resets only its own filter field", () => {
     const harness = setup(datasetReady());
     try {
-      publishQuery(harness, { search: "言葉", hideKnown: true, sentence: "none", decision: "mined", minOccurrences: 3 });
+      publishQuery(harness, {
+        search: "言葉",
+        hideKnown: true,
+        sentence: "none",
+        decision: "mined",
+        minOccurrences: 3,
+      });
       const cases: Array<[string, Partial<QueryState>]> = [
         ["search", { search: "" }],
         ["hideKnown", { hideKnown: false }],
@@ -430,7 +488,9 @@ describe("chip and reset interactions", () => {
         ["minOccurrences", { minOccurrences: 1 }],
       ];
       for (const [key, patch] of cases) {
-        const chip = harness.dom.filterChips.querySelector<HTMLButtonElement>(`button[data-filter-chip="${key}"]`);
+        const chip = harness.dom.filterChips.querySelector<HTMLButtonElement>(
+          `button[data-filter-chip="${key}"]`,
+        );
         chip?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
         expect(harness.controller.updateQuery).toHaveBeenCalledWith(patch);
       }
@@ -447,7 +507,9 @@ describe("chip and reset interactions", () => {
       harness.dom.filterChips
         .querySelector<HTMLButtonElement>('button[data-filter-chip="hideKanaOnly"]')
         ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      expect(harness.controller.updateQuery).toHaveBeenCalledWith({ hideKanaOnly: false });
+      expect(harness.controller.updateQuery).toHaveBeenCalledWith({
+        hideKanaOnly: false,
+      });
     } finally {
       harness.dispose();
     }
@@ -456,11 +518,19 @@ describe("chip and reset interactions", () => {
   it("Reset Filters click resets the whole query to defaults", () => {
     const harness = setup(datasetReady());
     try {
-      publishQuery(harness, { search: "言葉", decision: "mined", sort: "occ-asc", page: 3, pageSize: 25 });
+      publishQuery(harness, {
+        search: "言葉",
+        decision: "mined",
+        sort: "occ-asc",
+        page: 3,
+        pageSize: 25,
+      });
       harness.dom.filterChips
         .querySelector<HTMLButtonElement>("#resetFilters")
         ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      expect(harness.controller.updateQuery).toHaveBeenCalledWith({ ...DEFAULT_QUERY });
+      expect(harness.controller.updateQuery).toHaveBeenCalledWith({
+        ...DEFAULT_QUERY,
+      });
     } finally {
       harness.dispose();
     }
@@ -490,7 +560,10 @@ describe("chips row visibility", () => {
   });
 
   it("hides in queue mode even with active filters", () => {
-    const harness = setup({ ...datasetReady(), query: { ...DEFAULT_QUERY, search: "言葉" } });
+    const harness = setup({
+      ...datasetReady(),
+      query: { ...DEFAULT_QUERY, search: "言葉" },
+    });
     try {
       expect(harness.dom.filterChips.hidden).toBe(false);
       harness.controller.publishState({
@@ -504,7 +577,10 @@ describe("chips row visibility", () => {
   });
 
   it("reappears after leaving queue mode", () => {
-    const harness = setup({ ...datasetReady(), query: { ...DEFAULT_QUERY, search: "言葉" } });
+    const harness = setup({
+      ...datasetReady(),
+      query: { ...DEFAULT_QUERY, search: "言葉" },
+    });
     try {
       harness.controller.publishState({
         queue: { datasetId: "d1", normalizedWords: ["言葉"], mode: "queue" },
@@ -523,7 +599,10 @@ describe("filtered-empty hint", () => {
   it("appends the remove-a-filter hint when the dataset has zero matches", () => {
     const harness = setup(datasetReady());
     try {
-      harness.controller.publishState({ query: { ...DEFAULT_QUERY, search: "zzzz" }, result: resultFixture(0) });
+      harness.controller.publishState({
+        query: { ...DEFAULT_QUERY, search: "zzzz" },
+        result: resultFixture(0),
+      });
       const empty = harness.dom.resultsList.querySelector<HTMLElement>(".empty-state");
       expect(empty?.textContent).toContain("No entries match the current filters.");
       expect(empty?.querySelector(".empty-hint")?.textContent).toBe("Try removing a filter.");
@@ -547,7 +626,10 @@ describe("filtered-empty hint", () => {
   it("omits the hint when results are non-empty", () => {
     const harness = setup(datasetReady());
     try {
-      harness.controller.publishState({ query: { ...DEFAULT_QUERY, search: "言葉" }, result: resultFixture(1, [makeEntry()]) });
+      harness.controller.publishState({
+        query: { ...DEFAULT_QUERY, search: "言葉" },
+        result: resultFixture(1, [makeEntry()]),
+      });
       expect(harness.dom.resultsList.querySelector(".empty-state")).toBeNull();
     } finally {
       harness.dispose();

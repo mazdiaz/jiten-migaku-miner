@@ -1,11 +1,11 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getDomMap } from "../../src/ui/dom";
-import type { DomMap } from "../../src/ui/dom";
-import { createRenderer, formatBackupFreshness } from "../../src/ui/renderer";
-import type { Renderer } from "../../src/ui/renderer";
 import type { AppState, MinerController } from "../../src/app/state";
 import { createInitialAppState } from "../../src/app/state";
+import type { DomMap } from "../../src/ui/dom";
+import { getDomMap } from "../../src/ui/dom";
+import type { Renderer } from "../../src/ui/renderer";
+import { createRenderer, formatBackupFreshness } from "../../src/ui/renderer";
 
 type Listener = (state: Readonly<AppState>) => void;
 
@@ -48,7 +48,14 @@ function seedDom(): DomMap {
   const advancedPanel = add("advancedPanel", "div");
   advancedPanel.hidden = true;
   add("stickySearch", "input").setAttribute("type", "search");
-  for (const id of ["hideKnown", "hideKanaOnly", "showFurigana", "pillHighlight", "showHighlight", "showDefinitions"]) {
+  for (const id of [
+    "hideKnown",
+    "hideKanaOnly",
+    "showFurigana",
+    "pillHighlight",
+    "showHighlight",
+    "showDefinitions",
+  ]) {
     add(id, "input").setAttribute("type", "checkbox");
   }
   add("minOccurrences", "input").setAttribute("type", "number");
@@ -64,16 +71,39 @@ function seedDom(): DomMap {
     return select;
   };
 
-  withOptions("sentenceFilter", [["any", "any"], ["has", "has"], ["none", "none"]]);
-  withOptions("sortSelect", [["occ-desc", "occ-desc"], ["occ-asc", "occ-asc"], ["original", "original"]]);
-  withOptions("pageSize", [["25", "25"], ["50", "50"], ["100", "100"], ["all", "all"]]);
+  withOptions("sentenceFilter", [
+    ["any", "any"],
+    ["has", "has"],
+    ["none", "none"],
+  ]);
+  withOptions("sortSelect", [
+    ["occ-desc", "occ-desc"],
+    ["occ-asc", "occ-asc"],
+    ["original", "original"],
+  ]);
+  withOptions("pageSize", [
+    ["25", "25"],
+    ["50", "50"],
+    ["100", "100"],
+    ["all", "all"],
+  ]);
   withOptions("decisionFilter", [
-    ["all", "All decisions"], ["unreviewed", "Unreviewed"], ["known", "Known"],
-    ["mined", "Mined"], ["skip", "Skipped"], ["later", "Later"],
+    ["all", "All decisions"],
+    ["unreviewed", "Unreviewed"],
+    ["known", "Known"],
+    ["mined", "Mined"],
+    ["skip", "Skipped"],
+    ["later", "Later"],
   ]);
 
-  withOptions("sentenceSize", [["medium", "medium"], ["large", "large"]]);
-  withOptions("density", [["comfortable", "comfortable"], ["compact", "compact"]]);
+  withOptions("sentenceSize", [
+    ["medium", "medium"],
+    ["large", "large"],
+  ]);
+  withOptions("density", [
+    ["comfortable", "comfortable"],
+    ["compact", "compact"],
+  ]);
   add("results", "section");
   add("resultsHeading", "h2").setAttribute("tabindex", "-1");
   add("resultStats", "p");
@@ -140,7 +170,12 @@ function seedDom(): DomMap {
   const coverageBody = add("coverageBody", "div");
   coverageBody.hidden = true;
   coveragePanel.appendChild(coverageBody);
-  for (const id of ["coverageUniqueWords", "coverageKnownOccurrences", "coveragePercent", "coverageTargets"]) {
+  for (const id of [
+    "coverageUniqueWords",
+    "coverageKnownOccurrences",
+    "coveragePercent",
+    "coverageTargets",
+  ]) {
     coverageBody.appendChild(add(id, "div"));
   }
   const coverageError = add("coverageError", "p");
@@ -219,11 +254,18 @@ const SAME_DAY_EXPORT = new Date(NOW.getTime() - 60_000).toISOString();
 const OLDER_EXPORT = new Date(NOW.getTime() - 10 * 86_400_000).toISOString();
 
 function expectedTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
+  return new Date(iso).toLocaleTimeString("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
 }
 
 function expectedDate(iso: string): string {
-  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  return new Date(iso).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+  });
 }
 
 beforeEach(() => {
@@ -294,7 +336,10 @@ describe("backup freshness line", () => {
     try {
       expect(harness.dom.backupFreshness.textContent).toBe("No export this session");
 
-      harness.controller.publishState({ lastExportAt: SAME_DAY_EXPORT, changesSinceExport: 0 });
+      harness.controller.publishState({
+        lastExportAt: SAME_DAY_EXPORT,
+        changesSinceExport: 0,
+      });
       expect(harness.dom.backupFreshness.textContent).toBe(
         `Last export: ${expectedTime(SAME_DAY_EXPORT)} · 0 changes since export`,
       );
@@ -314,10 +359,16 @@ describe("backup freshness line", () => {
   });
 
   it("returns to the no-export message after clear saved data", () => {
-    const harness = setup({ lastExportAt: SAME_DAY_EXPORT, changesSinceExport: 2 });
+    const harness = setup({
+      lastExportAt: SAME_DAY_EXPORT,
+      changesSinceExport: 2,
+    });
     try {
       expect(harness.dom.backupFreshness.textContent).toContain("changes since export");
-      harness.controller.publishState({ lastExportAt: null, changesSinceExport: 0 });
+      harness.controller.publishState({
+        lastExportAt: null,
+        changesSinceExport: 0,
+      });
       expect(harness.dom.backupFreshness.textContent).toBe("No export this session");
     } finally {
       harness.dispose();

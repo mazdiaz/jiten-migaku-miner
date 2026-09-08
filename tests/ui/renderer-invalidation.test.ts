@@ -1,13 +1,12 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it } from "vitest";
-import { getDomMap } from "../../src/ui/dom";
+import type { AppState } from "../../src/app/state";
+import { createInitialAppState, DEFAULT_VIEW } from "../../src/app/state";
+import type { EntryWithKnown, QueryResult } from "../../src/domain/types";
 import type { DomMap } from "../../src/ui/dom";
+import { getDomMap } from "../../src/ui/dom";
 import { createRenderer, renderEntryNode } from "../../src/ui/renderer";
 import { createVirtualList } from "../../src/ui/virtual-list";
-import { createInitialAppState } from "../../src/app/state";
-import { DEFAULT_VIEW } from "../../src/app/state";
-import type { AppState } from "../../src/app/state";
-import type { EntryWithKnown, QueryResult } from "../../src/domain/types";
 
 function seedDom(): DomMap {
   const add = (id: string, tag: string): HTMLElement => {
@@ -48,7 +47,14 @@ function seedDom(): DomMap {
   const advancedPanel = add("advancedPanel", "div");
   advancedPanel.hidden = true;
   add("stickySearch", "input").setAttribute("type", "search");
-  for (const id of ["hideKnown", "hideKanaOnly", "showFurigana", "pillHighlight", "showHighlight", "showDefinitions"]) {
+  for (const id of [
+    "hideKnown",
+    "hideKanaOnly",
+    "showFurigana",
+    "pillHighlight",
+    "showHighlight",
+    "showDefinitions",
+  ]) {
     add(id, "input").setAttribute("type", "checkbox");
   }
   add("minOccurrences", "input").setAttribute("type", "number");
@@ -64,13 +70,32 @@ function seedDom(): DomMap {
     return select;
   };
 
-  withOptions("sentenceFilter", [["any", "any"], ["has", "has"], ["none", "none"]]);
-  withOptions("sortSelect", [["occ-desc", "occ-desc"], ["occ-asc", "occ-asc"], ["original", "original"]]);
-  withOptions("pageSize", [["25", "25"], ["50", "50"], ["100", "100"], ["all", "all"]]);
+  withOptions("sentenceFilter", [
+    ["any", "any"],
+    ["has", "has"],
+    ["none", "none"],
+  ]);
+  withOptions("sortSelect", [
+    ["occ-desc", "occ-desc"],
+    ["occ-asc", "occ-asc"],
+    ["original", "original"],
+  ]);
+  withOptions("pageSize", [
+    ["25", "25"],
+    ["50", "50"],
+    ["100", "100"],
+    ["all", "all"],
+  ]);
   withOptions("decisionFilter", [["all", "All decisions"]]);
 
-  withOptions("sentenceSize", [["medium", "medium"], ["large", "large"]]);
-  withOptions("density", [["comfortable", "comfortable"], ["compact", "compact"]]);
+  withOptions("sentenceSize", [
+    ["medium", "medium"],
+    ["large", "large"],
+  ]);
+  withOptions("density", [
+    ["comfortable", "comfortable"],
+    ["compact", "compact"],
+  ]);
   add("results", "section");
   add("resultsHeading", "h2");
   add("resultStats", "p");
@@ -84,7 +109,19 @@ function seedDom(): DomMap {
   const reviewPanel = add("reviewPanel", "div");
   reviewPanel.setAttribute("tabindex", "-1");
   reviewOverlay.appendChild(reviewPanel);
-  for (const id of ["reviewHeading", "reviewProgress", "reviewContent", "reviewComplete", "reviewReturn", "reviewExit", "reviewKnown", "reviewMined", "reviewSkip", "reviewLater", "reviewUndo"]) {
+  for (const id of [
+    "reviewHeading",
+    "reviewProgress",
+    "reviewContent",
+    "reviewComplete",
+    "reviewReturn",
+    "reviewExit",
+    "reviewKnown",
+    "reviewMined",
+    "reviewSkip",
+    "reviewLater",
+    "reviewUndo",
+  ]) {
     const element = add(id, "div");
     reviewPanel.appendChild(element);
   }
@@ -113,7 +150,12 @@ function seedDom(): DomMap {
   const coverageBody = add("coverageBody", "div");
   coverageBody.hidden = true;
   coveragePanel.appendChild(coverageBody);
-  for (const id of ["coverageUniqueWords", "coverageKnownOccurrences", "coveragePercent", "coverageTargets"]) {
+  for (const id of [
+    "coverageUniqueWords",
+    "coverageKnownOccurrences",
+    "coveragePercent",
+    "coverageTargets",
+  ]) {
     coverageBody.appendChild(add(id, "div"));
   }
   const coverageError = add("coverageError", "p");
@@ -126,8 +168,15 @@ function seedDom(): DomMap {
 
 function dataset(id: string): NonNullable<AppState["dataset"]> {
   return {
-    id, name: "book.csv", sourceType: "file", sourceName: "book.csv",
-    headers: ["Word"], entryCount: 3, createdAt: "x", updatedAt: "x", schemaVersion: 1,
+    id,
+    name: "book.csv",
+    sourceType: "file",
+    sourceName: "book.csv",
+    headers: ["Word"],
+    entryCount: 3,
+    createdAt: "x",
+    updatedAt: "x",
+    schemaVersion: 1,
   };
 }
 
@@ -205,26 +254,46 @@ describe("renderer render-skip invalidation (audit phase 6, task 5 fixes)", () =
     const paged = pagedResult(specs);
 
     // Paged render mounts entry rows.
-    renderer.render({ ...createInitialAppState("memory"), dataset: dataset("d1"), status: "ready", result: paged });
+    renderer.render({
+      ...createInitialAppState("memory"),
+      dataset: dataset("d1"),
+      status: "ready",
+      result: paged,
+    });
     expect(dom.resultsList.querySelectorAll(".mining-entry")).toHaveLength(2);
 
     // Windowed result: renderer must not touch the list; main.ts mounts the
     // virtual list into resultsList (spacers + container), as in production.
-    renderer.render({ ...createInitialAppState("memory"), dataset: dataset("d1"), status: "ready", result: windowedResult(specs) });
-    const virtualList = createVirtualList(
-      dom.resultsList,
-      (item, index) => renderEntryNode(item, index + 1, DEFAULT_VIEW, {}),
+    renderer.render({
+      ...createInitialAppState("memory"),
+      dataset: dataset("d1"),
+      status: "ready",
+      result: windowedResult(specs),
+    });
+    const virtualList = createVirtualList(dom.resultsList, (item, index) =>
+      renderEntryNode(item, index + 1, DEFAULT_VIEW, {}),
     );
     virtualList.setTotal(specs.length);
     virtualList.setWindow(0, windowedResult(specs).items);
-    expect(dom.resultsList.querySelectorAll(".vl-spacer-top, .vl-container, .vl-spacer-bottom")).toHaveLength(3);
+    expect(
+      dom.resultsList.querySelectorAll(".vl-spacer-top, .vl-container, .vl-spacer-bottom"),
+    ).toHaveLength(3);
 
     // Back to paged with the SAME pre-windowed signature (fresh result clone,
     // identical content). The skip cache must not short-circuit: stale
     // vl-spacer/vl-container DOM would otherwise persist in paged mode.
-    renderer.render({ ...createInitialAppState("memory"), dataset: dataset("d1"), status: "ready", result: freshResult(paged) });
+    renderer.render({
+      ...createInitialAppState("memory"),
+      dataset: dataset("d1"),
+      status: "ready",
+      result: freshResult(paged),
+    });
 
-    expect(dom.resultsList.querySelectorAll(".vl-spacer-top, .vl-spacer-bottom, .vl-container, .vl-spacer")).toHaveLength(0);
+    expect(
+      dom.resultsList.querySelectorAll(
+        ".vl-spacer-top, .vl-spacer-bottom, .vl-container, .vl-spacer",
+      ),
+    ).toHaveLength(0);
     expect(dom.resultsList.querySelectorAll(".mining-entry")).toHaveLength(2);
     virtualList.destroy();
   });

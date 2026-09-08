@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 
 const SMALL_CSV = "tests/fixtures/jiten-small.csv";
 
@@ -17,9 +17,10 @@ async function expectNoHorizontalOverflow(page: Page): Promise<void> {
 }
 
 function childClassList(page: Page, selector: string): Promise<string[]> {
-  return page.locator(selector).first().evaluate((node) =>
-    [...node.children].map((child) => (child as HTMLElement).classList.value),
-  );
+  return page
+    .locator(selector)
+    .first()
+    .evaluate((node) => [...node.children].map((child) => (child as HTMLElement).classList.value));
 }
 
 test.describe("mobile layout at 375x812", () => {
@@ -75,11 +76,17 @@ test.describe("small phone layout at 320x568", () => {
     await expectNoHorizontalOverflow(page);
 
     await expect
-      .poll(async () => (await page.locator("[data-decision-action='known']").first().boundingBox())?.height ?? 0)
+      .poll(
+        async () =>
+          (await page.locator("[data-decision-action='known']").first().boundingBox())?.height ?? 0,
+      )
       .toBeGreaterThanOrEqual(44);
 
     await expect
-      .poll(async () => (await page.locator("[data-queue-action='toggle']").first().boundingBox())?.height ?? 0)
+      .poll(
+        async () =>
+          (await page.locator("[data-queue-action='toggle']").first().boundingBox())?.height ?? 0,
+      )
       .toBeGreaterThanOrEqual(44);
   });
 
@@ -88,7 +95,7 @@ test.describe("small phone layout at 320x568", () => {
 
     const toolbarBox = await page.locator("#stickyToolbar").boundingBox();
     expect(toolbarBox).not.toBeNull();
-    expect(toolbarBox!.width).toBeLessThanOrEqual(320);
+    expect(toolbarBox?.width).toBeLessThanOrEqual(320);
     await expectNoHorizontalOverflow(page);
   });
 });

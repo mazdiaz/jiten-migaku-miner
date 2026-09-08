@@ -1,12 +1,12 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getDomMap } from "../../src/ui/dom";
-import type { DomMap } from "../../src/ui/dom";
-import { createRenderer } from "../../src/ui/renderer";
-import type { Renderer } from "../../src/ui/renderer";
 import type { AppState, MinerController } from "../../src/app/state";
 import { createInitialAppState } from "../../src/app/state";
 import type { WordDecision, WordDecisionStatus } from "../../src/domain/types";
+import type { DomMap } from "../../src/ui/dom";
+import { getDomMap } from "../../src/ui/dom";
+import type { Renderer } from "../../src/ui/renderer";
+import { createRenderer } from "../../src/ui/renderer";
 
 type Listener = (state: Readonly<AppState>) => void;
 
@@ -49,7 +49,14 @@ function seedDom(): DomMap {
   const advancedPanel = add("advancedPanel", "div");
   advancedPanel.hidden = true;
   add("stickySearch", "input").setAttribute("type", "search");
-  for (const id of ["hideKnown", "hideKanaOnly", "showFurigana", "pillHighlight", "showHighlight", "showDefinitions"]) {
+  for (const id of [
+    "hideKnown",
+    "hideKanaOnly",
+    "showFurigana",
+    "pillHighlight",
+    "showHighlight",
+    "showDefinitions",
+  ]) {
     add(id, "input").setAttribute("type", "checkbox");
   }
   add("minOccurrences", "input").setAttribute("type", "number");
@@ -65,16 +72,39 @@ function seedDom(): DomMap {
     return select;
   };
 
-  withOptions("sentenceFilter", [["any", "any"], ["has", "has"], ["none", "none"]]);
-  withOptions("sortSelect", [["occ-desc", "occ-desc"], ["occ-asc", "occ-asc"], ["original", "original"]]);
-  withOptions("pageSize", [["25", "25"], ["50", "50"], ["100", "100"], ["all", "all"]]);
+  withOptions("sentenceFilter", [
+    ["any", "any"],
+    ["has", "has"],
+    ["none", "none"],
+  ]);
+  withOptions("sortSelect", [
+    ["occ-desc", "occ-desc"],
+    ["occ-asc", "occ-asc"],
+    ["original", "original"],
+  ]);
+  withOptions("pageSize", [
+    ["25", "25"],
+    ["50", "50"],
+    ["100", "100"],
+    ["all", "all"],
+  ]);
   withOptions("decisionFilter", [
-    ["all", "All decisions"], ["unreviewed", "Unreviewed"], ["known", "Known"],
-    ["mined", "Mined"], ["skip", "Skipped"], ["later", "Later"],
+    ["all", "All decisions"],
+    ["unreviewed", "Unreviewed"],
+    ["known", "Known"],
+    ["mined", "Mined"],
+    ["skip", "Skipped"],
+    ["later", "Later"],
   ]);
 
-  withOptions("sentenceSize", [["medium", "medium"], ["large", "large"]]);
-  withOptions("density", [["comfortable", "comfortable"], ["compact", "compact"]]);
+  withOptions("sentenceSize", [
+    ["medium", "medium"],
+    ["large", "large"],
+  ]);
+  withOptions("density", [
+    ["comfortable", "comfortable"],
+    ["compact", "compact"],
+  ]);
   add("results", "section");
   add("resultsHeading", "h2").setAttribute("tabindex", "-1");
   add("resultStats", "p");
@@ -141,7 +171,12 @@ function seedDom(): DomMap {
   const coverageBody = add("coverageBody", "div");
   coverageBody.hidden = true;
   coveragePanel.appendChild(coverageBody);
-  for (const id of ["coverageUniqueWords", "coverageKnownOccurrences", "coveragePercent", "coverageTargets"]) {
+  for (const id of [
+    "coverageUniqueWords",
+    "coverageKnownOccurrences",
+    "coveragePercent",
+    "coverageTargets",
+  ]) {
     coverageBody.appendChild(add(id, "div"));
   }
   const coverageError = add("coverageError", "p");
@@ -196,8 +231,15 @@ function createFakeController(initial?: Partial<AppState>): FakeController {
 function datasetReady(): Partial<AppState> {
   return {
     dataset: {
-      id: "d1", name: "book.csv", sourceType: "file", sourceName: "book.csv",
-      headers: ["Word"], entryCount: 3, createdAt: "x", updatedAt: "x", schemaVersion: 1,
+      id: "d1",
+      name: "book.csv",
+      sourceType: "file",
+      sourceName: "book.csv",
+      headers: ["Word"],
+      entryCount: 3,
+      createdAt: "x",
+      updatedAt: "x",
+      schemaVersion: 1,
     },
     status: "ready",
   };
@@ -278,7 +320,10 @@ describe("decision summary visibility", () => {
   });
 
   it("shows without a dataset when only known words exist", () => {
-    const harness = setup({ knownWords: new Set(["言葉", "読む"]), knownWordsName: "list.txt" });
+    const harness = setup({
+      knownWords: new Set(["言葉", "読む"]),
+      knownWordsName: "list.txt",
+    });
     try {
       expect(harness.dom.decisionSummary.hidden).toBe(false);
       expect(harness.dom.decisionSummary.textContent).toBe(
@@ -316,7 +361,10 @@ describe("decision summary counts", () => {
     const spec: Array<[string, WordDecisionStatus]> = [
       ...Array.from({ length: 1234 }, (_, i): [string, WordDecisionStatus] => [`k${i}`, "known"]),
     ];
-    const harness = setup({ ...datasetReady(), wordDecisions: decisions(spec) });
+    const harness = setup({
+      ...datasetReady(),
+      wordDecisions: decisions(spec),
+    });
     try {
       expect(harness.dom.decisionSummary.textContent).toBe(
         `Decisions: ${(1234).toLocaleString()} known · 0 mined · 0 later · 0 skip · Migaku-known: 0`,
@@ -330,7 +378,9 @@ describe("decision summary counts", () => {
     const harness = setup(datasetReady());
     try {
       expect(harness.dom.decisionSummary.textContent).toContain("0 mined");
-      harness.controller.publishState({ wordDecisions: decisions([["言葉", "mined"]]) });
+      harness.controller.publishState({
+        wordDecisions: decisions([["言葉", "mined"]]),
+      });
       expect(harness.dom.decisionSummary.textContent).toBe(
         `Decisions: 0 known · 1 mined · 0 later · 0 skip · Migaku-known: 0`,
       );

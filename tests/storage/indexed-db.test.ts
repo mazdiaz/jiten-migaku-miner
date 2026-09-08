@@ -1,13 +1,8 @@
 import "fake-indexeddb/auto";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createIndexedDbAppStore } from "../../src/storage/indexed-db";
+import type { Entry, QueryState, ViewState, WordDecision } from "../../src/domain/types";
 import type { AppStore, DatasetMetadata } from "../../src/storage/contracts";
-import type {
-  Entry,
-  QueryState,
-  ViewState,
-  WordDecision,
-} from "../../src/domain/types";
+import { createIndexedDbAppStore } from "../../src/storage/indexed-db";
 
 const databaseName = "jiten-migaku-miner-task-4-test";
 
@@ -75,7 +70,11 @@ const view: ViewState = {
   density: "compact",
 };
 
-const decision = (normalizedWord: string, status: WordDecision["status"], updatedAt: string): WordDecision => ({
+const decision = (
+  normalizedWord: string,
+  status: WordDecision["status"],
+  updatedAt: string,
+): WordDecision => ({
   normalizedWord,
   status,
   updatedAt,
@@ -135,7 +134,8 @@ function openVersion1Database(name: string): Promise<void> {
       transaction.onerror = () => reject(transaction.error);
       transaction.onabort = () => reject(transaction.error);
     };
-    request.onerror = () => reject(request.error ?? new Error("Could not create version 1 database"));
+    request.onerror = () =>
+      reject(request.error ?? new Error("Could not create version 1 database"));
   });
 }
 
@@ -236,9 +236,9 @@ describe("IndexedDbAppStore", () => {
 
     expect(await store.datasets.list()).toEqual([metadata("legacy")]);
     expect(await store.datasets.getActive()).toEqual(metadata("legacy"));
-    await expect(
-      collectChunks(store.datasets.readChunks("legacy", 10)),
-    ).resolves.toEqual([[entry("legacy-entry", 0)]]);
+    await expect(collectChunks(store.datasets.readChunks("legacy", 10))).resolves.toEqual([
+      [entry("legacy-entry", 0)],
+    ]);
     expect(await store.knownWords.getActive()).toEqual({
       id: "migaku",
       name: "Migaku known words",
@@ -265,9 +265,10 @@ describe("IndexedDbAppStore", () => {
       chunks([[values[0]!], [values[1]!, values[2]!]]),
     );
 
-    await expect(
-      collectChunks(store.datasets.readChunks("ordered", 2)),
-    ).resolves.toEqual([[values[0]!, values[1]!], [values[2]!]]);
+    await expect(collectChunks(store.datasets.readChunks("ordered", 2))).resolves.toEqual([
+      [values[0]!, values[1]!],
+      [values[2]!],
+    ]);
   });
 
   it("keeps multiple datasets and removes only the requested dataset", async () => {
@@ -280,9 +281,9 @@ describe("IndexedDbAppStore", () => {
 
     expect(await store.datasets.list()).toEqual([metadata("two")]);
     expect(await store.datasets.getActive()).toEqual(metadata("two"));
-    await expect(
-      collectChunks(store.datasets.readChunks("two", 10)),
-    ).resolves.toEqual([[entry("two-entry", 1)]]);
+    await expect(collectChunks(store.datasets.readChunks("two", 10))).resolves.toEqual([
+      [entry("two-entry", 1)],
+    ]);
   });
 
   it("rejects same-ID staging without replacing the active dataset", async () => {
@@ -292,14 +293,14 @@ describe("IndexedDbAppStore", () => {
     await store.datasets.stage(active, chunks([[entry("old-entry", 0)]]));
     await store.datasets.activate(active.id);
 
-    await expect(
-      store.datasets.stage(active, chunks([[entry("new-entry", 1)]])),
-    ).rejects.toThrow("Dataset already exists");
+    await expect(store.datasets.stage(active, chunks([[entry("new-entry", 1)]]))).rejects.toThrow(
+      "Dataset already exists",
+    );
 
     expect(await store.datasets.getActive()).toEqual(active);
-    await expect(
-      collectChunks(store.datasets.readChunks(active.id, 10)),
-    ).resolves.toEqual([[entry("old-entry", 0)]]);
+    await expect(collectChunks(store.datasets.readChunks(active.id, 10))).resolves.toEqual([
+      [entry("old-entry", 0)],
+    ]);
   });
 
   it("reads entry chunks with bounded IndexedDB batches", async () => {
@@ -307,13 +308,8 @@ describe("IndexedDbAppStore", () => {
     const values = Array.from({ length: 40 }, (_, index) => entry(`entry-${index}`, index));
     const getAll = vi.spyOn(IDBObjectStore.prototype, "getAll");
 
-    await store.datasets.stage(
-      metadata("batched"),
-      chunks(values.map((value) => [value])),
-    );
-    await expect(
-      collectChunks(store.datasets.readChunks("batched", 7)),
-    ).resolves.toEqual([
+    await store.datasets.stage(metadata("batched"), chunks(values.map((value) => [value])));
+    await expect(collectChunks(store.datasets.readChunks("batched", 7))).resolves.toEqual([
       values.slice(0, 7),
       values.slice(7, 14),
       values.slice(14, 21),
@@ -452,8 +448,12 @@ describe("IndexedDbAppStore", () => {
     await store.wordDecisions.set(decision("古い", "skip", "2026-09-01T00:00:00.000Z"));
     await store.preferences.save({ query, view, page: 1 });
 
-    await store.restoreUserState!({
-      knownWords: { id: "set-b", name: "Set B", words: ["beta", "gamma", "beta"] },
+    await store.restoreUserState?.({
+      knownWords: {
+        id: "set-b",
+        name: "Set B",
+        words: ["beta", "gamma", "beta"],
+      },
       decisions: [
         decision("新しい", "mined", "2026-09-05T00:00:00.000Z"),
         decision("透過", "later", "2026-09-05T01:00:00.000Z"),
@@ -482,7 +482,7 @@ describe("IndexedDbAppStore", () => {
     await store.wordDecisions.set(decision("古い", "skip", "2026-09-01T00:00:00.000Z"));
     await store.preferences.save({ query, view, page: 1 });
 
-    await store.restoreUserState!({
+    await store.restoreUserState?.({
       knownWords: null,
       decisions: [],
       preferences: { query, view, page: 1 },
@@ -503,21 +503,19 @@ describe("IndexedDbAppStore", () => {
     await store.preferences.save({ query, view, page: 1 });
 
     const originalPut = IDBObjectStore.prototype.put;
-    const putSpy = vi
-      .spyOn(IDBObjectStore.prototype, "put")
-      .mockImplementation(function (
-        this: IDBObjectStore,
-        value: unknown,
-        key?: IDBValidKey,
-      ) {
-        if ((value as { id?: unknown }).id === "current") {
-          throw new Error("injected preferences failure");
-        }
-        return originalPut.call(this, value, key);
-      });
+    const putSpy = vi.spyOn(IDBObjectStore.prototype, "put").mockImplementation(function (
+      this: IDBObjectStore,
+      value: unknown,
+      key?: IDBValidKey,
+    ) {
+      if ((value as { id?: unknown }).id === "current") {
+        throw new Error("injected preferences failure");
+      }
+      return originalPut.call(this, value, key);
+    });
 
     await expect(
-      store.restoreUserState!({
+      store.restoreUserState?.({
         knownWords: { id: "set-b", name: "Set B", words: ["beta"] },
         decisions: [decision("新しい", "mined", "2026-09-05T00:00:00.000Z")],
         preferences: { query, view, page: 4 },
@@ -545,7 +543,7 @@ describe("IndexedDbAppStore", () => {
     await store.preferences.save({ query, view, page: 1 });
 
     await expect(
-      store.restoreUserState!({
+      store.restoreUserState?.({
         knownWords: { id: "set-b", name: "Set B", words: ["beta"] },
         decisions: [
           decision("新しい", "mined", "2026-09-05T00:00:00.000Z"),
@@ -577,9 +575,9 @@ describe("IndexedDbAppStore", () => {
 
     expect(await store.datasets.getActive()).toEqual(previous);
     expect(await store.datasets.list()).toEqual([previous]);
-    await expect(
-      collectChunks(store.datasets.readChunks("failed", 10)),
-    ).rejects.toThrow("Dataset not found");
+    await expect(collectChunks(store.datasets.readChunks("failed", 10))).rejects.toThrow(
+      "Dataset not found",
+    );
   });
 
   it("surfaces cleanup failures after a failed import", async () => {
@@ -591,18 +589,16 @@ describe("IndexedDbAppStore", () => {
 
     const originalDelete = IDBObjectStore.prototype.delete;
     let deleteCalls = 0;
-    const deleteSpy = vi
-      .spyOn(IDBObjectStore.prototype, "delete")
-      .mockImplementation(function (
-        this: IDBObjectStore,
-        query: IDBValidKey | IDBKeyRange,
-      ) {
-        deleteCalls += 1;
-        if (deleteCalls >= 2) {
-          throw new Error("cleanup failed");
-        }
-        return originalDelete.call(this, query);
-      });
+    const deleteSpy = vi.spyOn(IDBObjectStore.prototype, "delete").mockImplementation(function (
+      this: IDBObjectStore,
+      query: IDBValidKey | IDBKeyRange,
+    ) {
+      deleteCalls += 1;
+      if (deleteCalls >= 2) {
+        throw new Error("cleanup failed");
+      }
+      return originalDelete.call(this, query);
+    });
 
     await expect(
       store.datasets.stage(metadata("failed"), failingChunks(entry("partial", 1))),

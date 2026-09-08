@@ -58,8 +58,9 @@ function unwrapThWraps(sentence: Element): void {
 }
 
 function isParsedSentence(sentence: Element): boolean {
-  return [...sentence.querySelectorAll("span, a, ruby, b")].some((element) =>
-    !element.className || !/(target-highlight|th-run|th-wrap|th-live)/.test(element.className),
+  return [...sentence.querySelectorAll("span, a, ruby, b")].some(
+    (element) =>
+      !element.className || !/(target-highlight|th-run|th-wrap|th-live)/.test(element.className),
   );
 }
 
@@ -173,7 +174,11 @@ export function createHighlightAdapter(root: Element): HighlightAdapter {
       reconcileRoot(root);
     });
   });
-  observer.observe(root, { childList: true, subtree: true, characterData: true });
+  observer.observe(root, {
+    childList: true,
+    subtree: true,
+    characterData: true,
+  });
 
   return {
     reconcile(target: Element): void {

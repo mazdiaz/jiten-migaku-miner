@@ -52,7 +52,12 @@ export function filterEntries(
       const wordMatch = normalizeText(entry.normalizedWord).toLocaleLowerCase();
       const rawWordMatch = normalizeText(entry.word).toLocaleLowerCase();
       const sentenceMatch = sentencePlain(entry.sentenceRaw).toLocaleLowerCase();
-      if (!wordMatch.includes(search) && !rawWordMatch.includes(search) && !sentenceMatch.includes(search)) return false;
+      if (
+        !wordMatch.includes(search) &&
+        !rawWordMatch.includes(search) &&
+        !sentenceMatch.includes(search)
+      )
+        return false;
     }
     if (query.hideKnown && entry.known) return false;
     if (query.hideKanaOnly && isKanaOnly(entry.normalizedWord)) return false;
@@ -125,7 +130,8 @@ export function paginateEntries<T>(
   // fresh slice, so arrays can be used directly instead of being copied.
   const source = Array.isArray(entries) ? entries : Array.from(entries);
   const totalEntries = source.length;
-  if (totalEntries === 0) return emptyResult<T>(pageSize, pageSize === "all" && window !== undefined);
+  if (totalEntries === 0)
+    return emptyResult<T>(pageSize, pageSize === "all" && window !== undefined);
 
   // Item-type-agnostic so callers may paginate raw index lists; the worker
   // passes entry indexes with countKnown disabled and overrides knownCount
@@ -194,5 +200,8 @@ export function queryEntries(
   const knownCount = withKnown.reduce((count, entry) => count + (entry.known ? 1 : 0), 0);
   const filtered = filterEntries(withKnown, query);
   const sorted = sortEntries(filtered, query.sort);
-  return { ...paginateEntries(sorted, query.page, query.pageSize, window), knownCount };
+  return {
+    ...paginateEntries(sorted, query.page, query.pageSize, window),
+    knownCount,
+  };
 }

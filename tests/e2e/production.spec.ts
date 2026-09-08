@@ -3,7 +3,8 @@ import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 
 const SERVER = "http://127.0.0.1:8931";
-const RESOURCE_NOT_FOUND = "Failed to load resource: the server responded with a status of 404 (Not Found)";
+const RESOURCE_NOT_FOUND =
+  "Failed to load resource: the server responded with a status of 404 (Not Found)";
 const DISCOVERY_FOLDERS = ["WORDS%20TO%20MINE", "MIGAKU%20KNOWN%20WORDS"];
 
 test.describe("production build serving", () => {
@@ -56,9 +57,9 @@ test.describe("production build serving", () => {
     await expect(page.locator("#advancedPanel")).toBeVisible();
     await page.locator("#decisionFilter").selectOption("known");
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(1);
-    await expect(
-      page.locator("#resultsList .mining-entry .entry-badge-decision"),
-    ).toHaveText("Known");
+    await expect(page.locator("#resultsList .mining-entry .entry-badge-decision")).toHaveText(
+      "Known",
+    );
 
     await page.locator("#decisionFilter").selectOption("all");
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
@@ -108,11 +109,13 @@ test.describe("production build serving", () => {
     }
   });
 
-  test("folder discovery auto-loads vocabulary from repository root in production", async ({ page }) => {
+  test("folder discovery auto-loads vocabulary from repository root in production", async ({
+    page,
+  }) => {
     const autoCsv = [
       "Word,Occurences,ExampleSentence,Definitions,ReadingFurigana",
-      "自動,5,\"これは**自動**の例文です。\",automatic,自動[じどう]",
-      "静か,3,\"とても**静か**な夜です。\",quiet,静か[しずか]",
+      '自動,5,"これは**自動**の例文です。",automatic,自動[じどう]',
+      '静か,3,"とても**静か**な夜です。",quiet,静か[しずか]',
     ].join("\n");
 
     const listingRequests: string[] = [];

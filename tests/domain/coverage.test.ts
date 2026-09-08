@@ -33,7 +33,11 @@ function decisionMap(
   return new Map(
     Object.entries(statuses).map(([normalizedWord, status]) => [
       normalizedWord,
-      { normalizedWord, status, updatedAt: "2026-01-01T00:00:00.000Z" } satisfies WordDecision,
+      {
+        normalizedWord,
+        status,
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      } satisfies WordDecision,
     ]),
   );
 }
@@ -92,8 +96,16 @@ describe("computeCoverage", () => {
   it("clamps negative and non-finite occurrences to zero", () => {
     const entries: Entry[] = [
       makeEntry({ normalizedWord: "a", occurrences: -5, originalIndex: 0 }),
-      makeEntry({ normalizedWord: "b", occurrences: Number.NaN, originalIndex: 1 }),
-      makeEntry({ normalizedWord: "c", occurrences: Number.NEGATIVE_INFINITY, originalIndex: 2 }),
+      makeEntry({
+        normalizedWord: "b",
+        occurrences: Number.NaN,
+        originalIndex: 1,
+      }),
+      makeEntry({
+        normalizedWord: "c",
+        occurrences: Number.NEGATIVE_INFINITY,
+        originalIndex: 2,
+      }),
       makeEntry({ normalizedWord: "d", occurrences: 10, originalIndex: 3 }),
     ];
 
@@ -170,7 +182,12 @@ describe("computeCoverage", () => {
 
     expect(stats.coveragePercent).toBe(80);
     expect(stats.targets).toEqual([
-      { targetPercent: 80, reached: true, additionalWords: 0, additionalTrackedOccurrences: 0 },
+      {
+        targetPercent: 80,
+        reached: true,
+        additionalWords: 0,
+        additionalTrackedOccurrences: 0,
+      },
     ]);
   });
 
@@ -189,10 +206,30 @@ describe("computeCoverage", () => {
     expect(stats.totalTrackedOccurrences).toBe(100);
     expect(stats.coveragePercent).toBe(40);
     expect(stats.targets).toEqual([
-      { targetPercent: 50, reached: false, additionalWords: 1, additionalTrackedOccurrences: 25 },
-      { targetPercent: 80, reached: false, additionalWords: 2, additionalTrackedOccurrences: 40 },
-      { targetPercent: 90, reached: false, additionalWords: 3, additionalTrackedOccurrences: 50 },
-      { targetPercent: 99, reached: false, additionalWords: 5, additionalTrackedOccurrences: 60 },
+      {
+        targetPercent: 50,
+        reached: false,
+        additionalWords: 1,
+        additionalTrackedOccurrences: 25,
+      },
+      {
+        targetPercent: 80,
+        reached: false,
+        additionalWords: 2,
+        additionalTrackedOccurrences: 40,
+      },
+      {
+        targetPercent: 90,
+        reached: false,
+        additionalWords: 3,
+        additionalTrackedOccurrences: 50,
+      },
+      {
+        targetPercent: 99,
+        reached: false,
+        additionalWords: 5,
+        additionalTrackedOccurrences: 60,
+      },
     ]);
   });
 
@@ -209,10 +246,30 @@ describe("computeCoverage", () => {
     expect(stats.totalTrackedOccurrences).toBe(500);
     expect(stats.coveragePercent).toBe(98.6);
     expect(stats.targets).toEqual([
-      { targetPercent: 98, reached: true, additionalWords: 0, additionalTrackedOccurrences: 0 },
-      { targetPercent: 98.5, reached: true, additionalWords: 0, additionalTrackedOccurrences: 0 },
-      { targetPercent: 99, reached: false, additionalWords: 1, additionalTrackedOccurrences: 4 },
-      { targetPercent: 99.5, reached: false, additionalWords: 2, additionalTrackedOccurrences: 6 },
+      {
+        targetPercent: 98,
+        reached: true,
+        additionalWords: 0,
+        additionalTrackedOccurrences: 0,
+      },
+      {
+        targetPercent: 98.5,
+        reached: true,
+        additionalWords: 0,
+        additionalTrackedOccurrences: 0,
+      },
+      {
+        targetPercent: 99,
+        reached: false,
+        additionalWords: 1,
+        additionalTrackedOccurrences: 4,
+      },
+      {
+        targetPercent: 99.5,
+        reached: false,
+        additionalWords: 2,
+        additionalTrackedOccurrences: 6,
+      },
     ]);
   });
 
@@ -226,10 +283,30 @@ describe("computeCoverage", () => {
     const scrambled: Entry[] = [base[0]!, base[3]!, base[2]!, base[1]!];
 
     const expected = [
-      { targetPercent: 50, reached: true, additionalWords: 0, additionalTrackedOccurrences: 0 },
-      { targetPercent: 60, reached: false, additionalWords: 1, additionalTrackedOccurrences: 10 },
-      { targetPercent: 80, reached: false, additionalWords: 2, additionalTrackedOccurrences: 20 },
-      { targetPercent: 100, reached: false, additionalWords: 3, additionalTrackedOccurrences: 30 },
+      {
+        targetPercent: 50,
+        reached: true,
+        additionalWords: 0,
+        additionalTrackedOccurrences: 0,
+      },
+      {
+        targetPercent: 60,
+        reached: false,
+        additionalWords: 1,
+        additionalTrackedOccurrences: 10,
+      },
+      {
+        targetPercent: 80,
+        reached: false,
+        additionalWords: 2,
+        additionalTrackedOccurrences: 20,
+      },
+      {
+        targetPercent: 100,
+        reached: false,
+        additionalWords: 3,
+        additionalTrackedOccurrences: 30,
+      },
     ];
 
     const first = computeCoverage(base, new Set(["k"]), statusMap({}), [50, 60, 80, 100]);
@@ -248,7 +325,7 @@ describe("computeCoverage", () => {
     const viaSet = computeCoverage(upperEntries, new Set(["nhk"]), statusMap({}));
     expect(viaSet.knownUniqueWords).toBe(1);
     expect(viaSet.knownTrackedOccurrences).toBe(10);
-    expect(viaSet.coveragePercent).toBeCloseTo(10 / 15 * 100, 10);
+    expect(viaSet.coveragePercent).toBeCloseTo((10 / 15) * 100, 10);
 
     const viaDecision = computeCoverage(upperEntries, new Set(), statusMap({ nhk: "known" }));
     expect(viaDecision.knownTrackedOccurrences).toBe(10);

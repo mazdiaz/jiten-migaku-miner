@@ -1,10 +1,10 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { bindControls, RESTORE_CONFIRM_MESSAGE } from "../../src/ui/controls";
-import { getDomMap, type DomMap } from "../../src/ui/dom";
 import type { AppState, FileSource, MinerController } from "../../src/app/state";
 import { createInitialAppState } from "../../src/app/state";
 import type { QueryState } from "../../src/domain/types";
+import { bindControls, RESTORE_CONFIRM_MESSAGE } from "../../src/ui/controls";
+import { type DomMap, getDomMap } from "../../src/ui/dom";
 
 type Listener = (state: Readonly<AppState>) => void;
 
@@ -47,7 +47,14 @@ function seedDom(): DomMap {
   const advancedPanel = add("advancedPanel", "div");
   advancedPanel.hidden = true;
   add("stickySearch", "input").setAttribute("type", "search");
-  for (const id of ["hideKnown", "hideKanaOnly", "showFurigana", "pillHighlight", "showHighlight", "showDefinitions"]) {
+  for (const id of [
+    "hideKnown",
+    "hideKanaOnly",
+    "showFurigana",
+    "pillHighlight",
+    "showHighlight",
+    "showDefinitions",
+  ]) {
     add(id, "input").setAttribute("type", "checkbox");
   }
   add("minOccurrences", "input").setAttribute("type", "number");
@@ -63,13 +70,32 @@ function seedDom(): DomMap {
     return select;
   };
 
-  withOptions("sentenceFilter", [["any", "any"], ["has", "has"], ["none", "none"]]);
-  withOptions("sortSelect", [["occ-desc", "occ-desc"], ["occ-asc", "occ-asc"], ["original", "original"]]);
-  withOptions("pageSize", [["25", "25"], ["50", "50"], ["100", "100"], ["all", "all"]]);
+  withOptions("sentenceFilter", [
+    ["any", "any"],
+    ["has", "has"],
+    ["none", "none"],
+  ]);
+  withOptions("sortSelect", [
+    ["occ-desc", "occ-desc"],
+    ["occ-asc", "occ-asc"],
+    ["original", "original"],
+  ]);
+  withOptions("pageSize", [
+    ["25", "25"],
+    ["50", "50"],
+    ["100", "100"],
+    ["all", "all"],
+  ]);
   withOptions("decisionFilter", [["all", "All decisions"]]);
 
-  withOptions("sentenceSize", [["medium", "medium"], ["large", "large"]]);
-  withOptions("density", [["comfortable", "comfortable"], ["compact", "compact"]]);
+  withOptions("sentenceSize", [
+    ["medium", "medium"],
+    ["large", "large"],
+  ]);
+  withOptions("density", [
+    ["comfortable", "comfortable"],
+    ["compact", "compact"],
+  ]);
   add("results", "section");
   add("resultsHeading", "h2");
   add("resultStats", "p");
@@ -83,7 +109,19 @@ function seedDom(): DomMap {
   const reviewPanel = add("reviewPanel", "div");
   reviewPanel.setAttribute("tabindex", "-1");
   reviewOverlay.appendChild(reviewPanel);
-  for (const id of ["reviewHeading", "reviewProgress", "reviewContent", "reviewComplete", "reviewReturn", "reviewExit", "reviewKnown", "reviewMined", "reviewSkip", "reviewLater", "reviewUndo"]) {
+  for (const id of [
+    "reviewHeading",
+    "reviewProgress",
+    "reviewContent",
+    "reviewComplete",
+    "reviewReturn",
+    "reviewExit",
+    "reviewKnown",
+    "reviewMined",
+    "reviewSkip",
+    "reviewLater",
+    "reviewUndo",
+  ]) {
     intoPanel(add, reviewPanel, id);
   }
   add("queueToggle", "button");
@@ -111,7 +149,12 @@ function seedDom(): DomMap {
   const coverageBody = add("coverageBody", "div");
   coverageBody.hidden = true;
   coveragePanel.appendChild(coverageBody);
-  for (const id of ["coverageUniqueWords", "coverageKnownOccurrences", "coveragePercent", "coverageTargets"]) {
+  for (const id of [
+    "coverageUniqueWords",
+    "coverageKnownOccurrences",
+    "coveragePercent",
+    "coverageTargets",
+  ]) {
     coverageBody.appendChild(add(id, "div"));
   }
   const coverageError = add("coverageError", "p");
@@ -122,7 +165,11 @@ function seedDom(): DomMap {
   return getDomMap();
 }
 
-function intoPanel(add: (id: string, tag: string) => HTMLElement, panel: HTMLElement, id: string): void {
+function intoPanel(
+  add: (id: string, tag: string) => HTMLElement,
+  panel: HTMLElement,
+  id: string,
+): void {
   panel.appendChild(add(id, "div"));
 }
 
@@ -287,7 +334,11 @@ describe("backup and restore controls", () => {
     const restoredDecisions = new Map(
       Array.from({ length: 486 }, (_, index) => [
         `w${index}`,
-        { normalizedWord: `w${index}`, status: "mined" as const, updatedAt: "" },
+        {
+          normalizedWord: `w${index}`,
+          status: "mined" as const,
+          updatedAt: "",
+        },
       ]),
     );
     const inner = controller.restoreBackup.bind(controller);

@@ -1,8 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createQueryController, type QueryController } from "../../src/app/query-controller";
+import type { AppState, MinerController } from "../../src/app/state";
 import type { VirtualList } from "../../src/ui/virtual-list";
-import type { MinerController } from "../../src/app/state";
-import type { AppState } from "../../src/app/state";
 
 class FakeMinerController implements Pick<MinerController, "updateQuery" | "updateViewport"> {
   readonly queries: Array<Record<string, unknown>> = [];
@@ -30,7 +29,7 @@ class RecordingVirtualList implements Pick<VirtualList, "setTotal" | "setWindow"
   }
 }
 
-function makeState(overrides: Partial<AppState> = {}): AppState {
+function _makeState(overrides: Partial<AppState> = {}): AppState {
   return {
     dataset: null,
     knownWords: new Set<string>(),
@@ -47,8 +46,14 @@ function makeState(overrides: Partial<AppState> = {}): AppState {
       page: 1,
       decision: "all",
     },
-    view: { showFurigana: false, pillHighlight: false, showHighlight: false, showDefinitions: true, sentenceSize: "medium", density: "comfortable" },
-    page: 1,
+    view: {
+      showFurigana: false,
+      pillHighlight: false,
+      showHighlight: false,
+      showDefinitions: true,
+      sentenceSize: "medium",
+      density: "comfortable",
+    },
     result: null,
     status: "empty",
     errorMessage: null,

@@ -1,5 +1,11 @@
 import { normalizeText } from "./text";
-import type { QueryState, ViewState, WordDecision, WordDecisionFilter, WordDecisionStatus } from "./types";
+import type {
+  QueryState,
+  ViewState,
+  WordDecision,
+  WordDecisionFilter,
+  WordDecisionStatus,
+} from "./types";
 
 export const BACKUP_FORMAT = "jiten-migaku-miner-backup" as const;
 export const BACKUP_VERSION = 1 as const;
@@ -8,7 +14,11 @@ export const SENTENCE_SIZES: readonly ViewState["sentenceSize"][] = ["medium", "
 export const DENSITIES: readonly ViewState["density"][] = ["comfortable", "compact"];
 
 function isDecisionFilter(value: unknown): value is WordDecisionFilter {
-  return value === "all" || value === "unreviewed" || DECISION_STATUSES.includes(value as WordDecisionStatus);
+  return (
+    value === "all" ||
+    value === "unreviewed" ||
+    DECISION_STATUSES.includes(value as WordDecisionStatus)
+  );
 }
 
 export interface MinerBackupV1 {
@@ -71,7 +81,12 @@ function boolean(value: unknown, label: string): boolean {
 }
 
 function positiveInteger(value: unknown, label: string): number {
-  if (typeof value !== "number" || !Number.isFinite(value) || !Number.isInteger(value) || value < 1) {
+  if (
+    typeof value !== "number" ||
+    !Number.isFinite(value) ||
+    !Number.isInteger(value) ||
+    value < 1
+  ) {
     fail("invalid-shape", `${label} must be a positive integer`);
   }
   return value;
@@ -102,14 +117,23 @@ function validateDecision(value: unknown, index: number): WordDecision {
   const rawWord = requiredString(value.normalizedWord, `wordDecisions[${index}].normalizedWord`);
   const normalizedWord = normalizeText(rawWord);
   if (normalizedWord.length === 0) {
-    fail("invalid-shape", `wordDecisions[${index}].normalizedWord must not be empty or whitespace-only`);
+    fail(
+      "invalid-shape",
+      `wordDecisions[${index}].normalizedWord must not be empty or whitespace-only`,
+    );
   }
   if (normalizedWord !== rawWord) {
-    fail("invalid-shape", `wordDecisions[${index}].normalizedWord must be canonical: ${JSON.stringify(rawWord)}`);
+    fail(
+      "invalid-shape",
+      `wordDecisions[${index}].normalizedWord must be canonical: ${JSON.stringify(rawWord)}`,
+    );
   }
   const status = value.status;
   if (typeof status !== "string" || !DECISION_STATUSES.includes(status as WordDecisionStatus)) {
-    fail("invalid-shape", `wordDecisions[${index}].status must be one of: ${DECISION_STATUSES.join(", ")}`);
+    fail(
+      "invalid-shape",
+      `wordDecisions[${index}].status must be one of: ${DECISION_STATUSES.join(", ")}`,
+    );
   }
   const updatedAt = requiredString(value.updatedAt, `wordDecisions[${index}].updatedAt`);
   return { normalizedWord, status: status as WordDecisionStatus, updatedAt };
@@ -121,7 +145,10 @@ function validateDecisions(value: unknown): WordDecision[] {
   const seen = new Set<string>();
   for (const decision of decisions) {
     if (seen.has(decision.normalizedWord)) {
-      fail("invalid-shape", `wordDecisions contains a duplicate normalizedWord: ${decision.normalizedWord}`);
+      fail(
+        "invalid-shape",
+        `wordDecisions contains a duplicate normalizedWord: ${decision.normalizedWord}`,
+      );
     }
     seen.add(decision.normalizedWord);
   }
@@ -141,12 +168,18 @@ function validateQuery(value: unknown): QueryState {
   const pageSize = value.pageSize;
   if (
     pageSize !== "all" &&
-    (typeof pageSize !== "number" || !Number.isFinite(pageSize) || !Number.isInteger(pageSize) || pageSize < 1)
+    (typeof pageSize !== "number" ||
+      !Number.isFinite(pageSize) ||
+      !Number.isInteger(pageSize) ||
+      pageSize < 1)
   ) {
-    fail("invalid-shape", "preferences.query.pageSize must be a positive integer or \"all\"");
+    fail("invalid-shape", 'preferences.query.pageSize must be a positive integer or "all"');
   }
   if (!isDecisionFilter(value.decision)) {
-    fail("invalid-shape", "preferences.query.decision must be \"all\", \"unreviewed\", \"known\", \"mined\", \"skip\", or \"later\"");
+    fail(
+      "invalid-shape",
+      'preferences.query.decision must be "all", "unreviewed", "known", "mined", "skip", or "later"',
+    );
   }
   return {
     search: plainString(value.search, "preferences.query.search"),
@@ -168,7 +201,10 @@ function validateQuery(value: unknown): QueryState {
 function validateView(value: unknown): ViewState {
   if (!isRecord(value)) fail("invalid-shape", "preferences.view must be an object");
   const sentenceSize = value.sentenceSize;
-  if (sentenceSize !== undefined && !SENTENCE_SIZES.includes(sentenceSize as ViewState["sentenceSize"])) {
+  if (
+    sentenceSize !== undefined &&
+    !SENTENCE_SIZES.includes(sentenceSize as ViewState["sentenceSize"])
+  ) {
     fail("invalid-shape", 'preferences.view.sentenceSize must be "medium" or "large"');
   }
   const density = value.density;
@@ -201,12 +237,15 @@ export function serializeBackup(input: {
   wordDecisions: Iterable<WordDecision>;
   preferences: MinerBackupV1["preferences"];
 }): string {
-  const knownWords = input.knownWords === null
-    ? null
-    : {
-        name: input.knownWords.name,
-        words: [...new Set([...input.knownWords.words].map((word) => normalizeText(word)))].sort(),
-      };
+  const knownWords =
+    input.knownWords === null
+      ? null
+      : {
+          name: input.knownWords.name,
+          words: [
+            ...new Set([...input.knownWords.words].map((word) => normalizeText(word))),
+          ].sort(),
+        };
   const wordDecisions = [...input.wordDecisions]
     .map((decision) => ({
       normalizedWord: normalizeText(decision.normalizedWord),
@@ -221,13 +260,14 @@ export function serializeBackup(input: {
     exportedAt: input.exportedAt,
     knownWords,
     wordDecisions,
-    preferences: input.preferences === null
-      ? null
-      : {
-          query: { ...input.preferences.query },
-          view: { ...input.preferences.view },
-          page: input.preferences.page,
-        },
+    preferences:
+      input.preferences === null
+        ? null
+        : {
+            query: { ...input.preferences.query },
+            view: { ...input.preferences.view },
+            page: input.preferences.page,
+          },
   };
   return JSON.stringify(backup, null, 2);
 }
@@ -245,7 +285,10 @@ export function parseBackup(text: string): MinerBackupV1 {
     fail("invalid-format", `Backup format must be "${BACKUP_FORMAT}"`);
   }
   if (parsed.version !== BACKUP_VERSION) {
-    fail("unsupported-version", `Unsupported backup version: ${String(parsed.version)}. This application supports version ${BACKUP_VERSION}.`);
+    fail(
+      "unsupported-version",
+      `Unsupported backup version: ${String(parsed.version)}. This application supports version ${BACKUP_VERSION}.`,
+    );
   }
   const exportedAt = requiredString(parsed.exportedAt, "exportedAt");
 

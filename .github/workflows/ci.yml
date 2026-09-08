@@ -15,6 +15,7 @@ jobs:
           node-version: 22
       - run: npm ci
       - run: npx playwright install --with-deps chromium firefox webkit
+      - run: npm run lint
       - run: npm run check
       - run: npm run test:e2e
       - run: npm run test:e2e:prod

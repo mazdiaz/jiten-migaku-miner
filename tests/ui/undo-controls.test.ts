@@ -1,13 +1,13 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { bindControls } from "../../src/ui/controls";
-import { getDomMap } from "../../src/ui/dom";
-import type { DomMap } from "../../src/ui/dom";
-import { createRenderer } from "../../src/ui/renderer";
-import type { Renderer } from "../../src/ui/renderer";
 import type { AppState, FileSource, MinerController } from "../../src/app/state";
 import { createInitialAppState } from "../../src/app/state";
 import type { EntryWithKnown } from "../../src/domain/types";
+import { bindControls } from "../../src/ui/controls";
+import type { DomMap } from "../../src/ui/dom";
+import { getDomMap } from "../../src/ui/dom";
+import type { Renderer } from "../../src/ui/renderer";
+import { createRenderer } from "../../src/ui/renderer";
 
 type Listener = (state: Readonly<AppState>) => void;
 
@@ -50,7 +50,14 @@ function seedDom(): DomMap {
   const advancedPanel = add("advancedPanel", "div");
   advancedPanel.hidden = true;
   add("stickySearch", "input").setAttribute("type", "search");
-  for (const id of ["hideKnown", "hideKanaOnly", "showFurigana", "pillHighlight", "showHighlight", "showDefinitions"]) {
+  for (const id of [
+    "hideKnown",
+    "hideKanaOnly",
+    "showFurigana",
+    "pillHighlight",
+    "showHighlight",
+    "showDefinitions",
+  ]) {
     add(id, "input").setAttribute("type", "checkbox");
   }
   add("minOccurrences", "input").setAttribute("type", "number");
@@ -66,16 +73,39 @@ function seedDom(): DomMap {
     return select;
   };
 
-  withOptions("sentenceFilter", [["any", "any"], ["has", "has"], ["none", "none"]]);
-  withOptions("sortSelect", [["occ-desc", "occ-desc"], ["occ-asc", "occ-asc"], ["original", "original"]]);
-  withOptions("pageSize", [["25", "25"], ["50", "50"], ["100", "100"], ["all", "all"]]);
+  withOptions("sentenceFilter", [
+    ["any", "any"],
+    ["has", "has"],
+    ["none", "none"],
+  ]);
+  withOptions("sortSelect", [
+    ["occ-desc", "occ-desc"],
+    ["occ-asc", "occ-asc"],
+    ["original", "original"],
+  ]);
+  withOptions("pageSize", [
+    ["25", "25"],
+    ["50", "50"],
+    ["100", "100"],
+    ["all", "all"],
+  ]);
   withOptions("decisionFilter", [
-    ["all", "All decisions"], ["unreviewed", "Unreviewed"], ["known", "Known"],
-    ["mined", "Mined"], ["skip", "Skipped"], ["later", "Later"],
+    ["all", "All decisions"],
+    ["unreviewed", "Unreviewed"],
+    ["known", "Known"],
+    ["mined", "Mined"],
+    ["skip", "Skipped"],
+    ["later", "Later"],
   ]);
 
-  withOptions("sentenceSize", [["medium", "medium"], ["large", "large"]]);
-  withOptions("density", [["comfortable", "comfortable"], ["compact", "compact"]]);
+  withOptions("sentenceSize", [
+    ["medium", "medium"],
+    ["large", "large"],
+  ]);
+  withOptions("density", [
+    ["comfortable", "comfortable"],
+    ["compact", "compact"],
+  ]);
   add("results", "section");
   add("resultsHeading", "h2").setAttribute("tabindex", "-1");
   add("resultStats", "p");
@@ -143,7 +173,12 @@ function seedDom(): DomMap {
   const coverageBody = add("coverageBody", "div");
   coverageBody.hidden = true;
   coveragePanel.appendChild(coverageBody);
-  for (const id of ["coverageUniqueWords", "coverageKnownOccurrences", "coveragePercent", "coverageTargets"]) {
+  for (const id of [
+    "coverageUniqueWords",
+    "coverageKnownOccurrences",
+    "coveragePercent",
+    "coverageTargets",
+  ]) {
     coverageBody.appendChild(add(id, "div"));
   }
   const coverageError = add("coverageError", "p");
@@ -203,8 +238,15 @@ function createFakeController(initial?: Partial<AppState>): FakeController {
 function datasetReady(): Partial<AppState> {
   return {
     dataset: {
-      id: "d1", name: "book.csv", sourceType: "file", sourceName: "book.csv",
-      headers: ["Word"], entryCount: 3, createdAt: "x", updatedAt: "x", schemaVersion: 1,
+      id: "d1",
+      name: "book.csv",
+      sourceType: "file",
+      sourceName: "book.csv",
+      headers: ["Word"],
+      entryCount: 3,
+      createdAt: "x",
+      updatedAt: "x",
+      schemaVersion: 1,
     },
     status: "ready",
   };
@@ -292,11 +334,15 @@ describe("one-step undo buttons", () => {
   it("enables the results-head undo button and shows the record label when available", () => {
     const harness = setup(datasetReady());
     try {
-      harness.controller.publishState({ undo: { available: true, label: "Undo Known — 言葉" } });
+      harness.controller.publishState({
+        undo: { available: true, label: "Undo Known — 言葉" },
+      });
       expect(harness.dom.undoButton.disabled).toBe(false);
       expect(harness.dom.undoButton.textContent).toBe("Undo Known — 言葉");
 
-      harness.controller.publishState({ undo: { available: false, label: null } });
+      harness.controller.publishState({
+        undo: { available: false, label: null },
+      });
       expect(harness.dom.undoButton.disabled).toBe(true);
       expect(harness.dom.undoButton.textContent).toBe("Undo");
     } finally {
@@ -310,7 +356,9 @@ describe("one-step undo buttons", () => {
       expect(harness.dom.reviewUndo.disabled).toBe(true);
       expect(harness.dom.reviewUndo.textContent).toBe("Undo last");
 
-      harness.controller.publishState({ undo: { available: true, label: "Undo Known — 言葉" } });
+      harness.controller.publishState({
+        undo: { available: true, label: "Undo Known — 言葉" },
+      });
       expect(harness.dom.reviewUndo.disabled).toBe(false);
       expect(harness.dom.reviewUndo.textContent).toBe("Undo Known — 言葉");
     } finally {
@@ -321,7 +369,9 @@ describe("one-step undo buttons", () => {
   it("clicking either undo button fires undoLastDecision", () => {
     const harness = setup({ ...datasetReady(), ...reviewActive() });
     try {
-      harness.controller.publishState({ undo: { available: true, label: "Undo Known — 言葉" } });
+      harness.controller.publishState({
+        undo: { available: true, label: "Undo Known — 言葉" },
+      });
 
       harness.dom.undoButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       expect(harness.controller.calls.undo).toBe(1);
@@ -338,7 +388,9 @@ describe("z undo shortcut", () => {
   it("fires undo when a record is available", () => {
     const harness = setup(datasetReady());
     try {
-      harness.controller.publishState({ undo: { available: true, label: "Undo Known — 言葉" } });
+      harness.controller.publishState({
+        undo: { available: true, label: "Undo Known — 言葉" },
+      });
       document.dispatchEvent(new KeyboardEvent("keydown", { key: "z", bubbles: true }));
       expect(harness.controller.calls.undo).toBe(1);
 
@@ -362,9 +414,15 @@ describe("z undo shortcut", () => {
   it("is inert while typing or focused inside the toolbar", () => {
     const harness = setup(datasetReady());
     try {
-      harness.controller.publishState({ undo: { available: true, label: "Undo Known — 言葉" } });
-      harness.dom.stickySearch.dispatchEvent(new KeyboardEvent("keydown", { key: "z", bubbles: true }));
-      harness.dom.stickyNext.dispatchEvent(new KeyboardEvent("keydown", { key: "z", bubbles: true }));
+      harness.controller.publishState({
+        undo: { available: true, label: "Undo Known — 言葉" },
+      });
+      harness.dom.stickySearch.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "z", bubbles: true }),
+      );
+      harness.dom.stickyNext.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "z", bubbles: true }),
+      );
       expect(harness.controller.calls.undo).toBe(0);
     } finally {
       harness.dispose();
@@ -377,7 +435,9 @@ describe("z undo shortcut", () => {
       document.dispatchEvent(new KeyboardEvent("keydown", { key: "z", bubbles: true }));
       expect(harness.controller.calls.undo).toBe(0);
 
-      harness.controller.publishState({ undo: { available: true, label: "Undo Known — 言葉" } });
+      harness.controller.publishState({
+        undo: { available: true, label: "Undo Known — 言葉" },
+      });
       document.dispatchEvent(new KeyboardEvent("keydown", { key: "z", bubbles: true }));
       expect(harness.controller.calls.undo).toBe(1);
     } finally {
@@ -405,7 +465,9 @@ describe("z undo shortcut", () => {
       document.dispatchEvent(new KeyboardEvent("keydown", { key: "z", bubbles: true }));
       expect(harness.controller.calls.undo).toBe(0);
 
-      harness.controller.publishState({ undo: { available: true, label: "Undo Known — 言葉" } });
+      harness.controller.publishState({
+        undo: { available: true, label: "Undo Known — 言葉" },
+      });
       document.dispatchEvent(new KeyboardEvent("keydown", { key: "z", bubbles: true }));
       expect(harness.controller.calls.undo).toBe(1);
 

@@ -1,24 +1,36 @@
 import { describe, expect, it } from "vitest";
-import type { Entry, QueryState, ViewState } from "../../src/domain/types";
 import { migrateLegacy } from "../../src/app/migrate-legacy";
 import type { WorkerClient } from "../../src/app/worker-client";
-import { createMemoryAppStore } from "../../src/storage/memory-store";
+import type { Entry, QueryState, ViewState } from "../../src/domain/types";
 import type { AppStore, DatasetMetadata } from "../../src/storage/contracts";
+import { createMemoryAppStore } from "../../src/storage/memory-store";
 import type {
-  ImportCompleteResponse,
   ImportChunkResponse,
+  ImportCompleteResponse,
   QueryRequest,
 } from "../../src/worker/protocol";
 
 class TestStorage implements Storage {
   private readonly values = new Map<string, string>();
 
-  get length(): number { return this.values.size; }
-  clear(): void { this.values.clear(); }
-  getItem(key: string): string | null { return this.values.get(key) ?? null; }
-  key(index: number): string | null { return [...this.values.keys()][index] ?? null; }
-  removeItem(key: string): void { this.values.delete(key); }
-  setItem(key: string, value: string): void { this.values.set(key, value); }
+  get length(): number {
+    return this.values.size;
+  }
+  clear(): void {
+    this.values.clear();
+  }
+  getItem(key: string): string | null {
+    return this.values.get(key) ?? null;
+  }
+  key(index: number): string | null {
+    return [...this.values.keys()][index] ?? null;
+  }
+  removeItem(key: string): void {
+    this.values.delete(key);
+  }
+  setItem(key: string, value: string): void {
+    this.values.set(key, value);
+  }
 }
 
 const query: QueryState = {
@@ -61,7 +73,7 @@ class FakeWorkerClient implements WorkerClient {
     onChunk?: (chunk: Extract<ImportChunkResponse, { kind: "jiten" }>) => void,
   ): Promise<Extract<ImportCompleteResponse, { kind: "jiten" }>> {
     onChunk?.({
-      protocolVersion: 1,
+      protocolVersion: 2,
       type: "import-chunk",
       requestId: "legacy-jiten",
       kind: "jiten",
@@ -70,7 +82,7 @@ class FakeWorkerClient implements WorkerClient {
       entries: [oldEntry],
     });
     return {
-      protocolVersion: 1,
+      protocolVersion: 2,
       type: "import-complete",
       requestId: "legacy-jiten",
       kind: "jiten",
@@ -87,7 +99,7 @@ class FakeWorkerClient implements WorkerClient {
     onChunk?: (chunk: Extract<ImportChunkResponse, { kind: "known" }>) => void,
   ): Promise<Extract<ImportCompleteResponse, { kind: "known" }>> {
     onChunk?.({
-      protocolVersion: 1,
+      protocolVersion: 2,
       type: "import-chunk",
       requestId: "legacy-known",
       kind: "known",
@@ -96,7 +108,7 @@ class FakeWorkerClient implements WorkerClient {
       words: ["猫"],
     });
     return {
-      protocolVersion: 1,
+      protocolVersion: 2,
       type: "import-complete",
       requestId: "legacy-known",
       kind: "known",
@@ -106,19 +118,26 @@ class FakeWorkerClient implements WorkerClient {
   }
 
   async loadDataset(_datasetId: string, _chunks: AsyncIterable<readonly Entry[]>): Promise<void> {}
-  async query(_request: QueryRequest): Promise<never> { throw new Error("not used"); }
-  async coverage(): Promise<never> { throw new Error("not used"); }
+  async query(_request: QueryRequest): Promise<never> {
+    throw new Error("not used");
+  }
+  async coverage(): Promise<never> {
+    throw new Error("not used");
+  }
   dispose(): void {}
 }
 
 function legacyStorage(): TestStorage {
   const storage = new TestStorage();
-  storage.setItem("jitenMiner.v1", JSON.stringify({
-    mediaFileName: "legacy.csv",
-    mediaText: "Word\n猫",
-    knownFileName: "known.txt",
-    knownText: "猫\n",
-  }));
+  storage.setItem(
+    "jitenMiner.v1",
+    JSON.stringify({
+      mediaFileName: "legacy.csv",
+      mediaText: "Word\n猫",
+      knownFileName: "known.txt",
+      knownText: "猫\n",
+    }),
+  );
   storage.setItem("jitenMiner.page", "7");
   return storage;
 }
@@ -167,7 +186,11 @@ describe("legacy migration", () => {
       id: "migrated-known",
       words: new Set(["猫"]),
     });
-    expect(await store.preferences.load()).toEqual({ query: { ...query, page: 7 }, view, page: 7 });
+    expect(await store.preferences.load()).toEqual({
+      query: { ...query, page: 7 },
+      view,
+      page: 7,
+    });
   });
 
   it("rejects migration when saved known-word record has an unexpected identity", async () => {
@@ -220,7 +243,9 @@ describe("legacy migration", () => {
       ...base,
       datasets: {
         ...base.datasets,
-        stage: async () => { throw new Error("storage unavailable"); },
+        stage: async () => {
+          throw new Error("storage unavailable");
+        },
       },
       clearAll: () => base.clearAll(),
     };
@@ -243,12 +268,19 @@ describe("legacy migration", () => {
     const storage = legacyStorage();
     const store = createMemoryAppStore();
     const previous = previousMetadata();
-    await store.datasets.stage(previous, (async function* () {
-      yield [oldEntry];
-    })());
+    await store.datasets.stage(
+      previous,
+      (async function* () {
+        yield [oldEntry];
+      })(),
+    );
     await store.datasets.activate(previous.id);
     await store.knownWords.save("old-known", "old-known.txt", ["犬"]);
-    await store.preferences.save({ query: { ...query, page: 3 }, view, page: 3 });
+    await store.preferences.save({
+      query: { ...query, page: 3 },
+      view,
+      page: 3,
+    });
     const savePreferences = store.preferences.save.bind(store.preferences);
     store.preferences.save = async (value) => {
       if (value.page === 7) throw new Error("preference commit failed");
@@ -269,8 +301,15 @@ describe("legacy migration", () => {
     expect(result.warning).toContain("preference commit failed");
     expect(await store.datasets.getActive()).toEqual(previous);
     expect((await store.datasets.list()).map((dataset) => dataset.id)).toEqual(["previous"]);
-    expect(await store.knownWords.getActive()).toMatchObject({ id: "old-known", words: new Set(["犬"]) });
-    expect(await store.preferences.load()).toEqual({ query: { ...query, page: 3 }, view, page: 3 });
+    expect(await store.knownWords.getActive()).toMatchObject({
+      id: "old-known",
+      words: new Set(["犬"]),
+    });
+    expect(await store.preferences.load()).toEqual({
+      query: { ...query, page: 3 },
+      view,
+      page: 3,
+    });
     expect(storage.getItem("jitenMiner.migration")).toBeNull();
   });
 
@@ -311,7 +350,9 @@ describe("legacy migration", () => {
   it("retries migration on a later reload with working storage after memory fallback", async () => {
     const storage = legacyStorage();
     const failingDurable = createMemoryAppStore();
-    failingDurable.datasets.stage = async () => { throw new Error("IndexedDB migration stage failed"); };
+    failingDurable.datasets.stage = async () => {
+      throw new Error("IndexedDB migration stage failed");
+    };
 
     const durable = await migrateLegacy({
       storage,

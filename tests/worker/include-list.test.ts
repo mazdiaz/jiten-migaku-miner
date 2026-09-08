@@ -35,7 +35,7 @@ function queryState(overrides: Partial<QueryState> = {}): QueryState {
 
 function queryRequest(overrides: Partial<QueryRequest> = {}): QueryRequest {
   return {
-    protocolVersion: 1,
+    protocolVersion: 2,
     type: "query",
     requestId: "query-1",
     datasetId: "dataset-1",
@@ -73,9 +73,12 @@ describe("worker include-list queries", () => {
     const engine = new WorkerEngine();
     await loadDataset(engine, FOUR_ENTRIES);
 
-    const response = await queryOnce(engine, queryRequest({
-      includeNormalizedWords: ["二", "四"],
-    }));
+    const response = await queryOnce(
+      engine,
+      queryRequest({
+        includeNormalizedWords: ["二", "四"],
+      }),
+    );
 
     expect(response.type).toBe("query-result");
     if (response.type !== "query-result") return;
@@ -87,9 +90,12 @@ describe("worker include-list queries", () => {
     const engine = new WorkerEngine();
     await loadDataset(engine, FOUR_ENTRIES);
 
-    const response = await queryOnce(engine, queryRequest({
-      includeNormalizedWords: ["一", "存在しない"],
-    }));
+    const response = await queryOnce(
+      engine,
+      queryRequest({
+        includeNormalizedWords: ["一", "存在しない"],
+      }),
+    );
 
     if (response.type !== "query-result") throw new Error("expected query-result");
     expect(response.result.items.map((item) => item.normalizedWord)).toEqual(["一"]);
@@ -102,7 +108,12 @@ describe("worker include-list queries", () => {
     const response = await queryOnce(engine, queryRequest());
 
     if (response.type !== "query-result") throw new Error("expected query-result");
-    expect(response.result.items.map((item) => item.normalizedWord)).toEqual(["一", "二", "三", "四"]);
+    expect(response.result.items.map((item) => item.normalizedWord)).toEqual([
+      "一",
+      "二",
+      "三",
+      "四",
+    ]);
     expect(response.result.totalEntries).toBe(4);
   });
 
@@ -111,10 +122,13 @@ describe("worker include-list queries", () => {
     await loadDataset(engine, FOUR_ENTRIES);
 
     // Without the include list, page 1 of size 1 would be 一 (10 occurrences).
-    const response = await queryOnce(engine, queryRequest({
-      includeNormalizedWords: ["三", "四"],
-      query: queryState({ pageSize: 1, page: 1 }),
-    }));
+    const response = await queryOnce(
+      engine,
+      queryRequest({
+        includeNormalizedWords: ["三", "四"],
+        query: queryState({ pageSize: 1, page: 1 }),
+      }),
+    );
 
     if (response.type !== "query-result") throw new Error("expected query-result");
     expect(response.result.items.map((item) => item.normalizedWord)).toEqual(["三"]);
@@ -126,11 +140,14 @@ describe("worker include-list queries", () => {
     const engine = new WorkerEngine();
     await loadDataset(engine, FOUR_ENTRIES);
 
-    const response = await queryOnce(engine, queryRequest({
-      includeNormalizedWords: ["三", "四"],
-      query: queryState({ pageSize: "all" }),
-      window: { start: 0, size: 1 },
-    }));
+    const response = await queryOnce(
+      engine,
+      queryRequest({
+        includeNormalizedWords: ["三", "四"],
+        query: queryState({ pageSize: "all" }),
+        window: { start: 0, size: 1 },
+      }),
+    );
 
     if (response.type !== "query-result") throw new Error("expected query-result");
     expect(response.result.items.map((item) => item.normalizedWord)).toEqual(["三"]);
@@ -142,18 +159,25 @@ describe("worker include-list queries", () => {
     const engine = new WorkerEngine();
     await loadDataset(engine, FOUR_ENTRIES);
 
-    const first = await queryOnce(engine, queryRequest({
-      includeNormalizedWords: ["一"],
-      query: queryState({ pageSize: "all" }),
-      window: { start: 0, size: 10 },
-    }));
-    const second = await queryOnce(engine, queryRequest({
-      includeNormalizedWords: ["四"],
-      query: queryState({ pageSize: "all" }),
-      window: { start: 0, size: 10 },
-    }));
+    const first = await queryOnce(
+      engine,
+      queryRequest({
+        includeNormalizedWords: ["一"],
+        query: queryState({ pageSize: "all" }),
+        window: { start: 0, size: 10 },
+      }),
+    );
+    const second = await queryOnce(
+      engine,
+      queryRequest({
+        includeNormalizedWords: ["四"],
+        query: queryState({ pageSize: "all" }),
+        window: { start: 0, size: 10 },
+      }),
+    );
 
-    if (first.type !== "query-result" || second.type !== "query-result") throw new Error("expected query-results");
+    if (first.type !== "query-result" || second.type !== "query-result")
+      throw new Error("expected query-results");
     expect(first.result.items.map((item) => item.normalizedWord)).toEqual(["一"]);
     expect(second.result.items.map((item) => item.normalizedWord)).toEqual(["四"]);
   });
@@ -162,11 +186,14 @@ describe("worker include-list queries", () => {
     const engine = new WorkerEngine();
     await loadDataset(engine, FOUR_ENTRIES);
 
-    const response = await queryOnce(engine, queryRequest({
-      knownWords: ["二"],
-      includeNormalizedWords: ["一", "二", "三"],
-      query: queryState({ hideKnown: true }),
-    }));
+    const response = await queryOnce(
+      engine,
+      queryRequest({
+        knownWords: ["二"],
+        includeNormalizedWords: ["一", "二", "三"],
+        query: queryState({ hideKnown: true }),
+      }),
+    );
 
     if (response.type !== "query-result") throw new Error("expected query-result");
     expect(response.result.items.map((item) => item.normalizedWord)).toEqual(["一", "三"]);
@@ -192,10 +219,13 @@ describe("worker canonical case-insensitive matching", () => {
     const engine = new WorkerEngine();
     await loadDataset(engine, [entry(0, "NHK", 5)]);
 
-    const response = await queryOnce(engine, queryRequest({
-      decisions: [["nhk", "mined"]],
-      query: queryState({ decision: "mined" }),
-    }));
+    const response = await queryOnce(
+      engine,
+      queryRequest({
+        decisions: [["nhk", "mined"]],
+        query: queryState({ decision: "mined" }),
+      }),
+    );
 
     if (response.type !== "query-result") throw new Error("expected query-result");
     expect(response.result.items).toHaveLength(1);
@@ -219,11 +249,14 @@ describe("worker canonical case-insensitive matching", () => {
     const engine = new WorkerEngine();
     await loadDataset(engine, [entry(0, "NHK", 5)]);
 
-    const response = await queryOnce(engine, queryRequest({
-      knownWords: ["nhk"],
-      decisions: [["nhk", "mined"]],
-      includeNormalizedWords: ["nhk"],
-    }));
+    const response = await queryOnce(
+      engine,
+      queryRequest({
+        knownWords: ["nhk"],
+        decisions: [["nhk", "mined"]],
+        includeNormalizedWords: ["nhk"],
+      }),
+    );
 
     if (response.type !== "query-result") throw new Error("expected query-result");
     expect(response.result.items).toHaveLength(1);
@@ -238,7 +271,7 @@ describe("worker canonical case-insensitive matching", () => {
 describe("worker include-list protocol", () => {
   it("parses an optional include list of non-empty strings", () => {
     const parsed = parseWorkerRequest({
-      protocolVersion: 1,
+      protocolVersion: 2,
       type: "query",
       requestId: "query-1",
       datasetId: "dataset-1",
@@ -248,12 +281,15 @@ describe("worker include-list protocol", () => {
       includeNormalizedWords: ["一", "二"],
     });
 
-    expect(parsed).toMatchObject({ type: "query", includeNormalizedWords: ["一", "二"] });
+    expect(parsed).toMatchObject({
+      type: "query",
+      includeNormalizedWords: ["一", "二"],
+    });
   });
 
   it("omits the include list when absent", () => {
     const parsed = parseWorkerRequest({
-      protocolVersion: 1,
+      protocolVersion: 2,
       type: "query",
       requestId: "query-1",
       datasetId: "dataset-1",
@@ -267,26 +303,30 @@ describe("worker include-list protocol", () => {
   });
 
   it("rejects include lists containing non-string or empty values", () => {
-    expect(() => parseWorkerRequest({
-      protocolVersion: 1,
-      type: "query",
-      requestId: "query-1",
-      datasetId: "dataset-1",
-      knownWords: [],
-      decisions: [],
-      query: queryState(),
-      includeNormalizedWords: ["一", 3],
-    })).toThrow();
+    expect(() =>
+      parseWorkerRequest({
+        protocolVersion: 2,
+        type: "query",
+        requestId: "query-1",
+        datasetId: "dataset-1",
+        knownWords: [],
+        decisions: [],
+        query: queryState(),
+        includeNormalizedWords: ["一", 3],
+      }),
+    ).toThrow();
 
-    expect(() => parseWorkerRequest({
-      protocolVersion: 1,
-      type: "query",
-      requestId: "query-1",
-      datasetId: "dataset-1",
-      knownWords: [],
-      decisions: [],
-      query: queryState(),
-      includeNormalizedWords: [""],
-    })).toThrow();
+    expect(() =>
+      parseWorkerRequest({
+        protocolVersion: 2,
+        type: "query",
+        requestId: "query-1",
+        datasetId: "dataset-1",
+        knownWords: [],
+        decisions: [],
+        query: queryState(),
+        includeNormalizedWords: [""],
+      }),
+    ).toThrow();
   });
 });

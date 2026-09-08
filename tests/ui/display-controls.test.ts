@@ -1,17 +1,17 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { bindControls } from "../../src/ui/controls";
-import { getDomMap } from "../../src/ui/dom";
-import type { DomMap } from "../../src/ui/dom";
-import { createRenderer } from "../../src/ui/renderer";
 import {
+  type AppState,
   createInitialAppState,
   DEFAULT_VIEW,
-  type AppState,
   type FileSource,
   type MinerController,
 } from "../../src/app/state";
 import type { QueryState, ViewState } from "../../src/domain/types";
+import { bindControls } from "../../src/ui/controls";
+import type { DomMap } from "../../src/ui/dom";
+import { getDomMap } from "../../src/ui/dom";
+import { createRenderer } from "../../src/ui/renderer";
 
 type Listener = (state: Readonly<AppState>) => void;
 
@@ -54,7 +54,14 @@ function seedDom(): DomMap {
   const advancedPanel = add("advancedPanel", "div");
   advancedPanel.hidden = true;
   add("stickySearch", "input").setAttribute("type", "search");
-  for (const id of ["hideKnown", "hideKanaOnly", "showFurigana", "pillHighlight", "showHighlight", "showDefinitions"]) {
+  for (const id of [
+    "hideKnown",
+    "hideKanaOnly",
+    "showFurigana",
+    "pillHighlight",
+    "showHighlight",
+    "showDefinitions",
+  ]) {
     add(id, "input").setAttribute("type", "checkbox");
   }
   add("minOccurrences", "input").setAttribute("type", "number");
@@ -70,12 +77,31 @@ function seedDom(): DomMap {
     return select;
   };
 
-  withOptions("sentenceFilter", [["any", "any"], ["has", "has"], ["none", "none"]]);
-  withOptions("sortSelect", [["occ-desc", "occ-desc"], ["occ-asc", "occ-asc"], ["original", "original"]]);
-  withOptions("pageSize", [["25", "25"], ["50", "50"], ["100", "100"], ["all", "all"]]);
+  withOptions("sentenceFilter", [
+    ["any", "any"],
+    ["has", "has"],
+    ["none", "none"],
+  ]);
+  withOptions("sortSelect", [
+    ["occ-desc", "occ-desc"],
+    ["occ-asc", "occ-asc"],
+    ["original", "original"],
+  ]);
+  withOptions("pageSize", [
+    ["25", "25"],
+    ["50", "50"],
+    ["100", "100"],
+    ["all", "all"],
+  ]);
   withOptions("decisionFilter", [["all", "All decisions"]]);
-  withOptions("sentenceSize", [["medium", "Medium"], ["large", "Large"]]);
-  withOptions("density", [["comfortable", "Comfortable"], ["compact", "Compact"]]);
+  withOptions("sentenceSize", [
+    ["medium", "Medium"],
+    ["large", "Large"],
+  ]);
+  withOptions("density", [
+    ["comfortable", "Comfortable"],
+    ["compact", "Compact"],
+  ]);
 
   add("results", "section");
   add("resultsHeading", "h2");
@@ -90,7 +116,19 @@ function seedDom(): DomMap {
   const reviewPanel = add("reviewPanel", "div");
   reviewPanel.setAttribute("tabindex", "-1");
   reviewOverlay.appendChild(reviewPanel);
-  for (const id of ["reviewHeading", "reviewProgress", "reviewContent", "reviewComplete", "reviewReturn", "reviewExit", "reviewKnown", "reviewMined", "reviewSkip", "reviewLater", "reviewUndo"]) {
+  for (const id of [
+    "reviewHeading",
+    "reviewProgress",
+    "reviewContent",
+    "reviewComplete",
+    "reviewReturn",
+    "reviewExit",
+    "reviewKnown",
+    "reviewMined",
+    "reviewSkip",
+    "reviewLater",
+    "reviewUndo",
+  ]) {
     const element = add(id, "div");
     reviewPanel.appendChild(element);
   }
@@ -119,7 +157,12 @@ function seedDom(): DomMap {
   const coverageBody = add("coverageBody", "div");
   coverageBody.hidden = true;
   coveragePanel.appendChild(coverageBody);
-  for (const id of ["coverageUniqueWords", "coverageKnownOccurrences", "coveragePercent", "coverageTargets"]) {
+  for (const id of [
+    "coverageUniqueWords",
+    "coverageKnownOccurrences",
+    "coveragePercent",
+    "coverageTargets",
+  ]) {
     coverageBody.appendChild(add(id, "div"));
   }
   const coverageError = add("coverageError", "p");
@@ -131,14 +174,20 @@ function seedDom(): DomMap {
 }
 
 interface FakeController extends MinerController {
-  calls: { updateView: Partial<ViewState>[]; updateQuery: Partial<QueryState>[] };
+  calls: {
+    updateView: Partial<ViewState>[];
+    updateQuery: Partial<QueryState>[];
+  };
   publishState(patch: Partial<AppState>): void;
 }
 
 function createFakeController(initial?: Partial<AppState>): FakeController {
   let state: AppState = { ...createInitialAppState("memory"), ...initial };
   const listeners = new Set<Listener>();
-  const calls = { updateView: [] as Partial<ViewState>[], updateQuery: [] as Partial<QueryState>[] };
+  const calls = {
+    updateView: [] as Partial<ViewState>[],
+    updateQuery: [] as Partial<QueryState>[],
+  };
   const controller: FakeController = {
     calls,
     publishState(patch) {
@@ -237,7 +286,9 @@ describe("reading display body classes and select sync", () => {
   it("toggles sent-size-lg only when sentenceSize is large", () => {
     const harness = setup();
     try {
-      harness.controller.publishState({ view: { ...DEFAULT_VIEW, sentenceSize: "large" } });
+      harness.controller.publishState({
+        view: { ...DEFAULT_VIEW, sentenceSize: "large" },
+      });
       expect(document.body.classList.contains("sent-size-lg")).toBe(true);
       expect(document.body.classList.contains("density-compact")).toBe(false);
       expect(harness.dom.sentenceSize.value).toBe("large");
@@ -253,7 +304,9 @@ describe("reading display body classes and select sync", () => {
   it("toggles density-compact only when density is compact", () => {
     const harness = setup();
     try {
-      harness.controller.publishState({ view: { ...DEFAULT_VIEW, density: "compact" } });
+      harness.controller.publishState({
+        view: { ...DEFAULT_VIEW, density: "compact" },
+      });
       expect(document.body.classList.contains("density-compact")).toBe(true);
       expect(document.body.classList.contains("sent-size-lg")).toBe(false);
       expect(harness.dom.density.value).toBe("compact");
@@ -290,7 +343,10 @@ describe("reading display controls binding", () => {
 
       harness.dom.sentenceSize.value = "medium";
       harness.dom.sentenceSize.dispatchEvent(new Event("change"));
-      expect(harness.controller.calls.updateView).toEqual([{ sentenceSize: "large" }, { sentenceSize: "medium" }]);
+      expect(harness.controller.calls.updateView).toEqual([
+        { sentenceSize: "large" },
+        { sentenceSize: "medium" },
+      ]);
     } finally {
       harness.dispose();
     }
@@ -313,7 +369,7 @@ describe("reading display controls markup", () => {
     const { readFileSync } = await import("node:fs");
     const { resolve } = await import("node:path");
     const html = readFileSync(resolve(process.cwd(), "index.html"), "utf8");
-    const displayStart = html.indexOf('<legend>Display</legend>');
+    const displayStart = html.indexOf("<legend>Display</legend>");
     const displayEnd = html.indexOf("</fieldset>", displayStart);
     expect(displayStart).toBeGreaterThan(-1);
     const displayHtml = html.slice(displayStart, displayEnd);

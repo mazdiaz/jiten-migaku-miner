@@ -14,7 +14,10 @@ import { createHighlightAdapter } from "./ui/highlight-adapter";
 import { createRenderer, renderEntryNode } from "./ui/renderer";
 import { createVirtualList } from "./ui/virtual-list";
 
-async function discoverFolderSources(controller: ReturnType<typeof createMinerController>, latest: Readonly<AppState>): Promise<void> {
+async function discoverFolderSources(
+  controller: ReturnType<typeof createMinerController>,
+  latest: Readonly<AppState>,
+): Promise<void> {
   const folder = createFolderSource();
   const asAuto = (source: { name: string; text(): Promise<string> }) => ({
     name: `${source.name} (auto)`,
@@ -40,10 +43,12 @@ async function bootstrap(): Promise<void> {
 
   const virtualList = createVirtualList(
     dom.resultsList,
-    (entry, index) => renderEntryNode(entry, index + 1, latest?.view ?? DEFAULT_VIEW, {
-      queued: latest?.queue.normalizedWords.includes(canonicalWord(entry.normalizedWord)) ?? false,
-      queueMode: latest?.queue.mode === "queue",
-    }),
+    (entry, index) =>
+      renderEntryNode(entry, index + 1, latest?.view ?? DEFAULT_VIEW, {
+        queued:
+          latest?.queue.normalizedWords.includes(canonicalWord(entry.normalizedWord)) ?? false,
+        queueMode: latest?.queue.mode === "queue",
+      }),
     { onRequestWindow: (start) => queryController.setViewportStart(start) },
   );
   queryController = createQueryController({ controller, virtualList });

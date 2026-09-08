@@ -19,14 +19,22 @@ class FakeStorage implements Storage {
   failWrites = false;
   failReads = false;
 
-  get length(): number { return this.values.size; }
-  clear(): void { this.values.clear(); }
+  get length(): number {
+    return this.values.size;
+  }
+  clear(): void {
+    this.values.clear();
+  }
   getItem(key: string): string | null {
     if (this.failReads) throw new Error("storage read blocked");
     return this.values.get(key) ?? null;
   }
-  key(index: number): string | null { return [...this.values.keys()][index] ?? null; }
-  removeItem(key: string): void { this.values.delete(key); }
+  key(index: number): string | null {
+    return [...this.values.keys()][index] ?? null;
+  }
+  removeItem(key: string): void {
+    this.values.delete(key);
+  }
   setItem(key: string, value: string): void {
     if (this.failWrites) throw new Error("storage write blocked");
     this.values.set(key, value);
@@ -58,7 +66,10 @@ describe("session queue store", () => {
 
   it("returns null for an unsupported version", () => {
     const storage = new FakeStorage();
-    storage.setItem(SESSION_QUEUE_STORAGE_KEY, JSON.stringify({ version: 2, datasetId: "d", normalizedWords: ["一"] }));
+    storage.setItem(
+      SESSION_QUEUE_STORAGE_KEY,
+      JSON.stringify({ version: 2, datasetId: "d", normalizedWords: ["一"] }),
+    );
     const store = createSessionQueueStore(storage);
 
     expect(store.load()).toBeNull();
@@ -75,7 +86,10 @@ describe("session queue store", () => {
   it("returns null when the stored shape is invalid", () => {
     const storage = new FakeStorage();
     const store = createSessionQueueStore(storage);
-    storage.setItem(SESSION_QUEUE_STORAGE_KEY, JSON.stringify({ version: 1, datasetId: "", normalizedWords: "nope" }));
+    storage.setItem(
+      SESSION_QUEUE_STORAGE_KEY,
+      JSON.stringify({ version: 1, datasetId: "", normalizedWords: "nope" }),
+    );
 
     expect(store.load()).toBeNull();
   });

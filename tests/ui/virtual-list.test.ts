@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
-import { describe, expect, it, vi } from "vitest";
-import { createVirtualList } from "../../src/ui/virtual-list";
+import { describe, expect, it } from "vitest";
 import type { EntryWithKnown } from "../../src/domain/types";
+import { createVirtualList } from "../../src/ui/virtual-list";
 
 function entry(index: number): EntryWithKnown {
   return {
@@ -98,17 +98,18 @@ describe("virtual list", () => {
     list.setTotal(100_000);
     list.setWindow(0, entries(100));
 
-    root.getBoundingClientRect = () => ({
-      top: -(2_000 * 96),
-      bottom: 0,
-      left: 0,
-      right: 0,
-      height: 100_000 * 96,
-      width: 800,
-      x: 0,
-      y: -(2_000 * 96),
-      toJSON: () => ({}),
-    } as DOMRect);
+    root.getBoundingClientRect = () =>
+      ({
+        top: -(2_000 * 96),
+        bottom: 0,
+        left: 0,
+        right: 0,
+        height: 100_000 * 96,
+        width: 800,
+        x: 0,
+        y: -(2_000 * 96),
+        toJSON: () => ({}),
+      }) as DOMRect;
     window.dispatchEvent(new Event("scroll"));
 
     expect(requested).toHaveLength(1);
@@ -142,17 +143,18 @@ describe("virtual list", () => {
     list.setWindow(0, entries(100));
     list.destroy();
 
-    root.getBoundingClientRect = () => ({
-      top: -(5_000 * 96),
-      bottom: 0,
-      left: 0,
-      right: 0,
-      height: 100_000 * 96,
-      width: 800,
-      x: 0,
-      y: -(5_000 * 96),
-      toJSON: () => ({}),
-    } as DOMRect);
+    root.getBoundingClientRect = () =>
+      ({
+        top: -(5_000 * 96),
+        bottom: 0,
+        left: 0,
+        right: 0,
+        height: 100_000 * 96,
+        width: 800,
+        x: 0,
+        y: -(5_000 * 96),
+        toJSON: () => ({}),
+      }) as DOMRect;
     window.dispatchEvent(new Event("scroll"));
 
     expect(requested).toHaveLength(0);
@@ -164,7 +166,7 @@ describe("virtual list", () => {
     const list = createVirtualList(root, (entryValue, index) => {
       const node = itemNode(entryValue, index);
       node.style.height = "120px";
-      node.getBoundingClientRect = () => ({ height: 120 } as DOMRect);
+      node.getBoundingClientRect = () => ({ height: 120 }) as DOMRect;
       return node;
     });
 
@@ -202,7 +204,7 @@ describe("virtual list scroll anchoring", () => {
   function measuredItems(height: number) {
     return (entryValue: EntryWithKnown, index: number): HTMLElement => {
       const node = itemNode(entryValue, index);
-      node.getBoundingClientRect = () => ({ height } as DOMRect);
+      node.getBoundingClientRect = () => ({ height }) as DOMRect;
       return node;
     };
   }
@@ -269,18 +271,21 @@ describe("virtual list scroll anchoring", () => {
   // render arrives after the preference flip with different gBCR heights.
   // The re-measure must compensate the scroll so the visible start stays
   // anchored, and must not request a different window start.
-  function resizableItems(): { render: (entryValue: EntryWithKnown, index: number) => HTMLElement; setHeight: (height: number) => void } {
+  function resizableItems(): {
+    render: (entryValue: EntryWithKnown, index: number) => HTMLElement;
+    setHeight: (height: number) => void;
+  } {
     let height = 96;
     return {
       render(entryValue: EntryWithKnown, index: number): HTMLElement {
         const node = itemNode(entryValue, index);
-        node.getBoundingClientRect = () => ({ height } as DOMRect);
+        node.getBoundingClientRect = () => ({ height }) as DOMRect;
         return node;
       },
       setHeight(next: number) {
         height = next;
       },
-    }
+    };
   }
 
   it("anchors the visible start when compact density shrinks row heights after a settled estimate", () => {

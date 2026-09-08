@@ -1,6 +1,6 @@
 import type { QueryResult } from "../domain/types";
-import type { MinerController } from "./state";
 import type { VirtualList } from "../ui/virtual-list";
+import type { MinerController } from "./state";
 
 export interface QueryControllerOptions {
   controller: MinerController;

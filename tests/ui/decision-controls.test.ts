@@ -1,13 +1,13 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { bindControls } from "../../src/ui/controls";
-import { getDomMap } from "../../src/ui/dom";
-import type { DomMap } from "../../src/ui/dom";
-import { createRenderer, renderEntryNode } from "../../src/ui/renderer";
-import type { Renderer } from "../../src/ui/renderer";
 import type { AppState, FileSource, MinerController } from "../../src/app/state";
 import { createInitialAppState } from "../../src/app/state";
 import type { EntryWithKnown, QueryState, WordDecision } from "../../src/domain/types";
+import { bindControls } from "../../src/ui/controls";
+import type { DomMap } from "../../src/ui/dom";
+import { getDomMap } from "../../src/ui/dom";
+import type { Renderer } from "../../src/ui/renderer";
+import { createRenderer, renderEntryNode } from "../../src/ui/renderer";
 
 type Listener = (state: Readonly<AppState>) => void;
 
@@ -50,7 +50,14 @@ function seedDom(): DomMap {
   const advancedPanel = add("advancedPanel", "div");
   advancedPanel.hidden = true;
   add("stickySearch", "input").setAttribute("type", "search");
-  for (const id of ["hideKnown", "hideKanaOnly", "showFurigana", "pillHighlight", "showHighlight", "showDefinitions"]) {
+  for (const id of [
+    "hideKnown",
+    "hideKanaOnly",
+    "showFurigana",
+    "pillHighlight",
+    "showHighlight",
+    "showDefinitions",
+  ]) {
     add(id, "input").setAttribute("type", "checkbox");
   }
   add("minOccurrences", "input").setAttribute("type", "number");
@@ -66,16 +73,39 @@ function seedDom(): DomMap {
     return select;
   };
 
-  withOptions("sentenceFilter", [["any", "any"], ["has", "has"], ["none", "none"]]);
-  withOptions("sortSelect", [["occ-desc", "occ-desc"], ["occ-asc", "occ-asc"], ["original", "original"]]);
-  withOptions("pageSize", [["25", "25"], ["50", "50"], ["100", "100"], ["all", "all"]]);
+  withOptions("sentenceFilter", [
+    ["any", "any"],
+    ["has", "has"],
+    ["none", "none"],
+  ]);
+  withOptions("sortSelect", [
+    ["occ-desc", "occ-desc"],
+    ["occ-asc", "occ-asc"],
+    ["original", "original"],
+  ]);
+  withOptions("pageSize", [
+    ["25", "25"],
+    ["50", "50"],
+    ["100", "100"],
+    ["all", "all"],
+  ]);
   withOptions("decisionFilter", [
-    ["all", "All decisions"], ["unreviewed", "Unreviewed"], ["known", "Known"],
-    ["mined", "Mined"], ["skip", "Skipped"], ["later", "Later"],
+    ["all", "All decisions"],
+    ["unreviewed", "Unreviewed"],
+    ["known", "Known"],
+    ["mined", "Mined"],
+    ["skip", "Skipped"],
+    ["later", "Later"],
   ]);
 
-  withOptions("sentenceSize", [["medium", "medium"], ["large", "large"]]);
-  withOptions("density", [["comfortable", "comfortable"], ["compact", "compact"]]);
+  withOptions("sentenceSize", [
+    ["medium", "medium"],
+    ["large", "large"],
+  ]);
+  withOptions("density", [
+    ["comfortable", "comfortable"],
+    ["compact", "compact"],
+  ]);
   add("results", "section");
   add("resultsHeading", "h2").setAttribute("tabindex", "-1");
   add("resultStats", "p");
@@ -140,7 +170,12 @@ function seedDom(): DomMap {
   const coverageBody = add("coverageBody", "div");
   coverageBody.hidden = true;
   coveragePanel.appendChild(coverageBody);
-  for (const id of ["coverageUniqueWords", "coverageKnownOccurrences", "coveragePercent", "coverageTargets"]) {
+  for (const id of [
+    "coverageUniqueWords",
+    "coverageKnownOccurrences",
+    "coveragePercent",
+    "coverageTargets",
+  ]) {
     coverageBody.appendChild(add(id, "div"));
   }
   const coverageError = add("coverageError", "p");
@@ -272,14 +307,25 @@ function makeEntry(overrides: Partial<EntryWithKnown> = {}): EntryWithKnown {
 }
 
 function decision(word: string, status: WordDecision["status"]): WordDecision {
-  return { normalizedWord: word, status, updatedAt: "2026-09-05T00:00:00.000Z" };
+  return {
+    normalizedWord: word,
+    status,
+    updatedAt: "2026-09-05T00:00:00.000Z",
+  };
 }
 
 function datasetReady(): Partial<AppState> {
   return {
     dataset: {
-      id: "d1", name: "book.csv", sourceType: "file", sourceName: "book.csv",
-      headers: ["Word"], entryCount: 3, createdAt: "x", updatedAt: "x", schemaVersion: 1,
+      id: "d1",
+      name: "book.csv",
+      sourceType: "file",
+      sourceName: "book.csv",
+      headers: ["Word"],
+      entryCount: 3,
+      createdAt: "x",
+      updatedAt: "x",
+      schemaVersion: 1,
     },
     status: "ready",
   };
@@ -348,7 +394,9 @@ describe("decision filter select", () => {
     const expectedValues = ["all", "unreviewed", "known", "mined", "skip", "later"];
     const expectedLabels = ["All decisions", "Unreviewed", "Known", "Mined", "Skipped", "Later"];
     expect([...dom.decisionFilter.options].map((option) => option.value)).toEqual(expectedValues);
-    expect([...dom.decisionFilter.options].map((option) => option.textContent)).toEqual(expectedLabels);
+    expect([...dom.decisionFilter.options].map((option) => option.textContent)).toEqual(
+      expectedLabels,
+    );
   });
 
   it("mirrors state.query.decision in the select", () => {
@@ -364,7 +412,9 @@ describe("decision filter select", () => {
     try {
       harness.dom.decisionFilter.value = "skip";
       harness.dom.decisionFilter.dispatchEvent(new Event("change"));
-      expect(harness.controller.calls.updateQuery.at(-1)).toEqual({ decision: "skip" });
+      expect(harness.controller.calls.updateQuery.at(-1)).toEqual({
+        decision: "skip",
+      });
 
       harness.state.query.decision = "known";
       harness.render();
@@ -380,10 +430,14 @@ describe("per-entry decision actions", () => {
     const harness = setup();
     try {
       harness.dom.resultsList.appendChild(renderEntryNode(makeEntry(), 1, harness.state.view));
-      decisionButton(harness.dom.resultsList, "known").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      decisionButton(harness.dom.resultsList, "known").dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
       expect(harness.controller.setWordDecision).toHaveBeenCalledWith("言葉", "known");
 
-      decisionButton(harness.dom.resultsList, "later").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      decisionButton(harness.dom.resultsList, "later").dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
       expect(harness.controller.setWordDecision).toHaveBeenCalledWith("言葉", "later");
     } finally {
       harness.dispose();
@@ -394,7 +448,9 @@ describe("per-entry decision actions", () => {
     const dom = seedDom();
     for (const status of ["known", "mined", "skip", "later"] as const) {
       dom.resultsList.textContent = "";
-      dom.resultsList.appendChild(renderEntryNode(makeEntry({ decision: status }), 1, createInitialAppState("memory").view));
+      dom.resultsList.appendChild(
+        renderEntryNode(makeEntry({ decision: status }), 1, createInitialAppState("memory").view),
+      );
       for (const action of ["known", "mined", "skip", "later"]) {
         expect(decisionButton(dom.resultsList, action).getAttribute("aria-pressed")).toBe(
           action === status ? "true" : "false",
@@ -406,13 +462,19 @@ describe("per-entry decision actions", () => {
   it("sends unreviewed on Reset and disables Reset while unreviewed", () => {
     const harness = setup();
     try {
-      harness.dom.resultsList.appendChild(renderEntryNode(makeEntry({ decision: "mined" }), 1, harness.state.view));
+      harness.dom.resultsList.appendChild(
+        renderEntryNode(makeEntry({ decision: "mined" }), 1, harness.state.view),
+      );
       expect(decisionButton(harness.dom.resultsList, "unreviewed").disabled).toBe(false);
-      decisionButton(harness.dom.resultsList, "unreviewed").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      decisionButton(harness.dom.resultsList, "unreviewed").dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
       expect(harness.controller.setWordDecision).toHaveBeenCalledWith("言葉", "unreviewed");
 
       harness.dom.resultsList.textContent = "";
-      harness.dom.resultsList.appendChild(renderEntryNode(makeEntry({ decision: "unreviewed" }), 1, harness.state.view));
+      harness.dom.resultsList.appendChild(
+        renderEntryNode(makeEntry({ decision: "unreviewed" }), 1, harness.state.view),
+      );
       expect(decisionButton(harness.dom.resultsList, "unreviewed").disabled).toBe(true);
     } finally {
       harness.dispose();
@@ -428,7 +490,9 @@ describe("per-entry decision actions", () => {
         createInitialAppState("memory").view,
       ),
     );
-    const badges = [...dom.resultsList.querySelectorAll(".entry-badge")].map((badge) => badge.textContent);
+    const badges = [...dom.resultsList.querySelectorAll(".entry-badge")].map(
+      (badge) => badge.textContent,
+    );
     expect(badges).toContain("Migaku known");
     expect(badges).toContain("Mined");
     expect(badges).toHaveLength(2);
@@ -436,11 +500,20 @@ describe("per-entry decision actions", () => {
 
   it("uses text labels (not color alone) for each decision badge", () => {
     const dom = seedDom();
-    const labels = { known: "Known", mined: "Mined", skip: "Skip", later: "Later" } as const;
+    const labels = {
+      known: "Known",
+      mined: "Mined",
+      skip: "Skip",
+      later: "Later",
+    } as const;
     for (const [status, label] of Object.entries(labels)) {
       dom.resultsList.textContent = "";
       dom.resultsList.appendChild(
-        renderEntryNode(makeEntry({ decision: status as keyof typeof labels }), 1, createInitialAppState("memory").view),
+        renderEntryNode(
+          makeEntry({ decision: status as keyof typeof labels }),
+          1,
+          createInitialAppState("memory").view,
+        ),
       );
       const badge = dom.resultsList.querySelector(".entry-badge-decision");
       expect(badge?.textContent).toBe(label);
@@ -479,10 +552,18 @@ describe("post-action focus restoration", () => {
   it("decision click moves focus to the next entry when the row disappears", () => {
     const harness = setup({
       ...datasetReady(),
-      query: { ...createInitialAppState("memory").query, decision: "unreviewed" },
+      query: {
+        ...createInitialAppState("memory").query,
+        decision: "unreviewed",
+      },
       ...listResult([
         makeEntry(),
-        makeEntry({ id: "e2", originalIndex: 1, word: "いぬ", normalizedWord: "いぬ" }),
+        makeEntry({
+          id: "e2",
+          originalIndex: 1,
+          word: "いぬ",
+          normalizedWord: "いぬ",
+        }),
       ]),
     });
     try {
@@ -494,11 +575,18 @@ describe("post-action focus restoration", () => {
       harness.controller.publishState({
         wordDecisions: new Map([["言葉", decision("言葉", "known")]]),
         ...listResult([
-          makeEntry({ id: "e2", originalIndex: 1, word: "いぬ", normalizedWord: "いぬ" }),
+          makeEntry({
+            id: "e2",
+            originalIndex: 1,
+            word: "いぬ",
+            normalizedWord: "いぬ",
+          }),
         ]),
       });
 
-      const next = harness.dom.resultsList.querySelector<HTMLButtonElement>('[data-decision-action="known"]');
+      const next = harness.dom.resultsList.querySelector<HTMLButtonElement>(
+        '[data-decision-action="known"]',
+      );
       expect(next?.dataset.word).toBe("いぬ");
       expect(document.activeElement).toBe(next);
     } finally {
@@ -509,7 +597,10 @@ describe("post-action focus restoration", () => {
   it("focuses the results heading when the last entry disappears with no successor", () => {
     const harness = setup({
       ...datasetReady(),
-      query: { ...createInitialAppState("memory").query, decision: "unreviewed" },
+      query: {
+        ...createInitialAppState("memory").query,
+        decision: "unreviewed",
+      },
       ...listResult([makeEntry()]),
     });
     try {
@@ -532,7 +623,8 @@ describe("post-action focus restoration", () => {
   });
 
   it("does not re-apply a stale focus intent on a later unrelated render", () => {
-    const decidedResult = () => listResult([makeEntry({ decision: "known", known: true, knownByDecision: true })]);
+    const decidedResult = () =>
+      listResult([makeEntry({ decision: "known", known: true, knownByDecision: true })]);
     const harness = setup({ ...datasetReady(), ...listResult([makeEntry()]) });
     try {
       const known = decisionButton(harness.dom.resultsList, "known");
@@ -557,7 +649,15 @@ describe("post-action focus restoration", () => {
       // must not steal focus back to the entry: the one-shot intent is spent,
       // so focus falls back to <body>.
       harness.controller.publishState({
-        ...listResult([makeEntry({ id: "entry-9", originalIndex: 9, decision: "known", known: true, knownByDecision: true })]),
+        ...listResult([
+          makeEntry({
+            id: "entry-9",
+            originalIndex: 9,
+            decision: "known",
+            known: true,
+            knownByDecision: true,
+          }),
+        ]),
       });
       expect(document.activeElement).not.toBe(decisionButton(harness.dom.resultsList, "known"));
       expect(document.activeElement).toBe(document.body);
@@ -567,7 +667,9 @@ describe("post-action focus restoration", () => {
   });
 
   it("drops the focus intent once the user moves focus anywhere", () => {
-    const decided = listResult([makeEntry({ decision: "known", known: true, knownByDecision: true })]);
+    const decided = listResult([
+      makeEntry({ decision: "known", known: true, knownByDecision: true }),
+    ]);
     const harness = setup({ ...datasetReady(), ...listResult([makeEntry()]) });
     try {
       const known = decisionButton(harness.dom.resultsList, "known");
@@ -601,10 +703,17 @@ describe("post-action focus restoration", () => {
 
 describe("sentence integrity with decision controls", () => {
   it("leaves sentence text and target highlight markup unchanged", () => {
-    const dom = seedDom();
-    const view = { ...createInitialAppState("memory").view, showHighlight: true };
+    const _dom = seedDom();
+    const view = {
+      ...createInitialAppState("memory").view,
+      showHighlight: true,
+    };
     const plain = renderEntryNode(makeEntry({ decision: "unreviewed" }), 1, view);
-    const decided = renderEntryNode(makeEntry({ decision: "known", known: true, knownByDecision: true }), 1, view);
+    const decided = renderEntryNode(
+      makeEntry({ decision: "known", known: true, knownByDecision: true }),
+      1,
+      view,
+    );
 
     const plainSentence = plain.querySelector(".sentence");
     const decidedSentence = decided.querySelector(".sentence");
@@ -613,7 +722,9 @@ describe("sentence integrity with decision controls", () => {
     const highlight = decidedSentence?.querySelector(".target-highlight");
     expect(highlight?.textContent).toBe("言葉");
     expect(decidedSentence?.querySelectorAll("button")).toHaveLength(0);
-    expect(decidedSentence?.querySelectorAll(".entry-decision, .entry-badge, .entry-actions")).toHaveLength(0);
+    expect(
+      decidedSentence?.querySelectorAll(".entry-decision, .entry-badge, .entry-actions"),
+    ).toHaveLength(0);
     expect(decidedSentence?.textContent).toContain("が好き。");
   });
 });
@@ -673,8 +784,15 @@ describe("review mode ui", () => {
     try {
       harness.controller.publishState({
         dataset: {
-          id: "d1", name: "book.csv", sourceType: "file", sourceName: "book.csv",
-          headers: ["Word"], entryCount: 3, createdAt: "x", updatedAt: "x", schemaVersion: 1,
+          id: "d1",
+          name: "book.csv",
+          sourceType: "file",
+          sourceName: "book.csv",
+          headers: ["Word"],
+          entryCount: 3,
+          createdAt: "x",
+          updatedAt: "x",
+          schemaVersion: 1,
         },
         status: "ready",
       });
@@ -691,10 +809,19 @@ describe("review mode ui", () => {
       expect(harness.dom.reviewOverlay.hidden).toBe(false);
       expect(harness.dom.reviewOverlay.getAttribute("role")).toBe("dialog");
       expect(harness.dom.reviewOverlay.getAttribute("aria-modal")).toBe("true");
-      expect(harness.dom.reviewContent.querySelector(".review-entry .target-word")?.textContent).toBe("言葉");
-      expect(harness.dom.reviewContent.querySelector(".sentence")?.textContent).toContain("が好き。");
+      expect(
+        harness.dom.reviewContent.querySelector(".review-entry .target-word")?.textContent,
+      ).toBe("言葉");
+      expect(harness.dom.reviewContent.querySelector(".sentence")?.textContent).toContain(
+        "が好き。",
+      );
       expect(harness.dom.reviewProgress.textContent).toBe("0 processed · 3 remaining");
-      for (const button of [harness.dom.reviewKnown, harness.dom.reviewMined, harness.dom.reviewSkip, harness.dom.reviewLater]) {
+      for (const button of [
+        harness.dom.reviewKnown,
+        harness.dom.reviewMined,
+        harness.dom.reviewSkip,
+        harness.dom.reviewLater,
+      ]) {
         expect(button.disabled).toBe(false);
       }
     } finally {
@@ -719,12 +846,24 @@ describe("review mode ui", () => {
       harness.controller.publishState({
         status: "ready",
         dataset: {
-          id: "d1", name: "book.csv", sourceType: "file", sourceName: "book.csv",
-          headers: ["Word"], entryCount: 3, createdAt: "x", updatedAt: "x", schemaVersion: 1,
+          id: "d1",
+          name: "book.csv",
+          sourceType: "file",
+          sourceName: "book.csv",
+          headers: ["Word"],
+          entryCount: 3,
+          createdAt: "x",
+          updatedAt: "x",
+          schemaVersion: 1,
         },
         review: {
-          active: false, initialTotal: 0, processed: 0, remaining: 0,
-          current: null, status: "idle", errorMessage: null,
+          active: false,
+          initialTotal: 0,
+          processed: 0,
+          remaining: 0,
+          current: null,
+          status: "idle",
+          errorMessage: null,
         },
       });
       expect(document.activeElement).toBe(harness.dom.reviewButton);
@@ -736,12 +875,19 @@ describe("review mode ui", () => {
   });
 
   it("shows the completion copy and return button when nothing remains", () => {
-    const harness = setup(reviewState({
-      status: "complete", current: null, processed: 3, remaining: 0,
-    }));
+    const harness = setup(
+      reviewState({
+        status: "complete",
+        current: null,
+        processed: 3,
+        remaining: 0,
+      }),
+    );
     try {
       expect(harness.dom.reviewComplete.hidden).toBe(false);
-      expect(harness.dom.reviewComplete.textContent).toContain("No unreviewed candidates remain for the current filters.");
+      expect(harness.dom.reviewComplete.textContent).toContain(
+        "No unreviewed candidates remain for the current filters.",
+      );
       expect(harness.dom.reviewContent.hidden).toBe(true);
       harness.dom.reviewReturn.dispatchEvent(new Event("click"));
       expect(harness.controller.calls.stopReview).toBe(1);
@@ -751,21 +897,32 @@ describe("review mode ui", () => {
   });
 
   it("renders review error alongside current card with alert semantics", () => {
-    const harness = setup(reviewState({
-      current: makeEntry(),
-      errorMessage: "Word decision could not be saved: boom",
-    }));
+    const harness = setup(
+      reviewState({
+        current: makeEntry(),
+        errorMessage: "Word decision could not be saved: boom",
+      }),
+    );
     try {
       const alert = harness.dom.reviewContent.querySelector('[role="alert"]');
       expect(alert).not.toBeNull();
       expect(alert?.classList.contains("review-error")).toBe(true);
       expect(alert?.textContent).toContain("could not be saved");
-      expect(harness.dom.reviewContent.querySelector(".review-entry .target-word")?.textContent).toBe("言葉");
+      expect(
+        harness.dom.reviewContent.querySelector(".review-entry .target-word")?.textContent,
+      ).toBe("言葉");
       // The alert region is appended after the card, which stays visible.
       expect(harness.dom.reviewContent.lastElementChild).toBe(alert);
-      expect(harness.dom.reviewContent.firstElementChild?.classList.contains("review-entry")).toBe(true);
+      expect(harness.dom.reviewContent.firstElementChild?.classList.contains("review-entry")).toBe(
+        true,
+      );
       // Status returned to "ready" after the failed save, so retry stays possible.
-      for (const button of [harness.dom.reviewKnown, harness.dom.reviewMined, harness.dom.reviewSkip, harness.dom.reviewLater]) {
+      for (const button of [
+        harness.dom.reviewKnown,
+        harness.dom.reviewMined,
+        harness.dom.reviewSkip,
+        harness.dom.reviewLater,
+      ]) {
         expect(button.disabled).toBe(false);
       }
     } finally {
@@ -774,11 +931,13 @@ describe("review mode ui", () => {
   });
 
   it("renders error alone when no current card", () => {
-    const harness = setup(reviewState({
-      current: null,
-      status: "error",
-      errorMessage: "Review query failed",
-    }));
+    const harness = setup(
+      reviewState({
+        current: null,
+        status: "error",
+        errorMessage: "Review query failed",
+      }),
+    );
     try {
       const alert = harness.dom.reviewContent.querySelector('[role="alert"]');
       expect(alert).not.toBeNull();
@@ -842,7 +1001,13 @@ describe("review mode ui", () => {
       expect(document.activeElement).toBe(harness.dom.reviewExit);
 
       harness.dom.reviewExit.focus();
-      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true }));
+      document.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Tab",
+          shiftKey: true,
+          bubbles: true,
+        }),
+      );
       expect(document.activeElement).toBe(harness.dom.reviewLater);
     } finally {
       harness.dispose();
@@ -850,7 +1015,10 @@ describe("review mode ui", () => {
   });
 
   it("background is inert while review is open and inert clears on close", () => {
-    const harness = setup({ ...datasetReady(), ...reviewState({ current: makeEntry() }) });
+    const harness = setup({
+      ...datasetReady(),
+      ...reviewState({ current: makeEntry() }),
+    });
     const appShell = document.querySelector("main.app-shell");
     expect(appShell).not.toBeNull();
     try {
@@ -859,8 +1027,13 @@ describe("review mode ui", () => {
       harness.controller.publishState({
         ...datasetReady(),
         review: {
-          active: false, initialTotal: 0, processed: 0, remaining: 0,
-          current: null, status: "idle", errorMessage: null,
+          active: false,
+          initialTotal: 0,
+          processed: 0,
+          remaining: 0,
+          current: null,
+          status: "idle",
+          errorMessage: null,
         },
       });
       expect(appShell?.hasAttribute("inert")).toBe(false);
@@ -893,12 +1066,24 @@ describe("review mode ui", () => {
       harness.controller.publishState({
         status: "ready",
         review: {
-          active: false, initialTotal: 0, processed: 0, remaining: 0,
-          current: null, status: "idle", errorMessage: null,
+          active: false,
+          initialTotal: 0,
+          processed: 0,
+          remaining: 0,
+          current: null,
+          status: "idle",
+          errorMessage: null,
         },
         dataset: {
-          id: "d1", name: "book.csv", sourceType: "file", sourceName: "book.csv",
-          headers: ["Word"], entryCount: 3, createdAt: "x", updatedAt: "x", schemaVersion: 1,
+          id: "d1",
+          name: "book.csv",
+          sourceType: "file",
+          sourceName: "book.csv",
+          headers: ["Word"],
+          entryCount: 3,
+          createdAt: "x",
+          updatedAt: "x",
+          schemaVersion: 1,
         },
       });
       expect(harness.dom.reviewButton.disabled).toBe(false);

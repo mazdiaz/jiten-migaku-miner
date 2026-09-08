@@ -1,18 +1,28 @@
-import { parseJitenCsv } from "../domain/import";
 import { buildEffectiveKnownIndex, computeCoverage } from "../domain/coverage";
-import { canonicalWord, isKanaOnly, normalizeText, parseKnownWords, sentencePlain } from "../domain/text";
+import { parseJitenCsv } from "../domain/import";
 import { paginateEntries } from "../domain/query";
+import {
+  canonicalWord,
+  isKanaOnly,
+  normalizeText,
+  parseKnownWords,
+  sentencePlain,
+} from "../domain/text";
 import type { Entry, EntryWithKnown, QueryState, WordDecisionStatus } from "../domain/types";
 import {
-  WORKER_IMPORT_CHUNK_SIZE,
-  WORKER_PROTOCOL_VERSION,
   type CoverageRequest,
   type QueryRequest,
   type SendResponse,
+  WORKER_IMPORT_CHUNK_SIZE,
+  WORKER_PROTOCOL_VERSION,
   type WorkerResponse,
 } from "./protocol";
 
-export type WorkerEngineErrorCode = "dataset-not-found" | "dataset-not-ready" | "invalid-chunk" | "disposed";
+export type WorkerEngineErrorCode =
+  | "dataset-not-found"
+  | "dataset-not-ready"
+  | "invalid-chunk"
+  | "disposed";
 
 export class WorkerEngineError extends Error {
   readonly code: WorkerEngineErrorCode;
@@ -83,12 +93,15 @@ function sortedIndexes(entries: readonly Entry[], mode: QueryState["sort"]): num
   indexes.sort((leftIndex, rightIndex) => {
     const left = entries[leftIndex];
     const right = entries[rightIndex];
-    if (left === undefined || right === undefined) return left === right ? leftIndex - rightIndex : left === undefined ? 1 : -1;
+    if (left === undefined || right === undefined)
+      return left === right ? leftIndex - rightIndex : left === undefined ? 1 : -1;
 
-    if (mode === "original") return left.originalIndex - right.originalIndex || leftIndex - rightIndex;
-    const difference = mode === "occ-asc"
-      ? occurrenceCount(left) - occurrenceCount(right)
-      : occurrenceCount(right) - occurrenceCount(left);
+    if (mode === "original")
+      return left.originalIndex - right.originalIndex || leftIndex - rightIndex;
+    const difference =
+      mode === "occ-asc"
+        ? occurrenceCount(left) - occurrenceCount(right)
+        : occurrenceCount(right) - occurrenceCount(left);
     return difference || left.originalIndex - right.originalIndex || leftIndex - rightIndex;
   });
   return indexes;
@@ -125,7 +138,9 @@ function windowCacheSignature(
     minOccurrences: request.query.minOccurrences,
     sort: request.query.sort,
     includeNormalizedWords:
-      request.includeNormalizedWords === undefined ? null : [...request.includeNormalizedWords].sort(),
+      request.includeNormalizedWords === undefined
+        ? null
+        : [...request.includeNormalizedWords].sort(),
   });
 }
 
@@ -143,7 +158,12 @@ export class WorkerEngine {
   // refuse to publish results or write the cache afterwards.
   private datasetGeneration = 0;
 
-  async importJiten(requestId: string, name: string, text: string, send: SendResponse): Promise<void> {
+  async importJiten(
+    requestId: string,
+    name: string,
+    text: string,
+    send: SendResponse,
+  ): Promise<void> {
     this.ensureUsable();
     this.activeOperations.add(requestId);
     try {
@@ -179,7 +199,12 @@ export class WorkerEngine {
     }
   }
 
-  async importKnown(requestId: string, name: string, text: string, send: SendResponse): Promise<void> {
+  async importKnown(
+    requestId: string,
+    name: string,
+    text: string,
+    send: SendResponse,
+  ): Promise<void> {
     this.ensureUsable();
     this.activeOperations.add(requestId);
     try {
@@ -215,8 +240,10 @@ export class WorkerEngine {
 
   loadStart(datasetId: string, requestId = datasetId): void {
     this.ensureUsable();
-    if (datasetId.length === 0) throw new WorkerEngineError("dataset-not-ready", "Dataset ID must not be empty");
-    if (requestId.length === 0) throw new WorkerEngineError("dataset-not-ready", "Load request ID must not be empty");
+    if (datasetId.length === 0)
+      throw new WorkerEngineError("dataset-not-ready", "Dataset ID must not be empty");
+    if (requestId.length === 0)
+      throw new WorkerEngineError("dataset-not-ready", "Load request ID must not be empty");
 
     const previousDatasetId = this.loadRequests.get(requestId);
     if (previousDatasetId !== undefined) {
@@ -236,13 +263,19 @@ export class WorkerEngine {
     this.ensureUsable();
     const dataset = this.staging.get(datasetId);
     if (dataset === undefined || dataset.loadRequestId !== requestId) {
-      throw new WorkerEngineError("dataset-not-ready", `Dataset has not been started: ${datasetId}`);
+      throw new WorkerEngineError(
+        "dataset-not-ready",
+        `Dataset has not been started: ${datasetId}`,
+      );
     }
     if (!Number.isInteger(chunkIndex) || chunkIndex !== dataset.nextChunkIndex) {
       throw new WorkerEngineError("invalid-chunk", `Unexpected dataset chunk index: ${chunkIndex}`);
     }
     if (entries.length > WORKER_IMPORT_CHUNK_SIZE) {
-      throw new WorkerEngineError("invalid-chunk", `Dataset chunks cannot exceed ${WORKER_IMPORT_CHUNK_SIZE} entries`);
+      throw new WorkerEngineError(
+        "invalid-chunk",
+        `Dataset chunks cannot exceed ${WORKER_IMPORT_CHUNK_SIZE} entries`,
+      );
     }
 
     for (const value of entries) {
@@ -256,7 +289,10 @@ export class WorkerEngine {
     this.ensureUsable();
     const dataset = this.staging.get(datasetId);
     if (dataset === undefined || dataset.loadRequestId !== requestId) {
-      throw new WorkerEngineError("dataset-not-ready", `Dataset has not been started: ${datasetId}`);
+      throw new WorkerEngineError(
+        "dataset-not-ready",
+        `Dataset has not been started: ${datasetId}`,
+      );
     }
 
     dataset.sortIndexes = {
@@ -298,7 +334,10 @@ export class WorkerEngine {
         throw new WorkerEngineError("dataset-not-found", `Dataset not found: ${request.datasetId}`);
       }
       if (!dataset.complete) {
-        throw new WorkerEngineError("dataset-not-ready", `Dataset is not complete: ${request.datasetId}`);
+        throw new WorkerEngineError(
+          "dataset-not-ready",
+          `Dataset is not complete: ${request.datasetId}`,
+        );
       }
       this.refreshDatasetRecency(request.datasetId, dataset);
 
@@ -325,7 +364,13 @@ export class WorkerEngine {
         decisionByIndex = scan.decisionByIndex;
         knownCount = scan.knownCount;
         if (generation !== this.datasetGeneration) return;
-        this.windowCache = { signature, orderedIndexes, knownByMigakuByIndex, decisionByIndex, knownCount };
+        this.windowCache = {
+          signature,
+          orderedIndexes,
+          knownByMigakuByIndex,
+          decisionByIndex,
+          knownCount,
+        };
       }
 
       const entryWithMetadata = (entryIndex: number, value: Entry): EntryWithKnown => {
@@ -342,7 +387,10 @@ export class WorkerEngine {
       };
 
       if (request.window !== undefined) {
-        const start = Math.min(orderedIndexes.length, Math.max(0, Math.floor(request.window.start)));
+        const start = Math.min(
+          orderedIndexes.length,
+          Math.max(0, Math.floor(request.window.start)),
+        );
         const end = Math.min(orderedIndexes.length, start + Math.floor(request.window.size));
         const items: EntryWithKnown[] = [];
         for (let offset = start; offset < end; offset += 1) {
@@ -392,7 +440,11 @@ export class WorkerEngine {
         if (entryIndex === undefined) continue;
         const value = dataset.entries[entryIndex];
         if (value !== undefined) items.push(entryWithMetadata(entryIndex, value));
-        if ((offset + 1) % WORKER_IMPORT_CHUNK_SIZE === 0 && await this.chunkFinished(request.requestId)) return;
+        if (
+          (offset + 1) % WORKER_IMPORT_CHUNK_SIZE === 0 &&
+          (await this.chunkFinished(request.requestId))
+        )
+          return;
       }
       if (await this.chunkFinished(request.requestId)) return;
       if (this.isCancelled(request.requestId)) return;
@@ -422,7 +474,10 @@ export class WorkerEngine {
         throw new WorkerEngineError("dataset-not-found", `Dataset not found: ${request.datasetId}`);
       }
       if (!dataset.complete) {
-        throw new WorkerEngineError("dataset-not-ready", `Dataset is not complete: ${request.datasetId}`);
+        throw new WorkerEngineError(
+          "dataset-not-ready",
+          `Dataset is not complete: ${request.datasetId}`,
+        );
       }
       this.refreshDatasetRecency(request.datasetId, dataset);
 
@@ -476,9 +531,10 @@ export class WorkerEngine {
     const decisionsLower = new Map<string, WordDecisionStatus>();
     for (const [word, status] of decisions) decisionsLower.set(canonicalWord(word), status);
     const isEffectivelyKnown = buildEffectiveKnownIndex(knownWords, decisions);
-    const includeLower = request.includeNormalizedWords === undefined
-      ? null
-      : new Set(request.includeNormalizedWords.map((word) => canonicalWord(word)));
+    const includeLower =
+      request.includeNormalizedWords === undefined
+        ? null
+        : new Set(request.includeNormalizedWords.map((word) => canonicalWord(word)));
     const search = normalizeText(request.query.search).toLocaleLowerCase();
     const minimumOccurrences = Number.isFinite(request.query.minOccurrences)
       ? Math.max(0, request.query.minOccurrences)
@@ -513,7 +569,11 @@ export class WorkerEngine {
         !(request.query.decision !== "all" && decision !== request.query.decision);
 
       if (passes) matching.add(index);
-      if ((index + 1) % WORKER_IMPORT_CHUNK_SIZE === 0 && await this.chunkFinished(request.requestId)) return null;
+      if (
+        (index + 1) % WORKER_IMPORT_CHUNK_SIZE === 0 &&
+        (await this.chunkFinished(request.requestId))
+      )
+        return null;
     }
     if (await this.chunkFinished(request.requestId)) return null;
 
@@ -522,11 +582,20 @@ export class WorkerEngine {
     for (let index = 0; index < indexes.length; index += 1) {
       const entryIndex = indexes[index];
       if (entryIndex !== undefined && matching.has(entryIndex)) orderedIndexes.push(entryIndex);
-      if ((index + 1) % WORKER_IMPORT_CHUNK_SIZE === 0 && await this.chunkFinished(request.requestId)) return null;
+      if (
+        (index + 1) % WORKER_IMPORT_CHUNK_SIZE === 0 &&
+        (await this.chunkFinished(request.requestId))
+      )
+        return null;
     }
     if (await this.chunkFinished(request.requestId)) return null;
 
-    return { orderedIndexes, knownByMigakuByIndex, decisionByIndex, knownCount };
+    return {
+      orderedIndexes,
+      knownByMigakuByIndex,
+      decisionByIndex,
+      knownCount,
+    };
   }
 
   cancel(requestId: string): void {
@@ -592,7 +661,11 @@ export class WorkerEngine {
     values: readonly T[],
     sendChunk: (chunkIndex: number, values: T[]) => void,
   ): Promise<boolean> {
-    for (let offset = 0, chunkIndex = 0; offset < values.length; offset += WORKER_IMPORT_CHUNK_SIZE, chunkIndex += 1) {
+    for (
+      let offset = 0, chunkIndex = 0;
+      offset < values.length;
+      offset += WORKER_IMPORT_CHUNK_SIZE, chunkIndex += 1
+    ) {
       if (this.isCancelled(requestId)) return false;
       sendChunk(chunkIndex, values.slice(offset, offset + WORKER_IMPORT_CHUNK_SIZE));
       if (await this.chunkFinished(requestId)) return false;
@@ -600,4 +673,3 @@ export class WorkerEngine {
     return !this.isCancelled(requestId);
   }
 }
-

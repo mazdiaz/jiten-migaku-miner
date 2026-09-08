@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
-import type { CoverageStats, Entry, QueryResult, QueryState } from "../../src/domain/types";
 import {
   createWorkerClient,
   type WorkerClientEvent,
   type WorkerLike,
   type WorkerQueryInput,
 } from "../../src/app/worker-client";
+import type { CoverageStats, Entry, QueryResult, QueryState } from "../../src/domain/types";
 import type {
   ImportCompleteResponse,
   WorkerRequest,
@@ -32,7 +32,10 @@ class FakeWorker implements WorkerLike {
     (type === "message" ? this.messageListeners : this.errorListeners).push(listener);
   }
 
-  removeEventListener(type: "message" | "error", listener: (event: WorkerClientEvent) => void): void {
+  removeEventListener(
+    type: "message" | "error",
+    listener: (event: WorkerClientEvent) => void,
+  ): void {
     const listeners = type === "message" ? this.messageListeners : this.errorListeners;
     const index = listeners.indexOf(listener);
     if (index >= 0) listeners.splice(index, 1);
@@ -78,7 +81,7 @@ function queryResult(page: number): QueryResult {
 
 function queryResponse(requestId: string, page: number): WorkerResponse {
   return {
-    protocolVersion: 1,
+    protocolVersion: 2,
     type: "query-result",
     requestId,
     datasetId: "dataset-1",
@@ -96,14 +99,19 @@ function coverageStats(): CoverageStats {
     unknownTrackedOccurrences: 50,
     coveragePercent: 50,
     targets: [
-      { targetPercent: 98, reached: false, additionalWords: 2, additionalTrackedOccurrences: 48 },
+      {
+        targetPercent: 98,
+        reached: false,
+        additionalWords: 2,
+        additionalTrackedOccurrences: 48,
+      },
     ],
   };
 }
 
 function coverageResponse(requestId: string, result: CoverageStats): WorkerResponse {
   return {
-    protocolVersion: 1,
+    protocolVersion: 2,
     type: "coverage-result",
     requestId,
     datasetId: "dataset-1",
@@ -133,7 +141,7 @@ describe("worker client", () => {
     const secondRequest = queryRequests[1];
     expect(secondRequest?.type).toBe("query");
     expect(worker.messages).toContainEqual({
-      protocolVersion: 1,
+      protocolVersion: 2,
       type: "cancel",
       requestId: firstRequest?.requestId,
     });
@@ -153,10 +161,10 @@ describe("worker client", () => {
     const importing = client.importJiten("media.csv", "Word\n猫", (chunk) => chunks.push(chunk));
     const request = worker.messages[0];
     expect(request?.type).toBe("import-jiten");
-    if (!request || request.type !== "import-jiten") throw new Error("missing import request");
+    if (request?.type !== "import-jiten") throw new Error("missing import request");
 
     worker.emit({
-      protocolVersion: 1,
+      protocolVersion: 2,
       type: "import-chunk",
       requestId: request.requestId,
       kind: "jiten",
@@ -165,7 +173,7 @@ describe("worker client", () => {
       entries: [],
     });
     const complete: Extract<ImportCompleteResponse, { kind: "jiten" }> = {
-      protocolVersion: 1,
+      protocolVersion: 2,
       type: "import-complete",
       requestId: request.requestId,
       kind: "jiten",
@@ -197,12 +205,19 @@ describe("worker client", () => {
     const loading = client.loadDataset("dataset-1", chunks());
     const complete = await completePosted;
     let settled = false;
-    void loading.then(() => { settled = true; }, () => { settled = true; });
+    void loading.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
     await Promise.resolve();
     expect(settled).toBe(false);
     if (complete.type !== "load-complete") throw new Error("missing load completion request");
     worker.emit({
-      protocolVersion: 1,
+      protocolVersion: 2,
       type: "load-complete",
       requestId: complete.requestId,
       datasetId: complete.datasetId,
@@ -216,9 +231,11 @@ describe("worker client", () => {
       "load-chunk",
       "load-complete",
     ]);
-    expect(worker.messages.filter((message) => message.type === "load-chunk").map((message) =>
-      message.type === "load-chunk" ? message.chunkIndex : -1,
-    )).toEqual([0, 1]);
+    expect(
+      worker.messages
+        .filter((message) => message.type === "load-chunk")
+        .map((message) => (message.type === "load-chunk" ? message.chunkIndex : -1)),
+    ).toEqual([0, 1]);
   });
 
   it("rejects load errors and stops sending remaining load messages", async () => {
@@ -229,7 +246,7 @@ describe("worker client", () => {
       if (message.type === "load-chunk" && !errorSent) {
         errorSent = true;
         worker.emit({
-          protocolVersion: 1,
+          protocolVersion: 2,
           type: "error",
           requestId: message.requestId,
           code: "invalid-chunk",
@@ -238,10 +255,13 @@ describe("worker client", () => {
       }
     };
 
-    const loading = client.loadDataset("dataset-1", (async function* () {
-      yield [];
-      yield [];
-    })());
+    const loading = client.loadDataset(
+      "dataset-1",
+      (async function* () {
+        yield [];
+        yield [];
+      })(),
+    );
 
     await expect(loading).rejects.toThrow("load failed");
     expect(worker.messages.filter((message) => message.type === "load-chunk")).toHaveLength(1);
@@ -262,9 +282,9 @@ describe("worker client", () => {
     };
     process.on("unhandledRejection", onUnhandledRejection);
     try {
-      let openGate: () => void = () => {};
+      let _openGate: () => void = () => {};
       const gate = new Promise<void>((resolve) => {
-        openGate = resolve;
+        _openGate = resolve;
       });
       async function* gatedSource(): AsyncIterable<readonly Entry[]> {
         await gate;
@@ -275,7 +295,7 @@ describe("worker client", () => {
       const loadStart = worker.messages.find((message) => message.type === "load-start");
       if (loadStart?.type !== "load-start") throw new Error("missing load-start request");
       worker.emit({
-        protocolVersion: 1,
+        protocolVersion: 2,
         type: "error",
         requestId: loadStart.requestId,
         code: "invalid-chunk",
@@ -287,7 +307,9 @@ describe("worker client", () => {
           () => ({ kind: "resolved" as const }),
           (error) => ({ kind: "rejected" as const, error }),
         ),
-        new Promise<{ kind: "timeout" }>((resolve) => setTimeout(() => resolve({ kind: "timeout" }), 50)),
+        new Promise<{ kind: "timeout" }>((resolve) =>
+          setTimeout(() => resolve({ kind: "timeout" }), 50),
+        ),
       ]);
 
       expect(outcome.kind).toBe("rejected");
@@ -331,7 +353,7 @@ describe("worker client", () => {
     const loadStart = worker.messages.find((message) => message.type === "load-start");
     if (loadStart?.type !== "load-start") throw new Error("missing load-start request");
     worker.emit({
-      protocolVersion: 1,
+      protocolVersion: 2,
       type: "error",
       requestId: loadStart.requestId,
       code: "invalid-chunk",
@@ -343,7 +365,9 @@ describe("worker client", () => {
         () => ({ kind: "resolved" as const }),
         (error) => ({ kind: "rejected" as const, error }),
       ),
-      new Promise<{ kind: "timeout" }>((resolve) => setTimeout(() => resolve({ kind: "timeout" }), 50)),
+      new Promise<{ kind: "timeout" }>((resolve) =>
+        setTimeout(() => resolve({ kind: "timeout" }), 50),
+      ),
     ]);
     expect(outcome.kind).toBe("rejected");
 
@@ -354,7 +378,10 @@ describe("worker client", () => {
     expect(returnInvoked).toBe(true);
   });
 
-  function countingSource(chunks: number, returns: { count: number }): AsyncIterable<readonly Entry[]> {
+  function countingSource(
+    chunks: number,
+    returns: { count: number },
+  ): AsyncIterable<readonly Entry[]> {
     return {
       [Symbol.asyncIterator]: () => {
         let produced = 0;
@@ -380,7 +407,7 @@ describe("worker client", () => {
     worker.postHook = (message) => {
       if (message.type === "load-complete") {
         worker.emit({
-          protocolVersion: 1,
+          protocolVersion: 2,
           type: "load-complete",
           requestId: message.requestId,
           datasetId: message.datasetId,
@@ -403,7 +430,7 @@ describe("worker client", () => {
     const loadStart = worker.messages.find((message) => message.type === "load-start");
     if (loadStart?.type !== "load-start") throw new Error("missing load-start request");
     worker.emit({
-      protocolVersion: 1,
+      protocolVersion: 2,
       type: "error",
       requestId: loadStart.requestId,
       code: "invalid-chunk",
@@ -422,7 +449,9 @@ describe("worker client", () => {
       if (message.type === "load-chunk") throw new Error("postMessage failed");
     };
 
-    await expect(client.loadDataset("dataset-1", countingSource(3, returns))).rejects.toThrow("postMessage failed");
+    await expect(client.loadDataset("dataset-1", countingSource(3, returns))).rejects.toThrow(
+      "postMessage failed",
+    );
 
     expect(returns.count).toBe(1);
   });
@@ -433,7 +462,7 @@ describe("worker client", () => {
     worker.postHook = (message) => {
       if (message.type === "load-complete") {
         worker.emit({
-          protocolVersion: 1,
+          protocolVersion: 2,
           type: "load-complete",
           requestId: message.requestId,
           datasetId: message.datasetId,
@@ -441,17 +470,28 @@ describe("worker client", () => {
       }
     };
 
-    const loading = client.loadDataset("dataset-1", (async function* () {
-      yield [];
-    })());
+    const loading = client.loadDataset(
+      "dataset-1",
+      (async function* () {
+        yield [];
+      })(),
+    );
     const outcome = await Promise.race([
-      loading.then(() => ({ kind: "resolved" as const }), (error) => ({ kind: "rejected" as const, error })),
-      new Promise<{ kind: "timeout" }>((resolve) => setTimeout(() => resolve({ kind: "timeout" }), 50)),
+      loading.then(
+        () => ({ kind: "resolved" as const }),
+        (error) => ({ kind: "rejected" as const, error }),
+      ),
+      new Promise<{ kind: "timeout" }>((resolve) =>
+        setTimeout(() => resolve({ kind: "timeout" }), 50),
+      ),
     ]);
 
     expect(outcome.kind).toBe("rejected");
     if (outcome.kind === "rejected") {
-      expect(outcome.error).toMatchObject({ name: "WorkerClientError", code: "malformed-load-complete" });
+      expect(outcome.error).toMatchObject({
+        name: "WorkerClientError",
+        code: "malformed-load-complete",
+      });
     }
     expect(worker.messages).toContainEqual(expect.objectContaining({ type: "cancel" }));
   });
@@ -470,17 +510,28 @@ describe("worker client", () => {
       }
     };
 
-    const loading = client.loadDataset("dataset-1", (async function* () {
-      yield [];
-    })());
+    const loading = client.loadDataset(
+      "dataset-1",
+      (async function* () {
+        yield [];
+      })(),
+    );
     const outcome = await Promise.race([
-      loading.then(() => ({ kind: "resolved" as const }), (error) => ({ kind: "rejected" as const, error })),
-      new Promise<{ kind: "timeout" }>((resolve) => setTimeout(() => resolve({ kind: "timeout" }), 50)),
+      loading.then(
+        () => ({ kind: "resolved" as const }),
+        (error) => ({ kind: "rejected" as const, error }),
+      ),
+      new Promise<{ kind: "timeout" }>((resolve) =>
+        setTimeout(() => resolve({ kind: "timeout" }), 50),
+      ),
     ]);
 
     expect(outcome.kind).toBe("rejected");
     if (outcome.kind === "rejected") {
-      expect(outcome.error).toMatchObject({ name: "WorkerClientError", code: "malformed-load-complete" });
+      expect(outcome.error).toMatchObject({
+        name: "WorkerClientError",
+        code: "malformed-load-complete",
+      });
     }
     expect(worker.messages).toContainEqual(expect.objectContaining({ type: "cancel" }));
   });
@@ -503,8 +554,13 @@ describe("worker client", () => {
     });
     const userRequest = worker.messages[1];
 
-    if (candidateRequest?.type !== "query" || userRequest?.type !== "query") throw new Error("missing query requests");
-    expect(worker.messages).not.toContainEqual({ protocolVersion: 1, type: "cancel", requestId: candidateRequest.requestId });
+    if (candidateRequest?.type !== "query" || userRequest?.type !== "query")
+      throw new Error("missing query requests");
+    expect(worker.messages).not.toContainEqual({
+      protocolVersion: 2,
+      type: "cancel",
+      requestId: candidateRequest.requestId,
+    });
     worker.emit(queryResponse(candidateRequest.requestId, 1));
     worker.emit(queryResponse(userRequest.requestId, 1));
 
@@ -530,8 +586,13 @@ describe("worker client", () => {
     const candidate = client.query(candidateInput);
     const candidateRequest = worker.messages[1];
 
-    if (userRequest?.type !== "query" || candidateRequest?.type !== "query") throw new Error("missing query requests");
-    expect(worker.messages).not.toContainEqual({ protocolVersion: 1, type: "cancel", requestId: userRequest.requestId });
+    if (userRequest?.type !== "query" || candidateRequest?.type !== "query")
+      throw new Error("missing query requests");
+    expect(worker.messages).not.toContainEqual({
+      protocolVersion: 2,
+      type: "cancel",
+      requestId: userRequest.requestId,
+    });
     worker.emit(queryResponse(userRequest.requestId, 1));
     worker.emit(queryResponse(candidateRequest.requestId, 2));
 
@@ -548,7 +609,7 @@ describe("worker client", () => {
         worker.postHook = (message) => {
           if (message.type === "load-complete") {
             worker.emit({
-              protocolVersion: 1,
+              protocolVersion: 2,
               type: "load-complete",
               requestId: message.requestId,
               datasetId: message.datasetId,
@@ -565,14 +626,17 @@ describe("worker client", () => {
       knownWords: [],
       query: queryState(),
     });
-    workers[0]!.fail("worker crashed");
+    workers[0]?.fail("worker crashed");
 
     await expect(pending).rejects.toThrow("worker crashed");
-    expect(workers[0]!.terminated).toBe(true);
+    expect(workers[0]?.terminated).toBe(true);
 
-    await client.loadDataset("dataset-2", (async function* () {
-      yield [];
-    })());
+    await client.loadDataset(
+      "dataset-2",
+      (async function* () {
+        yield [];
+      })(),
+    );
     expect(workers).toHaveLength(2);
   });
 
@@ -589,14 +653,14 @@ describe("worker client", () => {
     });
     const request = worker.messages.find((message) => message.type === "coverage");
     expect(request).toMatchObject({
-      protocolVersion: 1,
+      protocolVersion: 2,
       type: "coverage",
       datasetId: "dataset-1",
       knownWords: ["猫", "犬"],
       decisions: [["鳥", "mined"]],
       targets: [98, 99],
     });
-    if (!request || request.type !== "coverage") throw new Error("missing coverage request");
+    if (request?.type !== "coverage") throw new Error("missing coverage request");
 
     worker.emit(coverageResponse(request.requestId, stats));
     await expect(pending).resolves.toEqual(stats);
@@ -608,8 +672,13 @@ describe("worker client", () => {
 
     const pending = client.coverage({ datasetId: "dataset-1", knownWords: [] });
     const request = worker.messages.find((message) => message.type === "coverage");
-    expect(request).toMatchObject({ type: "coverage", datasetId: "dataset-1", knownWords: [], decisions: [] });
-    if (!request || request.type !== "coverage") throw new Error("missing coverage request");
+    expect(request).toMatchObject({
+      type: "coverage",
+      datasetId: "dataset-1",
+      knownWords: [],
+      decisions: [],
+    });
+    if (request?.type !== "coverage") throw new Error("missing coverage request");
     expect("targets" in request).toBe(false);
 
     worker.emit(coverageResponse(request.requestId, coverageStats()));
@@ -625,7 +694,7 @@ describe("worker client", () => {
     if (!request) throw new Error("missing coverage request");
 
     worker.emit({
-      protocolVersion: 1,
+      protocolVersion: 2,
       type: "error",
       requestId: request.requestId,
       code: "dataset-not-found",
@@ -642,10 +711,20 @@ describe("worker client", () => {
     const worker = new FakeWorker();
     const client = createWorkerClient(() => worker);
 
-    const query = client.query({ datasetId: "dataset-1", knownWords: [], query: queryState() });
+    const query = client.query({
+      datasetId: "dataset-1",
+      knownWords: [],
+      query: queryState(),
+    });
     const queryRequestMessage = worker.messages.find((message) => message.type === "query");
-    const first = client.coverage({ datasetId: "dataset-1", knownWords: ["猫"] });
-    const second = client.coverage({ datasetId: "dataset-1", knownWords: ["猫", "犬"] });
+    const first = client.coverage({
+      datasetId: "dataset-1",
+      knownWords: ["猫"],
+    });
+    const second = client.coverage({
+      datasetId: "dataset-1",
+      knownWords: ["猫", "犬"],
+    });
     const coverageRequests = worker.messages.filter((message) => message.type === "coverage");
 
     expect(coverageRequests).toHaveLength(2);

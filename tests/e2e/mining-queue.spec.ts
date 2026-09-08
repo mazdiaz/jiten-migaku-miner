@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 
 const SMALL_CSV = "tests/fixtures/jiten-small.csv";
 const FOLLOWUP_CSV = "tests/fixtures/jiten-followup.csv";
@@ -20,7 +20,9 @@ async function queueWord(page: Page, word: string): Promise<void> {
 }
 
 test.describe("session mining queue", () => {
-  test("queues words, survives reload, mines in queue mode, and resets per dataset", async ({ page }) => {
+  test("queues words, survives reload, mines in queue mode, and resets per dataset", async ({
+    page,
+  }) => {
     // 1. Import fixture.
     await page.goto("/");
     await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
@@ -79,7 +81,9 @@ test.describe("session mining queue", () => {
     await page.locator("#exitQueue").click();
     await expect(page.locator("#queueHeader")).toBeHidden();
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
-    await expect(entryByWord(page, "気になる").locator(".entry-badge-decision")).toHaveText("Mined");
+    await expect(entryByWord(page, "気になる").locator(".entry-badge-decision")).toHaveText(
+      "Mined",
+    );
     await expect(entryByWord(page, "プール").locator(".entry-badge")).toHaveCount(0);
     await expect(entryByWord(page, "静か").locator(".entry-badge-decision")).toHaveText("Later");
     await expect(page.locator("#queueToggle")).toHaveText("Queue (0)");

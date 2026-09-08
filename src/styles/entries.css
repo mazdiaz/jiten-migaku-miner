@@ -20,7 +20,9 @@
   background: var(--surface-3);
 }
 
-.mining-entry:last-child { border-bottom: 0; }
+.mining-entry:last-child {
+  border-bottom: 0;
+}
 
 .entry-header {
   display: flex;
@@ -48,7 +50,10 @@
 }
 
 /* Native disclosure for truncated definition lists. */
-.entry-defs-details { display: inline-block; margin-top: 2px; }
+.entry-defs-details {
+  display: inline-block;
+  margin-top: 2px;
+}
 
 .entry-defs-details summary {
   color: var(--subtle);
@@ -58,9 +63,13 @@
 }
 
 .entry-defs-details summary:hover,
-.entry-defs-details summary:focus-visible { color: var(--muted); }
+.entry-defs-details summary:focus-visible {
+  color: var(--muted);
+}
 
-.entry-defs-full { margin-top: 4px; }
+.entry-defs-full {
+  margin-top: 4px;
+}
 
 .occurrence-count {
   flex: 0 0 auto;
@@ -120,7 +129,9 @@
   cursor: pointer;
 }
 
-.decision-button:hover:not(:disabled) { border-color: var(--accent); }
+.decision-button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
 
 .decision-button[aria-pressed="true"] {
   border-color: var(--accent);
@@ -162,9 +173,13 @@
   padding: 12px 16px 14px;
 }
 
-.density-compact .sentence { margin-top: 10px; }
+.density-compact .sentence {
+  margin-top: 10px;
+}
 
-.density-compact .entry-definitions { margin-top: 5px; }
+.density-compact .entry-definitions {
+  margin-top: 5px;
+}
 
 .density-compact .entry-actions {
   gap: 6px;
@@ -222,7 +237,7 @@
 }
 
 body.hl-pill .th-wrap {
-  background-color: rgba(139, 167, 255, 0.10);
+  background-color: rgba(139, 167, 255, 0.1);
   box-shadow: inset 0 0 0 1px rgba(139, 167, 255, 0.55);
 }
 
@@ -242,7 +257,7 @@ body.hl-pill .th-wrap.th-last {
 }
 
 body.hl-pill .target-highlight:not(:has(*)) {
-  background: rgba(139, 167, 255, 0.10);
+  background: rgba(139, 167, 255, 0.1);
   border: 1px solid rgba(139, 167, 255, 0.55);
   border-radius: 0.3em;
 }
@@ -260,10 +275,14 @@ body.hl-pill .target-highlight:not(:has(*)) {
   color: var(--muted);
 }
 
-[hidden] { display: none !important; }
+[hidden] {
+  display: none !important;
+}
 
 @media (max-width: 560px) {
-  .entry-header { flex-wrap: wrap; }
+  .entry-header {
+    flex-wrap: wrap;
+  }
 }
 
 .review-button {
@@ -277,7 +296,10 @@ body.hl-pill .target-highlight:not(:has(*)) {
   white-space: nowrap;
 }
 
-.review-button:hover:not(:disabled) { background: var(--accent); color: #10131a; }
+.review-button:hover:not(:disabled) {
+  background: var(--accent);
+  color: #10131a;
+}
 
 .review-button:disabled {
   opacity: 0.45;
@@ -295,9 +317,14 @@ body.hl-pill .target-highlight:not(:has(*)) {
   text-overflow: ellipsis;
 }
 
-.undo-button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.undo-button:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
 
-body.review-open { overflow: hidden; }
+body.review-open {
+  overflow: hidden;
+}
 
 .review-overlay {
   position: fixed;
@@ -324,7 +351,9 @@ body.review-open { overflow: hidden; }
   box-shadow: var(--shadow);
 }
 
-.review-panel:focus { outline: none; }
+.review-panel:focus {
+  outline: none;
+}
 
 .review-header {
   display: flex;
@@ -356,11 +385,17 @@ body.review-open { overflow: hidden; }
   cursor: pointer;
 }
 
-.review-exit:hover { border-color: var(--accent); }
+.review-exit:hover {
+  border-color: var(--accent);
+}
 
-.review-content { min-height: 120px; }
+.review-content {
+  min-height: 120px;
+}
 
-.review-entry .target-word { font-size: 1.6rem; }
+.review-entry .target-word {
+  font-size: 1.6rem;
+}
 
 .review-error {
   margin-top: 12px;
@@ -381,7 +416,9 @@ body.review-open { overflow: hidden; }
   color: var(--muted);
 }
 
-.review-complete p { margin: 0; }
+.review-complete p {
+  margin: 0;
+}
 
 .review-actions {
   display: grid;
@@ -399,7 +436,9 @@ body.review-open { overflow: hidden; }
   cursor: pointer;
 }
 
-.review-action:hover:not(:disabled) { border-color: var(--accent); }
+.review-action:hover:not(:disabled) {
+  border-color: var(--accent);
+}
 
 .review-action:disabled {
   opacity: 0.45;
@@ -407,7 +446,9 @@ body.review-open { overflow: hidden; }
 }
 
 /* Undo spans the full row beneath the four triage actions in the grid. */
-.review-undo { grid-column: 1 / -1; }
+.review-undo {
+  grid-column: 1 / -1;
+}
 
 .review-shortcut-note {
   margin: 0;
@@ -416,7 +457,9 @@ body.review-open { overflow: hidden; }
 }
 
 @media (max-width: 560px) {
-  .review-actions { grid-template-columns: repeat(2, 1fr); }
+  .review-actions {
+    grid-template-columns: repeat(2, 1fr);
+  }
 }
 
 .queue-button {
@@ -431,7 +474,9 @@ body.review-open { overflow: hidden; }
   cursor: pointer;
 }
 
-.queue-button:hover:not(:disabled) { border-color: var(--accent); }
+.queue-button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
 
 .queue-button[aria-pressed="true"] {
   border-color: var(--accent);
@@ -460,7 +505,9 @@ body.review-open { overflow: hidden; }
   text-transform: uppercase;
 }
 
-.queue-header .result-stats { margin: 0; }
+.queue-header .result-stats {
+  margin: 0;
+}
 
 .queue-actions {
   display: flex;
@@ -480,7 +527,9 @@ body.review-open { overflow: hidden; }
   cursor: pointer;
 }
 
-.queue-action:hover:not(:disabled) { border-color: var(--accent); }
+.queue-action:hover:not(:disabled) {
+  border-color: var(--accent);
+}
 
 .queue-action:disabled {
   opacity: 0.45;
@@ -498,7 +547,9 @@ body.review-open { overflow: hidden; }
   cursor: pointer;
 }
 
-.queue-toggle-button:hover { border-color: var(--accent); }
+.queue-toggle-button:hover {
+  border-color: var(--accent);
+}
 
 .queue-toggle-button[aria-pressed="true"] {
   border-color: var(--accent);
@@ -506,9 +557,13 @@ body.review-open { overflow: hidden; }
   color: var(--accent);
 }
 
-.queue-remove { margin-left: auto; }
+.queue-remove {
+  margin-left: auto;
+}
 
-body.queue-mode .queue-hidden { display: none !important; }
+body.queue-mode .queue-hidden {
+  display: none !important;
+}
 
 /* Small-screen refinements: queue actions become a full-width stretched row
    and every entry/queue/review/pager control meets the 44px touch-target
@@ -519,7 +574,9 @@ body.queue-mode .queue-hidden { display: none !important; }
     justify-content: stretch;
   }
 
-  .queue-actions .queue-action { flex: 1 1 auto; }
+  .queue-actions .queue-action {
+    flex: 1 1 auto;
+  }
 
   .decision-button,
   .queue-toggle-button,
@@ -533,4 +590,3 @@ body.queue-mode .queue-hidden { display: none !important; }
     min-width: 44px;
   }
 }
-

@@ -2,6 +2,7 @@ import {
   createErrorResponse,
   parseWorkerRequest,
   type SendResponse,
+  WORKER_PROTOCOL_VERSION,
   type WorkerRequest,
   type WorkerResponse,
 } from "./protocol";
@@ -43,7 +44,7 @@ export async function dispatchWorkerRequest(
       case "load-complete":
         engine.loadComplete(request.datasetId, request.requestId);
         send({
-          protocolVersion: 1,
+          protocolVersion: WORKER_PROTOCOL_VERSION,
           type: "load-complete",
           requestId: request.requestId,
           datasetId: request.datasetId,
@@ -77,7 +78,10 @@ interface WorkerScope {
 const workerScope = globalThis as unknown as WorkerScope;
 const engine = new WorkerEngine();
 
-if (typeof workerScope.addEventListener === "function" && typeof workerScope.postMessage === "function") {
+if (
+  typeof workerScope.addEventListener === "function" &&
+  typeof workerScope.postMessage === "function"
+) {
   workerScope.addEventListener("message", (event) => {
     void dispatchWorkerRequest(event.data, engine, (response) => workerScope.postMessage(response));
   });

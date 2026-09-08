@@ -7,11 +7,11 @@ import type {
   WordDecisionStatus,
 } from "../domain/types";
 import {
-  WORKER_PROTOCOL_VERSION,
   type CoverageRequest,
   type ImportChunkResponse,
   type ImportCompleteResponse,
   type QueryRequest,
+  WORKER_PROTOCOL_VERSION,
   type WorkerRequest,
   type WorkerResponse,
 } from "../worker/protocol";
@@ -26,7 +26,10 @@ export interface WorkerLike {
   postMessage(message: WorkerRequest): void;
   terminate(): void;
   addEventListener(type: "message" | "error", listener: (event: WorkerClientEvent) => void): void;
-  removeEventListener(type: "message" | "error", listener: (event: WorkerClientEvent) => void): void;
+  removeEventListener(
+    type: "message" | "error",
+    listener: (event: WorkerClientEvent) => void,
+  ): void;
 }
 
 export type WorkerFactory = () => WorkerLike;
@@ -81,7 +84,12 @@ export class WorkerClientError extends Error {
 }
 
 type OperationKind = "import-jiten" | "import-known" | "load" | "query" | "coverage";
-type PendingValue = JitenImportComplete | KnownImportComplete | QueryResult | CoverageStats | void;
+type PendingValue =
+  | JitenImportComplete
+  | KnownImportComplete
+  | QueryResult
+  | CoverageStats
+  | undefined;
 
 interface PendingOperation {
   kind: OperationKind;
@@ -99,9 +107,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isWorkerResponse(value: unknown): value is WorkerResponse {
   if (!isRecord(value)) return false;
-  if (value.protocolVersion !== WORKER_PROTOCOL_VERSION || typeof value.requestId !== "string") return false;
+  if (value.protocolVersion !== WORKER_PROTOCOL_VERSION || typeof value.requestId !== "string")
+    return false;
 
-  return value.type === "import-chunk" || value.type === "import-complete" || value.type === "load-complete" || value.type === "query-result" || value.type === "coverage-result" || value.type === "error";
+  return (
+    value.type === "import-chunk" ||
+    value.type === "import-complete" ||
+    value.type === "load-complete" ||
+    value.type === "query-result" ||
+    value.type === "coverage-result" ||
+    value.type === "error"
+  );
 }
 
 function messageFromError(error: unknown): string {
@@ -113,15 +129,19 @@ function messageFromError(error: unknown): string {
 function isValidLoadCompleteResponse(
   response: Extract<WorkerResponse, { type: "load-complete" }>,
 ): boolean {
-  return typeof response.datasetId === "string" &&
+  return (
+    typeof response.datasetId === "string" &&
     response.datasetId.length > 0 &&
     typeof response.entryCount === "number" &&
     Number.isSafeInteger(response.entryCount) &&
-    response.entryCount >= 0;
+    response.entryCount >= 0
+  );
 }
 
 function createBrowserWorker(): WorkerLike {
-  return new Worker(new URL("../worker/miner.worker.ts", import.meta.url), { type: "module" }) as unknown as WorkerLike;
+  return new Worker(new URL("../worker/miner.worker.ts", import.meta.url), {
+    type: "module",
+  }) as unknown as WorkerLike;
 }
 
 class BrowserWorkerClient implements WorkerClient {
@@ -143,7 +163,8 @@ class BrowserWorkerClient implements WorkerClient {
       pending.kind === "query" &&
       pending.queryChannel !== null &&
       response.requestId !== this.latestQueryIds.get(pending.queryChannel)
-    ) return;
+    )
+      return;
 
     if (response.type === "error") {
       this.pending.delete(response.requestId);
@@ -163,22 +184,34 @@ class BrowserWorkerClient implements WorkerClient {
       if (pending.kind !== "load") return;
       if (!isValidLoadCompleteResponse(response)) {
         this.pending.delete(response.requestId);
-        pending.reject(new WorkerClientError(
-          "malformed-load-complete",
-          "Worker returned an invalid load acknowledgement.",
-        ));
+        pending.reject(
+          new WorkerClientError(
+            "malformed-load-complete",
+            "Worker returned an invalid load acknowledgement.",
+          ),
+        );
         this.postCancel(response.requestId);
         return;
       }
       if (response.datasetId !== pending.datasetId) {
         this.pending.delete(response.requestId);
-        pending.reject(new WorkerClientError("load-dataset-mismatch", "Worker acknowledged a different dataset."));
+        pending.reject(
+          new WorkerClientError(
+            "load-dataset-mismatch",
+            "Worker acknowledged a different dataset.",
+          ),
+        );
         this.postCancel(response.requestId);
         return;
       }
       if (pending.expectedEntryCount !== response.entryCount) {
         this.pending.delete(response.requestId);
-        pending.reject(new WorkerClientError("load-count-mismatch", "Worker acknowledged an unexpected entry count."));
+        pending.reject(
+          new WorkerClientError(
+            "load-count-mismatch",
+            "Worker acknowledged an unexpected entry count.",
+          ),
+        );
         this.postCancel(response.requestId);
         return;
       }
@@ -191,7 +224,8 @@ class BrowserWorkerClient implements WorkerClient {
       if (
         (pending.kind === "import-jiten" && response.kind !== "jiten") ||
         (pending.kind === "import-known" && response.kind !== "known")
-      ) return;
+      )
+        return;
       if (pending.kind === "import-jiten" || pending.kind === "import-known") {
         try {
           pending.onChunk?.(response);
@@ -208,7 +242,8 @@ class BrowserWorkerClient implements WorkerClient {
       if (
         (pending.kind === "import-jiten" && response.kind !== "jiten") ||
         (pending.kind === "import-known" && response.kind !== "known")
-      ) return;
+      )
+        return;
       this.pending.delete(response.requestId);
       pending.resolve(response);
       return;
@@ -239,10 +274,12 @@ class BrowserWorkerClient implements WorkerClient {
     if (pending === undefined || pending.kind !== "load") return;
 
     this.pending.delete(value.requestId);
-    pending.reject(new WorkerClientError(
-      "malformed-load-complete",
-      "Worker returned an invalid load acknowledgement.",
-    ));
+    pending.reject(
+      new WorkerClientError(
+        "malformed-load-complete",
+        "Worker returned an invalid load acknowledgement.",
+      ),
+    );
     this.postCancel(value.requestId);
   }
 
@@ -313,7 +350,7 @@ class BrowserWorkerClient implements WorkerClient {
 
   async loadDataset(datasetId: string, chunks: AsyncIterable<readonly Entry[]>): Promise<void> {
     const requestId = this.requestId("load");
-    const result = this.register<void>(requestId, "load", undefined, 0, datasetId);
+    const result = this.register<undefined>(requestId, "load", undefined, 0, datasetId);
     // Mark the rejection handled while the loop below is blocked on the source
     // iterator and the caller has not awaited `result` yet.
     result.catch(() => {});
@@ -324,12 +361,15 @@ class BrowserWorkerClient implements WorkerClient {
     const rejectionGate = new Promise<void>((resolve) => {
       openRejectionGate = resolve;
     });
-    void result.then(() => {}, (reason: unknown) => {
-      rejected = true;
-      rejectionReason = reason;
-      openRejectionGate();
-    });
-    const rejectionSignal = rejectionGate.then(() => ({ loadRejected: true } as const));
+    void result.then(
+      () => {},
+      (reason: unknown) => {
+        rejected = true;
+        rejectionReason = reason;
+        openRejectionGate();
+      },
+    );
+    const rejectionSignal = rejectionGate.then(() => ({ loadRejected: true }) as const);
     const ignore = (): void => {};
     const iterator = chunks[Symbol.asyncIterator]();
     let sourceClosed = false;
@@ -406,14 +446,23 @@ class BrowserWorkerClient implements WorkerClient {
       const previous = this.pending.get(previousQueryId);
       if (previous?.kind === "query" && previous.queryChannel === queryChannel) {
         this.pending.delete(previousQueryId);
-        previous.reject(new WorkerClientError("stale-query", "Query was superseded by a newer request."));
+        previous.reject(
+          new WorkerClientError("stale-query", "Query was superseded by a newer request."),
+        );
       }
       this.postCancel(previousQueryId);
     }
 
     const requestId = this.requestId("query");
     this.latestQueryIds.set(queryChannel, requestId);
-    const result = this.register<QueryResult>(requestId, "query", undefined, undefined, undefined, queryChannel);
+    const result = this.register<QueryResult>(
+      requestId,
+      "query",
+      undefined,
+      undefined,
+      undefined,
+      queryChannel,
+    );
     const request: QueryRequest = {
       protocolVersion: WORKER_PROTOCOL_VERSION,
       type: "query",
@@ -423,7 +472,8 @@ class BrowserWorkerClient implements WorkerClient {
       decisions: input.decisions ?? [],
       query: { ...input.query },
     };
-    if (input.includeNormalizedWords !== undefined) request.includeNormalizedWords = [...input.includeNormalizedWords];
+    if (input.includeNormalizedWords !== undefined)
+      request.includeNormalizedWords = [...input.includeNormalizedWords];
     if (input.window !== undefined) request.window = input.window;
 
     try {

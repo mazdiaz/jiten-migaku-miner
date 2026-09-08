@@ -1,9 +1,4 @@
-import type {
-  Entry,
-  QueryState,
-  ViewState,
-  WordDecision,
-} from "../domain/types";
+import type { Entry, QueryState, ViewState, WordDecision } from "../domain/types";
 import type {
   AppStore,
   DatasetMetadata,
@@ -13,6 +8,7 @@ import type {
   RestoreUserStateSnapshot,
   WordDecisionStore,
 } from "./contracts";
+import { StorageUnavailableError } from "./fallback";
 
 export const INDEXED_DB_NAME = "jiten-migaku-miner";
 export const INDEXED_DB_VERSION = 2;
@@ -80,14 +76,15 @@ function cloneDecision(value: WordDecision): WordDecision {
 }
 
 function datasetRange(datasetId: string): IDBKeyRange {
-  return IDBKeyRange.bound(
-    [datasetId, 0],
-    [datasetId, Number.MAX_SAFE_INTEGER],
-  );
+  return IDBKeyRange.bound([datasetId, 0], [datasetId, Number.MAX_SAFE_INTEGER]);
 }
 
 function requestError(request: { error: DOMException | null }): Error {
-  return request.error ?? new Error("IndexedDB request failed");
+  return request.error === null
+    ? new StorageUnavailableError("IndexedDB request failed")
+    : new StorageUnavailableError(`IndexedDB request failed: ${request.error.message}`, {
+        cause: request.error,
+      });
 }
 
 function errorMessage(error: unknown): string {
@@ -97,7 +94,7 @@ function errorMessage(error: unknown): string {
 function openDatabase(name: string): Promise<IDBDatabase> {
   const factory = globalThis.indexedDB;
   if (!factory) {
-    return Promise.reject(new Error("IndexedDB is unavailable"));
+    return Promise.reject(new StorageUnavailableError("IndexedDB is unavailable"));
   }
 
   return new Promise((resolve, reject) => {
@@ -128,7 +125,7 @@ function openDatabase(name: string): Promise<IDBDatabase> {
       }
     };
     request.onerror = () => reject(requestError(request));
-    request.onblocked = () => reject(new Error("IndexedDB open was blocked"));
+    request.onblocked = () => reject(new StorageUnavailableError("IndexedDB open was blocked"));
     request.onsuccess = () => {
       const database = request.result;
       database.onversionchange = () => database.close();
@@ -197,17 +194,36 @@ function runTransaction<T>(
         return;
       }
       settled = true;
-      reject(transaction.error ?? new Error("IndexedDB transaction failed"));
+      reject(
+        transaction.error === null
+          ? new StorageUnavailableError("IndexedDB transaction failed")
+          : new StorageUnavailableError(
+              `IndexedDB transaction failed: ${transaction.error.message}`,
+              {
+                cause: transaction.error,
+              },
+            ),
+      );
     };
     transaction.onabort = () => {
       if (settled) {
         return;
       }
       settled = true;
+      // abortReason keeps its original identity: application code may have
+      // aborted the transaction with an invariant failure, and such errors
+      // must NOT be classified as storage-unavailable.
       reject(
         hasAbortReason
           ? abortReason
-          : transaction.error ?? new Error("IndexedDB transaction aborted"),
+          : transaction.error === null
+            ? new StorageUnavailableError("IndexedDB transaction aborted")
+            : new StorageUnavailableError(
+                `IndexedDB transaction aborted: ${transaction.error.message}`,
+                {
+                  cause: transaction.error,
+                },
+              ),
       );
     };
 
@@ -233,10 +249,7 @@ function metadataFromRecord(record: DatasetRecord): DatasetMetadata {
   };
 }
 
-async function readMeta(
-  database: IDBDatabase,
-  key: string,
-): Promise<string | null> {
+async function readMeta(database: IDBDatabase, key: string): Promise<string | null> {
   return runTransaction<string | null>(
     database,
     [META_STORE],
@@ -271,10 +284,7 @@ async function readDataset(
   );
 }
 
-async function cleanupDataset(
-  database: IDBDatabase,
-  datasetId: string,
-): Promise<void> {
+async function cleanupDataset(database: IDBDatabase, datasetId: string): Promise<void> {
   await runTransaction<void>(
     database,
     [DATASETS_STORE, ENTRY_CHUNKS_STORE, META_STORE],
@@ -300,10 +310,7 @@ class IndexedDbDatasetStore implements DatasetStore {
 
   constructor(private readonly databaseName: string) {}
 
-  async stage(
-    metadata: DatasetMetadata,
-    chunks: AsyncIterable<readonly Entry[]>,
-  ): Promise<void> {
+  async stage(metadata: DatasetMetadata, chunks: AsyncIterable<readonly Entry[]>): Promise<void> {
     if (this.stagingIds.has(metadata.id)) {
       throw new Error(`Dataset already exists: ${metadata.id}`);
     }
@@ -359,9 +366,9 @@ class IndexedDbDatasetStore implements DatasetStore {
             [DATASETS_STORE],
             "readwrite",
             (transaction, resolveResult, abort) => {
-              const request = transaction.objectStore(DATASETS_STORE).get(metadata.id) as IDBRequest<
-                DatasetRecord | undefined
-              >;
+              const request = transaction
+                .objectStore(DATASETS_STORE)
+                .get(metadata.id) as IDBRequest<DatasetRecord | undefined>;
               request.onsuccess = () => {
                 const current = request.result;
                 if (!current) {
@@ -452,10 +459,7 @@ class IndexedDbDatasetStore implements DatasetStore {
     });
   }
 
-  async *readChunks(
-    datasetId: string,
-    chunkSize: number,
-  ): AsyncGenerator<Entry[], void, unknown> {
+  async *readChunks(datasetId: string, chunkSize: number): AsyncGenerator<Entry[], void, unknown> {
     if (!Number.isInteger(chunkSize) || chunkSize <= 0) {
       throw new RangeError("chunkSize must be a positive integer");
     }
@@ -477,10 +481,9 @@ class IndexedDbDatasetStore implements DatasetStore {
           [ENTRY_CHUNKS_STORE],
           "readonly",
           (transaction, resolveResult) => {
-            const request = transaction.objectStore(ENTRY_CHUNKS_STORE).getAll(
-              range,
-              READ_BATCH_SIZE,
-            ) as IDBRequest<EntryChunkRecord[]>;
+            const request = transaction
+              .objectStore(ENTRY_CHUNKS_STORE)
+              .getAll(range, READ_BATCH_SIZE) as IDBRequest<EntryChunkRecord[]>;
             request.onsuccess = () => resolveResult(request.result);
           },
         ),
@@ -566,7 +569,11 @@ class IndexedDbKnownWordStore implements KnownWordStore {
     });
   }
 
-  async getActive(): Promise<{ id: string; name: string; words: Set<string> } | null> {
+  async getActive(): Promise<{
+    id: string;
+    name: string;
+    words: Set<string>;
+  } | null> {
     return withDatabase(this.databaseName, async (database) => {
       const activeId = await readMeta(database, ACTIVE_KNOWN_WORD_SET_KEY);
       if (activeId === null) {
@@ -578,9 +585,9 @@ class IndexedDbKnownWordStore implements KnownWordStore {
         [KNOWN_WORD_SETS_STORE],
         "readonly",
         (transaction, resolveResult) => {
-          const request = transaction.objectStore(KNOWN_WORD_SETS_STORE).get(activeId) as IDBRequest<
-            KnownWordSetRecord | undefined
-          >;
+          const request = transaction
+            .objectStore(KNOWN_WORD_SETS_STORE)
+            .get(activeId) as IDBRequest<KnownWordSetRecord | undefined>;
           request.onsuccess = () => resolveResult(request.result);
         },
       );
@@ -600,9 +607,12 @@ class IndexedDbKnownWordStore implements KnownWordStore {
         "readwrite",
         (transaction, resolveResult) => {
           transaction.objectStore(KNOWN_WORD_SETS_STORE).delete(id);
-          const request = transaction.objectStore(META_STORE).get(ACTIVE_KNOWN_WORD_SET_KEY) as IDBRequest<MetaRecord | undefined>;
+          const request = transaction
+            .objectStore(META_STORE)
+            .get(ACTIVE_KNOWN_WORD_SET_KEY) as IDBRequest<MetaRecord | undefined>;
           request.onsuccess = () => {
-            if (request.result?.value === id) transaction.objectStore(META_STORE).delete(ACTIVE_KNOWN_WORD_SET_KEY);
+            if (request.result?.value === id)
+              transaction.objectStore(META_STORE).delete(ACTIVE_KNOWN_WORD_SET_KEY);
             resolveResult(undefined);
           };
         },
@@ -629,16 +639,20 @@ class IndexedDbKnownWordStore implements KnownWordStore {
 class IndexedDbPreferencesStore implements PreferencesStore {
   constructor(private readonly databaseName: string) {}
 
-  async load(): Promise<{ query: QueryState; view: ViewState; page: number } | null> {
+  async load(): Promise<{
+    query: QueryState;
+    view: ViewState;
+    page: number;
+  } | null> {
     return withDatabase(this.databaseName, async (database) => {
       const record = await runTransaction<PreferencesRecord | undefined>(
         database,
         [PREFERENCES_STORE],
         "readonly",
         (transaction, resolveResult) => {
-          const request = transaction.objectStore(PREFERENCES_STORE).get(
-            PREFERENCES_KEY,
-          ) as IDBRequest<PreferencesRecord | undefined>;
+          const request = transaction
+            .objectStore(PREFERENCES_STORE)
+            .get(PREFERENCES_KEY) as IDBRequest<PreferencesRecord | undefined>;
           request.onsuccess = () => resolveResult(request.result);
         },
       );
@@ -654,11 +668,7 @@ class IndexedDbPreferencesStore implements PreferencesStore {
     });
   }
 
-  async save(value: {
-    query: QueryState;
-    view: ViewState;
-    page: number;
-  }): Promise<void> {
+  async save(value: { query: QueryState; view: ViewState; page: number }): Promise<void> {
     const record: PreferencesRecord = {
       id: PREFERENCES_KEY,
       query: { ...value.query },
@@ -703,9 +713,9 @@ class IndexedDbWordDecisionStore implements WordDecisionStore {
         [WORD_DECISIONS_STORE],
         "readonly",
         (transaction, resolveResult) => {
-          const request = transaction.objectStore(WORD_DECISIONS_STORE).get(
-            normalizedWord,
-          ) as IDBRequest<WordDecision | undefined>;
+          const request = transaction
+            .objectStore(WORD_DECISIONS_STORE)
+            .get(normalizedWord) as IDBRequest<WordDecision | undefined>;
           request.onsuccess = () => resolveResult(request.result);
         },
       );
@@ -816,13 +826,14 @@ export class IndexedDbAppStore implements AppStore {
   }
 
   async restoreUserState(snapshot: RestoreUserStateSnapshot): Promise<void> {
-    const knownRecord: KnownWordSetRecord | null = snapshot.knownWords === null
-      ? null
-      : {
-          id: snapshot.knownWords.id,
-          name: snapshot.knownWords.name,
-          words: [...new Set(snapshot.knownWords.words)],
-        };
+    const knownRecord: KnownWordSetRecord | null =
+      snapshot.knownWords === null
+        ? null
+        : {
+            id: snapshot.knownWords.id,
+            name: snapshot.knownWords.name,
+            words: [...new Set(snapshot.knownWords.words)],
+          };
     const decisionRecords = snapshot.decisions.map(cloneDecision);
     const preferencesRecord: PreferencesRecord = {
       id: PREFERENCES_KEY,
@@ -894,8 +905,6 @@ export class IndexedDbAppStore implements AppStore {
   }
 }
 
-export function createIndexedDbAppStore(
-  databaseName: string = INDEXED_DB_NAME,
-): IndexedDbAppStore {
+export function createIndexedDbAppStore(databaseName: string = INDEXED_DB_NAME): IndexedDbAppStore {
   return new IndexedDbAppStore(databaseName);
 }

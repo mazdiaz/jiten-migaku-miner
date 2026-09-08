@@ -1,9 +1,5 @@
-import {
-  ImportError,
-  type Entry,
-  type ParsedJitenCsv,
-} from "./types";
 import { normalizeText, parseCsv, parseFuriganaRuns } from "./text";
+import { type Entry, ImportError, type ParsedJitenCsv } from "./types";
 
 export { ImportError } from "./types";
 

@@ -62,12 +62,19 @@ class BrowserFolderSource implements FolderSource {
   private readonly baseOrigin: string | null;
 
   constructor(options: FolderSourceOptions = {}) {
-    this.fetcher = options.fetch ?? (typeof globalThis.fetch === "function" ? globalThis.fetch.bind(globalThis) : null);
-    this.protocol = options.protocol ?? (typeof globalThis.location === "object" ? globalThis.location.protocol : "");
-    const configuredBase = options.baseUrl ?? (typeof globalThis.location === "object" ? globalThis.location.href : null);
+    this.fetcher =
+      options.fetch ??
+      (typeof globalThis.fetch === "function" ? globalThis.fetch.bind(globalThis) : null);
+    this.protocol =
+      options.protocol ??
+      (typeof globalThis.location === "object" ? globalThis.location.protocol : "");
+    const configuredBase =
+      options.baseUrl ??
+      (typeof globalThis.location === "object" ? globalThis.location.href : null);
     try {
       const parsedBase = configuredBase === null ? null : new URL(configuredBase);
-      if (parsedBase === null || !isHttpUrl(parsedBase)) throw new Error("A same-origin HTTP(S) page base is required");
+      if (parsedBase === null || !isHttpUrl(parsedBase))
+        throw new Error("A same-origin HTTP(S) page base is required");
       this.baseUrl = parsedBase;
       this.baseOrigin = this.baseUrl?.origin ?? null;
     } catch {
@@ -87,7 +94,9 @@ class BrowserFolderSource implements FolderSource {
       if (!listing.ok || !this.isAllowedResponse(listing)) return null;
 
       const suffix = extension.toLowerCase();
-      const names = listingNames(await listing.text()).filter((name) => name.toLowerCase().endsWith(suffix));
+      const names = listingNames(await listing.text()).filter((name) =>
+        name.toLowerCase().endsWith(suffix),
+      );
       if (names.length === 0) return null;
 
       let best: string | null = null;
@@ -114,9 +123,9 @@ class BrowserFolderSource implements FolderSource {
       if (best === null) best = [...names].sort().pop() ?? null;
       if (best === null) return null;
 
-       const fileUrl = this.resolveFile(listingUrl, best);
-       if (fileUrl === null) return null;
-       const fileResponse = await this.fetcher(fileUrl, { cache: "no-store" });
+      const fileUrl = this.resolveFile(listingUrl, best);
+      if (fileUrl === null) return null;
+      const fileResponse = await this.fetcher(fileUrl, { cache: "no-store" });
       if (!fileResponse.ok || !this.isAllowedResponse(fileResponse)) return null;
       return new TextResponseFileSource(best, fileResponse);
     } catch {

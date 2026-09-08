@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 
 const SMALL_CSV = "tests/fixtures/jiten-small.csv";
 const SMALL_KNOWN = "tests/fixtures/known-small.txt";
@@ -6,7 +6,7 @@ const SIXTY_CSV = "tests/fixtures/jiten-60.csv";
 
 const AUTO_CSV = [
   "Word,Occurences,ExampleSentence,Definitions,ReadingFurigana",
-  "自動,5,\"これは**自動**の例文です。\",automatic,自動[じどう]",
+  '自動,5,"これは**自動**の例文です。",automatic,自動[じどう]',
 ].join("\n");
 
 async function acceptDialogs(page: Page): Promise<void> {
@@ -19,7 +19,9 @@ async function openFilters(page: Page): Promise<void> {
 }
 
 test.describe("canonical miner", () => {
-  test("loads the shell with current labels, disabled filters, and empty state", async ({ page }) => {
+  test("loads the shell with current labels, disabled filters, and empty state", async ({
+    page,
+  }) => {
     await page.goto("/");
 
     await expect(page.locator(".eyebrow")).toHaveText("Local · Offline · Migaku-friendly");
@@ -84,7 +86,9 @@ test.describe("canonical miner", () => {
     await expect(page.locator(".target-highlight")).toHaveCount(0);
   });
 
-  test("collapses the import panel to a summary after load and expands on demand", async ({ page }) => {
+  test("collapses the import panel to a summary after load and expands on demand", async ({
+    page,
+  }) => {
     await page.goto("/");
     await expect(page.locator("#importGrid")).toBeVisible();
     await expect(page.locator("#importSummary")).toBeHidden();
@@ -126,8 +130,12 @@ test.describe("canonical miner", () => {
 
     await openFilters(page);
     await expect(page.locator("#advancedToggle")).toHaveAttribute("aria-expanded", "true");
-    await expect(page.locator("#advancedPanel legend").filter({ hasText: "Filters" })).toBeVisible();
-    await expect(page.locator("#advancedPanel legend").filter({ hasText: "Display" })).toBeVisible();
+    await expect(
+      page.locator("#advancedPanel legend").filter({ hasText: "Filters" }),
+    ).toBeVisible();
+    await expect(
+      page.locator("#advancedPanel legend").filter({ hasText: "Display" }),
+    ).toBeVisible();
     await expect(page.locator("#sortSelect")).toBeVisible();
 
     await page.locator("#advancedToggle").click();
@@ -268,7 +276,9 @@ test.describe("canonical miner", () => {
     await expect(page.locator(".target-highlight")).toHaveCount(0);
   });
 
-  test("reconciles furigana highlights after DOM mutation and falls back live", async ({ page }) => {
+  test("reconciles furigana highlights after DOM mutation and falls back live", async ({
+    page,
+  }) => {
     await page.goto("/");
     await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
     await openFilters(page);
@@ -303,7 +313,9 @@ test.describe("canonical miner", () => {
     await expect(page.locator("#resultsList span.th-wrap")).toHaveCount(0);
   });
 
-  test("restores dataset, page, and preferences after reload through IndexedDB", async ({ page }) => {
+  test("restores dataset, page, and preferences after reload through IndexedDB", async ({
+    page,
+  }) => {
     await page.goto("/");
     await page.locator("#jitenInput").setInputFiles(SIXTY_CSV);
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(50);
@@ -341,7 +353,10 @@ test.describe("canonical miner", () => {
 
   test("auto-loads the newest same-origin folder files over http", async ({ page }) => {
     await page.route("**/WORDS%20TO%20MINE/", async (route) => {
-      await route.fulfill({ contentType: "text/html", body: '<a href="auto.csv">auto.csv</a>' });
+      await route.fulfill({
+        contentType: "text/html",
+        body: '<a href="auto.csv">auto.csv</a>',
+      });
     });
     await page.route("**/auto.csv", async (route) => {
       if (route.request().method() === "HEAD") {

@@ -1,5 +1,5 @@
-import { expect, test, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
+import { expect, type Page, test } from "@playwright/test";
 
 const SMALL_CSV = "tests/fixtures/jiten-small.csv";
 const SMALL_KNOWN = "tests/fixtures/known-small.txt";
@@ -9,7 +9,9 @@ async function acceptDialogs(page: Page): Promise<void> {
 }
 
 test.describe("backup and restore", () => {
-  test("exports and restores known words, decisions, and preferences while keeping the dataset", async ({ page }) => {
+  test("exports and restores known words, decisions, and preferences while keeping the dataset", async ({
+    page,
+  }) => {
     test.setTimeout(60_000);
     await acceptDialogs(page);
     await page.goto("/");
@@ -21,12 +23,20 @@ test.describe("backup and restore", () => {
 
     await page.locator('[data-decision-action="mined"][data-word="気になる"]').click();
     await expect(
-      page.locator(".mining-entry", { has: page.locator(".target-word", { hasText: "気になる" }) }).locator(".entry-badge-decision"),
+      page
+        .locator(".mining-entry", {
+          has: page.locator(".target-word", { hasText: "気になる" }),
+        })
+        .locator(".entry-badge-decision"),
     ).toHaveText("Mined");
 
     await page.locator('[data-decision-action="later"][data-word="静か"]').click();
     await expect(
-      page.locator(".mining-entry", { has: page.locator(".target-word", { hasText: "静か" }) }).locator(".entry-badge-decision"),
+      page
+        .locator(".mining-entry", {
+          has: page.locator(".target-word", { hasText: "静か" }),
+        })
+        .locator(".entry-badge-decision"),
     ).toHaveText("Later");
 
     await page.locator("#advancedToggle").click();
@@ -44,17 +54,28 @@ test.describe("backup and restore", () => {
       version: number;
       knownWords: { name: string; words: string[] } | null;
       wordDecisions: Array<{ normalizedWord: string; status: string }>;
-      preferences: { query: { sort: string; pageSize: number; hideKanaOnly: boolean } };
+      preferences: {
+        query: { sort: string; pageSize: number; hideKanaOnly: boolean };
+      };
     };
     expect(backup.format).toBe("jiten-migaku-miner-backup");
     expect(backup.version).toBe(1);
-    expect(backup.knownWords).toEqual({ name: "known-small.txt", words: ["プール"] });
+    expect(backup.knownWords).toEqual({
+      name: "known-small.txt",
+      words: ["プール"],
+    });
     expect(backup.wordDecisions).toMatchObject([
       { normalizedWord: "気になる", status: "mined" },
       { normalizedWord: "静か", status: "later" },
     ]);
-    expect(backup.preferences.query).toMatchObject({ sort: "original", pageSize: 25, hideKanaOnly: true });
-    expect(await download.suggestedFilename()).toMatch(/^jiten-migaku-miner-backup-\d{4}-\d{2}-\d{2}\.json$/);
+    expect(backup.preferences.query).toMatchObject({
+      sort: "original",
+      pageSize: 25,
+      hideKanaOnly: true,
+    });
+    expect(await download.suggestedFilename()).toMatch(
+      /^jiten-migaku-miner-backup-\d{4}-\d{2}-\d{2}\.json$/,
+    );
     await expect(page.locator("#backupStatus")).toHaveText("Backup exported.");
 
     await page.locator("#clearData").click();
@@ -77,30 +98,50 @@ test.describe("backup and restore", () => {
 
     await expect(page.locator("#knownStatus")).toContainText("known-small.txt ✓ · 1 entries");
     await expect(
-      page.locator(".mining-entry", { has: page.locator(".target-word", { hasText: "気になる" }) }).locator(".entry-badge-decision"),
+      page
+        .locator(".mining-entry", {
+          has: page.locator(".target-word", { hasText: "気になる" }),
+        })
+        .locator(".entry-badge-decision"),
     ).toHaveText("Mined");
     await expect(
-      page.locator(".mining-entry", { has: page.locator(".target-word", { hasText: "静か" }) }).locator(".entry-badge-decision"),
+      page
+        .locator(".mining-entry", {
+          has: page.locator(".target-word", { hasText: "静か" }),
+        })
+        .locator(".entry-badge-decision"),
     ).toHaveText("Later");
     await expect(page.locator("#sortSelect")).toHaveValue("original");
     await expect(page.locator("#pageSize")).toHaveValue("25");
     await expect(page.locator("#hideKanaOnly")).toBeChecked();
     await expect(page.locator("#hideKnown")).toBeChecked();
     await expect(
-      page.locator(".mining-entry", { has: page.locator(".target-word", { hasText: "プール" }) }),
+      page.locator(".mining-entry", {
+        has: page.locator(".target-word", { hasText: "プール" }),
+      }),
     ).toHaveCount(0);
     await expect(page.locator("#resultStats")).toContainText("Loaded 3");
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(2);
-    await expect(page.locator("#backupStatus")).toContainText("Backup restored: 1 Migaku-known words · 2 decisions.");
+    await expect(page.locator("#backupStatus")).toContainText(
+      "Backup restored: 1 Migaku-known words · 2 decisions.",
+    );
 
     await page.locator("#hideKnown").uncheck();
     await expect(
-      page.locator(".mining-entry", { has: page.locator(".target-word", { hasText: "気になる" }) }).locator(".entry-badge-decision"),
+      page
+        .locator(".mining-entry", {
+          has: page.locator(".target-word", { hasText: "気になる" }),
+        })
+        .locator(".entry-badge-decision"),
     ).toHaveText("Mined");
     await page.locator("#hideKanaOnly").uncheck();
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
     await expect(
-      page.locator(".mining-entry", { has: page.locator(".target-word", { hasText: "プール" }) }).locator(".entry-badge-migaku"),
+      page
+        .locator(".mining-entry", {
+          has: page.locator(".target-word", { hasText: "プール" }),
+        })
+        .locator(".entry-badge-migaku"),
     ).toHaveText("Migaku known");
   });
 

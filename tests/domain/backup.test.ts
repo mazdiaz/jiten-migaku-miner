@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   BACKUP_FORMAT,
   BackupError,
+  type MinerBackupV1,
   parseBackup,
   serializeBackup,
-  type MinerBackupV1,
 } from "../../src/domain/backup";
 import type { WordDecision } from "../../src/domain/types";
 
@@ -31,7 +31,11 @@ const view = {
   density: "compact" as const,
 };
 
-function decision(word: string, status: WordDecision["status"], updatedAt = EXPORTED_AT): WordDecision {
+function decision(
+  word: string,
+  status: WordDecision["status"],
+  updatedAt = EXPORTED_AT,
+): WordDecision {
   return { normalizedWord: word, status, updatedAt };
 }
 
@@ -42,11 +46,30 @@ function validBackupJson(): string {
     exportedAt: "2026-09-06T00:00:00.000Z",
     knownWords: { name: "Migaku known words", words: ["新しい", "透過"] },
     wordDecisions: [
-      { normalizedWord: "新しい", status: "known", updatedAt: "2026-09-05T00:00:00.000Z" },
+      {
+        normalizedWord: "新しい",
+        status: "known",
+        updatedAt: "2026-09-05T00:00:00.000Z",
+      },
     ],
     preferences: {
-      query: { search: "", hideKnown: false, hideKanaOnly: false, sentence: "any", minOccurrences: 1, sort: "occ-desc", pageSize: 50, page: 1, decision: "all" },
-      view: { showFurigana: false, pillHighlight: false, showHighlight: false, showDefinitions: true },
+      query: {
+        search: "",
+        hideKnown: false,
+        hideKanaOnly: false,
+        sentence: "any",
+        minOccurrences: 1,
+        sort: "occ-desc",
+        pageSize: 50,
+        page: 1,
+        decision: "all",
+      },
+      view: {
+        showFurigana: false,
+        pillHighlight: false,
+        showHighlight: false,
+        showDefinitions: true,
+      },
       page: 1,
     },
   });
@@ -101,7 +124,10 @@ describe("serializeBackup", () => {
       preferences: null,
     });
     const backup = parseBackup(json);
-    expect(backup.knownWords).toEqual({ name: "k.txt", words: ["決めて", "ｶﾞ"] });
+    expect(backup.knownWords).toEqual({
+      name: "k.txt",
+      words: ["決めて", "ｶﾞ"],
+    });
   });
 
   it("keeps null known words and null preferences", () => {
@@ -129,8 +155,16 @@ describe("serializeBackup", () => {
     });
     const backup = parseBackup(json);
     expect(backup.wordDecisions).toEqual([
-      { normalizedWord: "一", status: "skip", updatedAt: "2026-01-01T00:00:00.000Z" },
-      { normalizedWord: "二", status: "later", updatedAt: "2026-02-02T00:00:00.000Z" },
+      {
+        normalizedWord: "一",
+        status: "skip",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+      {
+        normalizedWord: "二",
+        status: "later",
+        updatedAt: "2026-02-02T00:00:00.000Z",
+      },
     ]);
   });
 });
@@ -159,7 +193,12 @@ describe("parseBackup", () => {
       futureTopLevel: { nested: true },
       knownWords: { name: "k.txt", words: ["古い"], futureKnownField: 1 },
       wordDecisions: [
-        { normalizedWord: "古い", status: "known", updatedAt: EXPORTED_AT, futureDecisionField: "x" },
+        {
+          normalizedWord: "古い",
+          status: "known",
+          updatedAt: EXPORTED_AT,
+          futureDecisionField: "x",
+        },
       ],
       preferences: {
         query: { ...query, futureQueryField: true },
@@ -173,9 +212,24 @@ describe("parseBackup", () => {
     expect(backup.preferences?.query.decision).toBe("mined");
   });
 
-  const invalidCases: Array<{ name: string; text: string; code: string; fragment: RegExp }> = [
-    { name: "invalid JSON", text: "{not json", code: "invalid-json", fragment: /not valid JSON/ },
-    { name: "JSON array root", text: "[]", code: "invalid-format", fragment: /must be a JSON object/ },
+  const invalidCases: Array<{
+    name: string;
+    text: string;
+    code: string;
+    fragment: RegExp;
+  }> = [
+    {
+      name: "invalid JSON",
+      text: "{not json",
+      code: "invalid-json",
+      fragment: /not valid JSON/,
+    },
+    {
+      name: "JSON array root",
+      text: "[]",
+      code: "invalid-format",
+      fragment: /must be a JSON object/,
+    },
     {
       name: "missing format",
       text: mutatedBackup((backup) => {
@@ -259,7 +313,9 @@ describe("parseBackup", () => {
     {
       name: "decision invalid status",
       text: mutatedBackup((backup) => {
-        backup.wordDecisions = [{ normalizedWord: "躊躇う", status: "maybe", updatedAt: EXPORTED_AT }];
+        backup.wordDecisions = [
+          { normalizedWord: "躊躇う", status: "maybe", updatedAt: EXPORTED_AT },
+        ];
       }),
       code: "invalid-shape",
       fragment: /wordDecisions\[0\]\.status must be one of/,
@@ -345,9 +401,11 @@ describe("parseBackup", () => {
 
   it("reports the offending version in unsupported-version errors", () => {
     try {
-      parseBackup(mutatedBackup((backup) => {
-        backup.version = 7;
-      }));
+      parseBackup(
+        mutatedBackup((backup) => {
+          backup.version = 7;
+        }),
+      );
       expect.fail("expected throw");
     } catch (error) {
       expect((error as BackupError).message).toContain("7");
@@ -358,19 +416,31 @@ describe("parseBackup", () => {
 describe("parseBackup canonical identities", () => {
   it("rejects whitespace-only decision identities", () => {
     const backup = JSON.parse(validBackupJson());
-    backup.wordDecisions.push({ normalizedWord: "   ", status: "known", updatedAt: "2026-09-05T00:00:00.000Z" });
+    backup.wordDecisions.push({
+      normalizedWord: "   ",
+      status: "known",
+      updatedAt: "2026-09-05T00:00:00.000Z",
+    });
     expect(() => parseBackup(JSON.stringify(backup))).toThrow(/must not be empty/);
   });
 
   it("rejects noncanonical decision identities", () => {
     const backup = JSON.parse(validBackupJson());
-    backup.wordDecisions.push({ normalizedWord: " 新しい ", status: "known", updatedAt: "2026-09-05T00:00:00.000Z" });
+    backup.wordDecisions.push({
+      normalizedWord: " 新しい ",
+      status: "known",
+      updatedAt: "2026-09-05T00:00:00.000Z",
+    });
     expect(() => parseBackup(JSON.stringify(backup))).toThrow(/canonical/);
   });
 
   it("rejects duplicates that differ only by normalization", () => {
     const backup = JSON.parse(validBackupJson());
-    backup.wordDecisions.push({ normalizedWord: "新しい", status: "mined", updatedAt: "2026-09-05T00:00:00.000Z" });
+    backup.wordDecisions.push({
+      normalizedWord: "新しい",
+      status: "mined",
+      updatedAt: "2026-09-05T00:00:00.000Z",
+    });
     expect(() => parseBackup(JSON.stringify(backup))).toThrow(/duplicate/);
   });
 
@@ -400,10 +470,12 @@ describe("parseBackup display preferences", () => {
   });
 
   it("fills the DEFAULT_VIEW display values when an old backup omits the new keys", () => {
-    const backup = parseBackup(mutatedBackup((record) => {
-      delete record.preferences.view.sentenceSize;
-      delete record.preferences.view.density;
-    }));
+    const backup = parseBackup(
+      mutatedBackup((record) => {
+        delete record.preferences.view.sentenceSize;
+        delete record.preferences.view.density;
+      }),
+    );
     expect(backup.preferences?.view.sentenceSize).toBe("medium");
     expect(backup.preferences?.view.density).toBe("comfortable");
   });
@@ -412,9 +484,12 @@ describe("parseBackup display preferences", () => {
     expectBackupError(
       "invalid-shape",
       /preferences\.view\.sentenceSize must be "medium" or "large"/,
-      () => parseBackup(mutatedBackup((record) => {
-        record.preferences.view.sentenceSize = "huge";
-      })),
+      () =>
+        parseBackup(
+          mutatedBackup((record) => {
+            record.preferences.view.sentenceSize = "huge";
+          }),
+        ),
     );
   });
 
@@ -422,9 +497,12 @@ describe("parseBackup display preferences", () => {
     expectBackupError(
       "invalid-shape",
       /preferences\.view\.density must be "comfortable" or "compact"/,
-      () => parseBackup(mutatedBackup((record) => {
-        record.preferences.view.density = "cozy";
-      })),
+      () =>
+        parseBackup(
+          mutatedBackup((record) => {
+            record.preferences.view.density = "cozy";
+          }),
+        ),
     );
   });
 });
@@ -432,7 +510,12 @@ describe("parseBackup display preferences", () => {
 describe("MinerBackupV1 shape", () => {
   it("keeps the parsed type assignable to the documented interface", () => {
     const backup: MinerBackupV1 = parseBackup(
-      serializeBackup({ exportedAt: EXPORTED_AT, knownWords: null, wordDecisions: [], preferences: null }),
+      serializeBackup({
+        exportedAt: EXPORTED_AT,
+        knownWords: null,
+        wordDecisions: [],
+        preferences: null,
+      }),
     );
     expect(backup.preferences).toBeNull();
   });

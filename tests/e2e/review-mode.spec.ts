@@ -1,4 +1,4 @@
-﻿import { expect, test, type Page } from "@playwright/test";
+﻿import { expect, type Page, test } from "@playwright/test";
 
 const SMALL_CSV = "tests/fixtures/jiten-small.csv";
 
@@ -90,7 +90,9 @@ test.describe("review mode", () => {
     // processed counts this session only; the mined decision is durable, not the counter.
     await expect(page.locator("#reviewProgress")).toHaveText("0 processed · 2 remaining");
     await expect(reviewTarget(page)).toHaveText("プール");
-    await expect(page.locator(".review-entry .target-word", { hasText: "気になる" })).toHaveCount(0);
+    await expect(page.locator(".review-entry .target-word", { hasText: "気になる" })).toHaveCount(
+      0,
+    );
 
     await page.keyboard.press("s");
     await expect(reviewTarget(page)).toHaveText("静か");

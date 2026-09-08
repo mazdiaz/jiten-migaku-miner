@@ -37,7 +37,9 @@ h1 {
   box-shadow: var(--shadow);
 }
 
-.import-panel { padding: 18px; }
+.import-panel {
+  padding: 18px;
+}
 
 .import-grid {
   display: grid;
@@ -45,7 +47,9 @@ h1 {
   gap: 14px;
 }
 
-.import-grid[hidden] { display: none; }
+.import-grid[hidden] {
+  display: none;
+}
 
 .import-summary-row {
   display: flex;
@@ -61,12 +65,21 @@ h1 {
   font-size: 0.94rem;
 }
 
-.import-summary[hidden] { display: none; }
+.import-summary[hidden] {
+  display: none;
+}
 
-.import-summary .import-dataset-line { font-weight: 700; }
-.import-summary .import-known-line { color: var(--muted); font-size: 0.88rem; }
+.import-summary .import-dataset-line {
+  font-weight: 700;
+}
+.import-summary .import-known-line {
+  color: var(--muted);
+  font-size: 0.88rem;
+}
 
-#changeFiles { color: var(--text); }
+#changeFiles {
+  color: var(--text);
+}
 
 .dropzone {
   position: relative;
@@ -78,7 +91,10 @@ h1 {
   border: 1px dashed var(--border-strong);
   border-radius: 12px;
   background: var(--surface-2);
-  transition: border-color 120ms ease, background 120ms ease, transform 120ms ease;
+  transition:
+    border-color 120ms ease,
+    background 120ms ease,
+    transform 120ms ease;
 }
 
 .dropzone[data-dragging="true"] {
@@ -88,13 +104,28 @@ h1 {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .dropzone { transition: none; }
+  .dropzone {
+    transition: none;
+  }
 }
 
-.dropzone-title { font-weight: 800; }
-.dropzone-copy { margin: 0; color: var(--muted); font-size: 0.92rem; }
-.file-status { color: var(--success); font-size: 0.88rem; min-height: 1.3em; overflow-wrap: anywhere; }
-.file-status.optional { color: var(--subtle); }
+.dropzone-title {
+  font-weight: 800;
+}
+.dropzone-copy {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+.file-status {
+  color: var(--success);
+  font-size: 0.88rem;
+  min-height: 1.3em;
+  overflow-wrap: anywhere;
+}
+.file-status.optional {
+  color: var(--subtle);
+}
 
 .file-picker {
   width: fit-content;
@@ -106,7 +137,9 @@ h1 {
   font-weight: 700;
 }
 
-.file-picker:hover { border-color: var(--accent); }
+.file-picker:hover {
+  border-color: var(--accent);
+}
 
 input[type="file"] {
   position: absolute;
@@ -133,9 +166,14 @@ input[type="file"] {
   font-weight: 700;
 }
 
-.clear-button:hover { border-color: var(--danger); }
+.clear-button:hover {
+  border-color: var(--danger);
+}
 
-.clear-note { color: var(--subtle); font-size: 0.82rem; }
+.clear-note {
+  color: var(--subtle);
+  font-size: 0.82rem;
+}
 
 .data-area {
   margin: 16px 0 0;
@@ -153,9 +191,15 @@ input[type="file"] {
   text-transform: uppercase;
 }
 
-.data-area .clear-row { margin-top: 0; }
+.data-area .clear-row {
+  margin-top: 0;
+}
 
-.data-note { margin: 10px 0 0; color: var(--subtle); font-size: 0.82rem; }
+.data-note {
+  margin: 10px 0 0;
+  color: var(--subtle);
+  font-size: 0.82rem;
+}
 
 .portability-row {
   display: flex;
@@ -165,10 +209,14 @@ input[type="file"] {
   margin-top: 8px;
 }
 
-.portability-row .clear-button { color: var(--text); }
+.portability-row .clear-button {
+  color: var(--text);
+}
 
 /* Freshness line wraps to its own row under the buttons/status. */
-.portability-row .backup-freshness { flex-basis: 100%; }
+.portability-row .backup-freshness {
+  flex-basis: 100%;
+}
 
 .error-box {
   margin-top: 14px;
@@ -207,7 +255,9 @@ select {
   outline: none;
 }
 
-input:focus, select:focus, button:focus-visible {
+input:focus,
+select:focus,
+button:focus-visible {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
   outline: none;
@@ -221,9 +271,15 @@ input:focus, select:focus, button:focus-visible {
   font-size: 0.92rem;
 }
 
-.check-control input { width: 17px; height: 17px; accent-color: var(--accent); }
+.check-control input {
+  width: 17px;
+  height: 17px;
+  accent-color: var(--accent);
+}
 
-.results-section { margin-top: 22px; }
+.results-section {
+  margin-top: 22px;
+}
 
 .sticky-toolbar {
   position: sticky;
@@ -258,14 +314,19 @@ input:focus, select:focus, button:focus-visible {
   white-space: nowrap;
 }
 
-.advanced-toggle:hover:not(:disabled) { border-color: var(--accent); }
+.advanced-toggle:hover:not(:disabled) {
+  border-color: var(--accent);
+}
 
 .advanced-toggle[aria-expanded="true"] {
   border-color: var(--accent);
   background: var(--accent-soft);
 }
 
-.advanced-toggle:disabled { opacity: 0.55; cursor: default; }
+.advanced-toggle:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
 
 #advancedPanel {
   display: flex;
@@ -274,7 +335,9 @@ input:focus, select:focus, button:focus-visible {
   align-items: flex-start;
 }
 
-#advancedPanel[hidden] { display: none; }
+#advancedPanel[hidden] {
+  display: none;
+}
 
 .adv-group {
   flex: 1 1 300px;
@@ -331,9 +394,16 @@ input:focus, select:focus, button:focus-visible {
   gap: 6px;
 }
 
-.adv-controls .check-control input { width: 15px; height: 15px; }
+.adv-controls .check-control input {
+  width: 15px;
+  height: 15px;
+}
 
-.adv-note { margin: 8px 0 0; color: var(--subtle); font-size: 0.8rem; }
+.adv-note {
+  margin: 8px 0 0;
+  color: var(--subtle);
+  font-size: 0.8rem;
+}
 
 .sticky-title {
   min-width: 0;
@@ -343,7 +413,9 @@ input:focus, select:focus, button:focus-visible {
   font-weight: 800;
 }
 
-.sticky-search { height: 38px !important; }
+.sticky-search {
+  height: 38px !important;
+}
 
 .results-head {
   display: flex;
@@ -354,7 +426,10 @@ input:focus, select:focus, button:focus-visible {
   margin: 0 2px 12px;
 }
 
-.results-head h2 { margin: 0; font-size: 1.05rem; }
+.results-head h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
 
 .results-head-actions {
   display: flex;
@@ -375,7 +450,9 @@ input:focus, select:focus, button:focus-visible {
   flex: 1 1 100%;
 }
 
-.filter-chips[hidden] { display: none; }
+.filter-chips[hidden] {
+  display: none;
+}
 
 .filter-chip {
   display: inline-flex;
@@ -396,7 +473,10 @@ input:focus, select:focus, button:focus-visible {
 
 /* Visual × affordance lives in CSS so the accessible name stays the
    aria-label ("Remove … filter"), not the glyph. */
-.filter-chip::after { content: "×"; font-weight: 900; }
+.filter-chip::after {
+  content: "×";
+  font-weight: 900;
+}
 
 .filter-chip:hover {
   background: var(--accent);
@@ -409,7 +489,9 @@ input:focus, select:focus, button:focus-visible {
   color: var(--text);
 }
 
-.filter-chip-reset::after { content: none; }
+.filter-chip-reset::after {
+  content: none;
+}
 
 .filter-chip-reset:hover {
   border-color: var(--danger);
@@ -422,13 +504,25 @@ input:focus, select:focus, button:focus-visible {
    expanded the renderer adds body.advanced-open; 530px clears the full
    toolbar at 375px (measured stuck bottom ~518px: 6px top + ~512px wrapped
    panel, Playwright/iPhone-12 viewport) with margin. */
-#resultsHeading { scroll-margin-top: 140px; }
+#resultsHeading {
+  scroll-margin-top: 140px;
+}
 
-body.advanced-open #resultsHeading { scroll-margin-top: 530px; }
+body.advanced-open #resultsHeading {
+  scroll-margin-top: 530px;
+}
 
-.result-stats { margin: 4px 0 0; color: var(--muted); font-size: 0.9rem; }
+.result-stats {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
 
-.decision-summary { margin: 2px 0 0; color: var(--muted); font-size: 0.85rem; }
+.decision-summary {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
 
 .coverage-panel {
   margin: 0 2px 12px;
@@ -452,11 +546,19 @@ body.advanced-open #resultsHeading { scroll-margin-top: 530px; }
   text-align: left;
 }
 
-.coverage-toggle:hover:not(:disabled) { color: var(--accent); }
+.coverage-toggle:hover:not(:disabled) {
+  color: var(--accent);
+}
 
-.coverage-toggle:disabled { opacity: 0.55; cursor: default; }
+.coverage-toggle:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
 
-.coverage-toggle[aria-expanded="true"] { border-bottom: 1px solid var(--border); border-radius: 12px 12px 0 0; }
+.coverage-toggle[aria-expanded="true"] {
+  border-bottom: 1px solid var(--border);
+  border-radius: 12px 12px 0 0;
+}
 
 .coverage-summary {
   color: var(--accent);
@@ -470,9 +572,14 @@ body.advanced-open #resultsHeading { scroll-margin-top: 530px; }
   border-top: 1px solid var(--border);
 }
 
-.coverage-body[hidden] { display: none; }
+.coverage-body[hidden] {
+  display: none;
+}
 
-.coverage-title { margin: 0; font-size: 0.95rem; }
+.coverage-title {
+  margin: 0;
+  font-size: 0.95rem;
+}
 
 .coverage-stats {
   display: grid;
@@ -521,11 +628,19 @@ body.advanced-open #resultsHeading { scroll-margin-top: 530px; }
   font-variant-numeric: tabular-nums;
 }
 
-.coverage-target-label { color: var(--muted); }
+.coverage-target-label {
+  color: var(--muted);
+}
 
-.coverage-target-value { font-weight: 700; }
+.coverage-target-value {
+  font-weight: 700;
+}
 
-.coverage-note { margin: 0; color: var(--subtle); font-size: 0.8rem; }
+.coverage-note {
+  margin: 0;
+  color: var(--subtle);
+  font-size: 0.8rem;
+}
 
 .coverage-error {
   margin: 0;
@@ -548,9 +663,15 @@ body.advanced-open #resultsHeading { scroll-margin-top: 530px; }
   white-space: nowrap;
 }
 
-.coverage-focus:hover:not(:disabled) { background: var(--accent); color: #10131a; }
+.coverage-focus:hover:not(:disabled) {
+  background: var(--accent);
+  color: #10131a;
+}
 
-.coverage-focus:disabled { opacity: 0.45; cursor: default; }
+.coverage-focus:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
 
 .pager {
   display: flex;
@@ -568,11 +689,23 @@ body.advanced-open #resultsHeading { scroll-margin-top: 530px; }
   font-weight: 900;
 }
 
-.pager button:hover:not(:disabled) { border-color: var(--accent); }
-.pager button:disabled { opacity: 0.38; cursor: default; }
-.page-label { min-width: 88px; text-align: center; color: var(--muted); font-size: 0.9rem; }
+.pager button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+.pager button:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+.page-label {
+  min-width: 88px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
 
-.bottom-pager { margin-top: 14px; }
+.bottom-pager {
+  margin-top: 14px;
+}
 
 .shortcut-note {
   margin: 12px 0 0;
@@ -582,24 +715,49 @@ body.advanced-open #resultsHeading { scroll-margin-top: 530px; }
 }
 
 @media (max-width: 820px) {
-  .import-grid { grid-template-columns: 1fr; }
-  .sticky-row-1 { grid-template-columns: minmax(0, 1fr) auto auto auto; }
-  .sticky-search { grid-column: 1 / -1; grid-row: 2; }
+  .import-grid {
+    grid-template-columns: 1fr;
+  }
+  .sticky-row-1 {
+    grid-template-columns: minmax(0, 1fr) auto auto auto;
+  }
+  .sticky-search {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
 }
 
 @media (max-width: 560px) {
-  .app-shell { width: min(100% - 20px, 1120px); padding-top: 22px; }
-  .results-head { align-items: flex-start; flex-direction: column; }
-  .pager { justify-content: flex-start; }
-  .sticky-toolbar { top: 6px; }
-  .sticky-title { display: none; }
-  .sticky-row-1 { grid-template-columns: minmax(0, 1fr) auto auto; }
+  .app-shell {
+    width: min(100% - 20px, 1120px);
+    padding-top: 22px;
+  }
+  .results-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .pager {
+    justify-content: flex-start;
+  }
+  .sticky-toolbar {
+    top: 6px;
+  }
+  .sticky-title {
+    display: none;
+  }
+  .sticky-row-1 {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+  }
 }
 
 /* Very narrow phones (~320px): the sticky pager row (Queue button + pager)
    would otherwise overflow the ~300px shell, so let the page label shrink
    and tighten the row gap. */
 @media (max-width: 360px) {
-  .sticky-row-1 { gap: 8px; }
-  .page-label { min-width: 0; }
+  .sticky-row-1 {
+    gap: 8px;
+  }
+  .page-label {
+    min-width: 0;
+  }
 }

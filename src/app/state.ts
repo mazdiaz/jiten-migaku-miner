@@ -37,7 +37,8 @@ export interface AppState {
   wordDecisions: Map<string, WordDecision>;
   query: QueryState;
   view: ViewState;
-  page: number;
+  // Pagination lives solely in query.page; there is deliberately no
+  // AppState.page duplicate to keep in sync.
   result: QueryResult | null;
   status: "empty" | "loading" | "ready" | "error";
   errorMessage: string | null;
@@ -142,7 +143,6 @@ export function createInitialAppState(
     wordDecisions: new Map<string, WordDecision>(),
     query: { ...DEFAULT_QUERY },
     view: { ...DEFAULT_VIEW },
-    page: 1,
     result: null,
     status: "empty",
     errorMessage: null,
@@ -170,12 +170,29 @@ function cloneView(value: ViewState): ViewState {
   return { ...value };
 }
 
+// Entry-level isolation: furiganaRuns are mutable objects shared between the
+// controller's entry instances and any published snapshot. Cloning them (and
+// the entry shell) keeps subscriber mutations from reaching controller state.
+export function cloneEntryWithKnown(value: EntryWithKnown): EntryWithKnown {
+  return {
+    ...value,
+    furiganaRuns: value.furiganaRuns.map((run) => ({ ...run })),
+  };
+}
+
 function cloneResult(value: QueryResult | null): QueryResult | null {
-  return value === null ? null : { ...value, items: [...value.items] };
+  return value === null ? null : { ...value, items: value.items.map(cloneEntryWithKnown) };
+}
+
+function cloneWordDecisions(value: ReadonlyMap<string, WordDecision>): Map<string, WordDecision> {
+  return new Map([...value].map(([word, decision]) => [word, { ...decision }]));
 }
 
 function cloneReview(value: ReviewState): ReviewState {
-  return { ...value };
+  return {
+    ...value,
+    current: value.current === null ? null : cloneEntryWithKnown(value.current),
+  };
 }
 
 function cloneQueue(value: MiningQueueState): MiningQueueState {
@@ -187,7 +204,9 @@ function cloneUndo(value: UndoState): UndoState {
 }
 
 function cloneCoverage(value: CoverageStats | null): CoverageStats | null {
-  return value === null ? null : { ...value, targets: [...value.targets] };
+  return value === null
+    ? null
+    : { ...value, targets: value.targets.map((target) => ({ ...target })) };
 }
 
 export function cloneAppState(value: AppState): AppState {
@@ -195,7 +214,7 @@ export function cloneAppState(value: AppState): AppState {
     ...value,
     dataset: cloneDataset(value.dataset),
     knownWords: new Set(value.knownWords),
-    wordDecisions: new Map(value.wordDecisions),
+    wordDecisions: cloneWordDecisions(value.wordDecisions),
     query: cloneQuery(value.query),
     view: cloneView(value.view),
     result: cloneResult(value.result),

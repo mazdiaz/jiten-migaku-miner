@@ -1,18 +1,17 @@
 import { describe, expect, it } from "vitest";
+import { dispatchWorkerRequest } from "../../src/worker/miner.worker";
+import type { WorkerRequest, WorkerResponse } from "../../src/worker/protocol";
 import {
-  WorkerProtocolError,
   createErrorResponse,
   isWorkerRequest,
   parseWorkerRequest,
   serializeError,
+  WorkerProtocolError,
 } from "../../src/worker/protocol";
-import type { WorkerRequest } from "../../src/worker/protocol";
-import { dispatchWorkerRequest } from "../../src/worker/miner.worker";
 import { WorkerEngine } from "../../src/worker/worker-engine";
-import type { WorkerResponse } from "../../src/worker/protocol";
 
 const validQueryRequest: WorkerRequest = {
-  protocolVersion: 1,
+  protocolVersion: 2,
   type: "query",
   requestId: "query-1",
   datasetId: "dataset-1",
@@ -34,7 +33,7 @@ const validQueryRequest: WorkerRequest = {
 
 describe("worker protocol", () => {
   it("rejects unsupported protocol versions with a typed error", () => {
-    const request = { ...validQueryRequest, protocolVersion: 2 };
+    const request = { ...validQueryRequest, protocolVersion: 1 };
 
     expect(() => parseWorkerRequest(request)).toThrow(WorkerProtocolError);
     expect(() => parseWorkerRequest(request)).toThrowError(
@@ -61,7 +60,12 @@ describe("worker protocol", () => {
   it("round-trips decisions through query requests", () => {
     const request: WorkerRequest = {
       ...validQueryRequest,
-      decisions: [["猫", "known"], ["犬", "mined"], ["鳥", "skip"], ["魚", "later"]],
+      decisions: [
+        ["猫", "known"],
+        ["犬", "mined"],
+        ["鳥", "skip"],
+        ["魚", "later"],
+      ],
     };
 
     expect(parseWorkerRequest(request)).toEqual(request);
@@ -72,7 +76,10 @@ describe("worker protocol", () => {
   it("accepts an empty decisions array and every decision status", () => {
     const statuses = ["known", "mined", "skip", "later"] as const;
     for (const status of statuses) {
-      const request: WorkerRequest = { ...validQueryRequest, decisions: [[`word-${status}`, status]] };
+      const request: WorkerRequest = {
+        ...validQueryRequest,
+        decisions: [[`word-${status}`, status]],
+      };
       expect(parseWorkerRequest(request)).toEqual(request);
     }
   });
@@ -90,7 +97,9 @@ describe("worker protocol", () => {
     ];
 
     for (const request of malformedRequests) {
-      expect(() => parseWorkerRequest(request), JSON.stringify(request)).toThrow(WorkerProtocolError);
+      expect(() => parseWorkerRequest(request), JSON.stringify(request)).toThrow(
+        WorkerProtocolError,
+      );
       expect(() => parseWorkerRequest(request)).toThrowError(
         expect.objectContaining({ code: "invalid-message" }),
       );
@@ -99,12 +108,20 @@ describe("worker protocol", () => {
 
   it("validates the query decision filter", () => {
     for (const decision of ["all", "unreviewed", "known", "mined", "skip", "later"] as const) {
-      const request = { ...validQueryRequest, query: { ...validQueryRequest.query, decision } };
-      expect(parseWorkerRequest(request)).toMatchObject({ query: { decision } });
+      const request = {
+        ...validQueryRequest,
+        query: { ...validQueryRequest.query, decision },
+      };
+      expect(parseWorkerRequest(request)).toMatchObject({
+        query: { decision },
+      });
     }
 
     for (const decision of ["ALL", "unknown", "", null, 42]) {
-      const request = { ...validQueryRequest, query: { ...validQueryRequest.query, decision } };
+      const request = {
+        ...validQueryRequest,
+        query: { ...validQueryRequest.query, decision },
+      };
       expect(() => parseWorkerRequest(request), JSON.stringify(decision)).toThrow(
         expect.objectContaining({ code: "invalid-message" }),
       );
@@ -113,12 +130,24 @@ describe("worker protocol", () => {
 
   it("rejects non-integer pages and non-positive numeric page sizes", () => {
     const malformedRequests = [
-      { ...validQueryRequest, query: { ...validQueryRequest.query, page: 1.5 } },
+      {
+        ...validQueryRequest,
+        query: { ...validQueryRequest.query, page: 1.5 },
+      },
       { ...validQueryRequest, query: { ...validQueryRequest.query, page: 0 } },
       { ...validQueryRequest, query: { ...validQueryRequest.query, page: -1 } },
-      { ...validQueryRequest, query: { ...validQueryRequest.query, pageSize: 0 } },
-      { ...validQueryRequest, query: { ...validQueryRequest.query, pageSize: -1 } },
-      { ...validQueryRequest, query: { ...validQueryRequest.query, pageSize: 1.5 } },
+      {
+        ...validQueryRequest,
+        query: { ...validQueryRequest.query, pageSize: 0 },
+      },
+      {
+        ...validQueryRequest,
+        query: { ...validQueryRequest.query, pageSize: -1 },
+      },
+      {
+        ...validQueryRequest,
+        query: { ...validQueryRequest.query, pageSize: 1.5 },
+      },
     ];
 
     for (const request of malformedRequests) {
@@ -144,7 +173,12 @@ describe("worker protocol", () => {
       );
     }
 
-    expect(parseWorkerRequest({ ...validQueryRequest, window: { start: 0, size: 0 } })).toMatchObject({
+    expect(
+      parseWorkerRequest({
+        ...validQueryRequest,
+        window: { start: 0, size: 0 },
+      }),
+    ).toMatchObject({
       window: { start: 0, size: 0 },
     });
   });
@@ -153,9 +187,12 @@ describe("worker protocol", () => {
     const error = new Error("bad source");
     Object.assign(error, { code: "source-failed", stack: "secret stack" });
 
-    expect(serializeError(error)).toEqual({ code: "source-failed", message: "bad source" });
+    expect(serializeError(error)).toEqual({
+      code: "source-failed",
+      message: "bad source",
+    });
     expect(createErrorResponse("request-7", error)).toEqual({
-      protocolVersion: 1,
+      protocolVersion: 2,
       type: "error",
       requestId: "request-7",
       code: "source-failed",
@@ -168,7 +205,7 @@ describe("worker protocol", () => {
 
     await dispatchWorkerRequest(
       {
-        protocolVersion: 1,
+        protocolVersion: 2,
         type: "load-complete",
         requestId: "load-7",
         datasetId: "missing",
@@ -179,7 +216,7 @@ describe("worker protocol", () => {
 
     expect(responses).toEqual([
       {
-        protocolVersion: 1,
+        protocolVersion: 2,
         type: "error",
         requestId: "load-7",
         code: "dataset-not-ready",
@@ -204,24 +241,41 @@ describe("worker protocol", () => {
     const engine = new WorkerEngine();
 
     await dispatchWorkerRequest(
-      { protocolVersion: 1, type: "load-start", requestId: "load-1", datasetId: "dataset-1" },
+      {
+        protocolVersion: 2,
+        type: "load-start",
+        requestId: "load-1",
+        datasetId: "dataset-1",
+      },
       engine,
       (response) => responses.push(response),
     );
     await dispatchWorkerRequest(
-      { protocolVersion: 1, type: "load-chunk", requestId: "load-1", datasetId: "dataset-1", chunkIndex: 0, entries: [entry] },
+      {
+        protocolVersion: 2,
+        type: "load-chunk",
+        requestId: "load-1",
+        datasetId: "dataset-1",
+        chunkIndex: 0,
+        entries: [entry],
+      },
       engine,
       (response) => responses.push(response),
     );
     await dispatchWorkerRequest(
-      { protocolVersion: 1, type: "load-complete", requestId: "load-1", datasetId: "dataset-1" },
+      {
+        protocolVersion: 2,
+        type: "load-complete",
+        requestId: "load-1",
+        datasetId: "dataset-1",
+      },
       engine,
       (response) => responses.push(response),
     );
 
     expect(responses).toEqual([
       {
-        protocolVersion: 1,
+        protocolVersion: 2,
         type: "load-complete",
         requestId: "load-1",
         datasetId: "dataset-1",
@@ -235,29 +289,46 @@ describe("worker protocol", () => {
     const engine = new WorkerEngine();
 
     await dispatchWorkerRequest(
-      { protocolVersion: 1, type: "load-start", requestId: "load-1", datasetId: "dataset-1" },
+      {
+        protocolVersion: 2,
+        type: "load-start",
+        requestId: "load-1",
+        datasetId: "dataset-1",
+      },
       engine,
       (response) => responses.push(response),
     );
     await dispatchWorkerRequest(
-      { protocolVersion: 1, type: "load-chunk", requestId: "load-1", datasetId: "dataset-1", chunkIndex: 0, entries: [] },
+      {
+        protocolVersion: 2,
+        type: "load-chunk",
+        requestId: "load-1",
+        datasetId: "dataset-1",
+        chunkIndex: 0,
+        entries: [],
+      },
       engine,
       (response) => responses.push(response),
     );
     await dispatchWorkerRequest(
-      { protocolVersion: 1, type: "cancel", requestId: "load-1" },
+      { protocolVersion: 2, type: "cancel", requestId: "load-1" },
       engine,
       (response) => responses.push(response),
     );
     await dispatchWorkerRequest(
-      { protocolVersion: 1, type: "load-complete", requestId: "load-1", datasetId: "dataset-1" },
+      {
+        protocolVersion: 2,
+        type: "load-complete",
+        requestId: "load-1",
+        datasetId: "dataset-1",
+      },
       engine,
       (response) => responses.push(response),
     );
 
     expect(responses).toEqual([
       {
-        protocolVersion: 1,
+        protocolVersion: 2,
         type: "error",
         requestId: "load-1",
         code: "dataset-not-ready",
@@ -266,8 +337,13 @@ describe("worker protocol", () => {
     ]);
 
     const importResponses: WorkerResponse[] = [];
-    await engine.importKnown("load-1", "known.txt", "猫", (response) => importResponses.push(response));
-    expect(importResponses.at(-1)).toMatchObject({ type: "import-complete", requestId: "load-1" });
+    await engine.importKnown("load-1", "known.txt", "猫", (response) =>
+      importResponses.push(response),
+    );
+    expect(importResponses.at(-1)).toMatchObject({
+      type: "import-complete",
+      requestId: "load-1",
+    });
   });
 
   it("cleans partial load staging after a load error", async () => {
@@ -275,31 +351,48 @@ describe("worker protocol", () => {
     const engine = new WorkerEngine();
 
     await dispatchWorkerRequest(
-      { protocolVersion: 1, type: "load-start", requestId: "load-2", datasetId: "dataset-2" },
+      {
+        protocolVersion: 2,
+        type: "load-start",
+        requestId: "load-2",
+        datasetId: "dataset-2",
+      },
       engine,
       (response) => responses.push(response),
     );
     await dispatchWorkerRequest(
-      { protocolVersion: 1, type: "load-chunk", requestId: "load-2", datasetId: "dataset-2", chunkIndex: 1, entries: [] },
+      {
+        protocolVersion: 2,
+        type: "load-chunk",
+        requestId: "load-2",
+        datasetId: "dataset-2",
+        chunkIndex: 1,
+        entries: [],
+      },
       engine,
       (response) => responses.push(response),
     );
     await dispatchWorkerRequest(
-      { protocolVersion: 1, type: "load-complete", requestId: "load-2", datasetId: "dataset-2" },
+      {
+        protocolVersion: 2,
+        type: "load-complete",
+        requestId: "load-2",
+        datasetId: "dataset-2",
+      },
       engine,
       (response) => responses.push(response),
     );
 
     expect(responses).toEqual([
       {
-        protocolVersion: 1,
+        protocolVersion: 2,
         type: "error",
         requestId: "load-2",
         code: "invalid-chunk",
         message: "Unexpected dataset chunk index: 1",
       },
       {
-        protocolVersion: 1,
+        protocolVersion: 2,
         type: "error",
         requestId: "load-2",
         code: "dataset-not-ready",

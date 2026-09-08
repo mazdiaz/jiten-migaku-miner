@@ -67,18 +67,29 @@ export function computeCoverage(
 
   const unknownUniqueWords = totalUniqueWords - knownUniqueWords;
   const unknownTrackedOccurrences = totalTrackedOccurrences - knownTrackedOccurrences;
-  const coveragePercent = totalTrackedOccurrences === 0
-    ? null
-    : (knownTrackedOccurrences / totalTrackedOccurrences) * 100;
+  const coveragePercent =
+    totalTrackedOccurrences === 0
+      ? null
+      : (knownTrackedOccurrences / totalTrackedOccurrences) * 100;
 
   unknownWeights.sort((a, b) => b.weight - a.weight || a.originalIndex - b.originalIndex);
 
   const targetResults: CoverageTargetResult[] = targets.map((targetPercent) => {
     if (coveragePercent !== null && coveragePercent + TARGET_EPSILON >= targetPercent) {
-      return { targetPercent, reached: true, additionalWords: 0, additionalTrackedOccurrences: 0 };
+      return {
+        targetPercent,
+        reached: true,
+        additionalWords: 0,
+        additionalTrackedOccurrences: 0,
+      };
     }
     if (totalTrackedOccurrences === 0) {
-      return { targetPercent, reached: false, additionalWords: 0, additionalTrackedOccurrences: 0 };
+      return {
+        targetPercent,
+        reached: false,
+        additionalWords: 0,
+        additionalTrackedOccurrences: 0,
+      };
     }
 
     let additionalWords = 0;
@@ -90,7 +101,12 @@ export function computeCoverage(
         ((knownTrackedOccurrences + additionalTrackedOccurrences) / totalTrackedOccurrences) * 100;
       if (projected + TARGET_EPSILON >= targetPercent) break;
     }
-    return { targetPercent, reached: false, additionalWords, additionalTrackedOccurrences };
+    return {
+      targetPercent,
+      reached: false,
+      additionalWords,
+      additionalTrackedOccurrences,
+    };
   });
 
   return {

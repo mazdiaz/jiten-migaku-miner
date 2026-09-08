@@ -1,28 +1,33 @@
 import "fake-indexeddb/auto";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { CoverageStats, Entry, QueryResult, QueryState, ViewState, WordDecisionStatus } from "../../src/domain/types";
-import type { AppState, FileSource, MinerController } from "../../src/app/state";
-import { DEFAULT_QUERY, DEFAULT_VIEW } from "../../src/app/state";
 import {
   createMinerController,
   MAX_BACKUP_BYTES,
   type MinerControllerOptions,
 } from "../../src/app/controller";
-import type { WorkerClient, WorkerCoverageInput, WorkerQueryInput } from "../../src/app/worker-client";
+import type { AppState, MinerController } from "../../src/app/state";
+import { DEFAULT_QUERY, DEFAULT_VIEW } from "../../src/app/state";
+import type {
+  WorkerClient,
+  WorkerCoverageInput,
+  WorkerQueryInput,
+} from "../../src/app/worker-client";
+import { serializeBackup } from "../../src/domain/backup";
 import { computeCoverage } from "../../src/domain/coverage";
+import type {
+  CoverageStats,
+  Entry,
+  QueryResult,
+  QueryState,
+  ViewState,
+  WordDecisionStatus,
+} from "../../src/domain/types";
 import { createFileSource } from "../../src/platform/file-source";
 import { createFolderSource } from "../../src/platform/folder-source";
 import { createSessionQueueStore } from "../../src/platform/session-queue";
-import { serializeBackup } from "../../src/domain/backup";
+import type { AppStore, DatasetMetadata } from "../../src/storage/contracts";
 import { createMemoryAppStore } from "../../src/storage/memory-store";
-import type {
-  DatasetMetadata,
-  AppStore,
-} from "../../src/storage/contracts";
-import type {
-  ImportCompleteResponse,
-  ImportChunkResponse,
-} from "../../src/worker/protocol";
+import type { ImportChunkResponse, ImportCompleteResponse } from "../../src/worker/protocol";
 
 const query: QueryState = {
   search: "",
@@ -120,7 +125,7 @@ class FakeWorkerClient implements WorkerClient {
     const importing = this.nextJiten ?? {
       chunks: [[entry("new-entry", "新しい")]],
       complete: {
-        protocolVersion: 1 as const,
+        protocolVersion: 2 as const,
         type: "import-complete" as const,
         requestId: "import",
         kind: "jiten" as const,
@@ -130,15 +135,17 @@ class FakeWorkerClient implements WorkerClient {
         skippedRows: 0,
       },
     };
-    importing.chunks.forEach((entries, chunkIndex) => onChunk?.({
-      protocolVersion: 1,
-      type: "import-chunk",
-      requestId: importing.complete.requestId,
-      kind: "jiten",
-      name,
-      chunkIndex,
-      entries,
-    }));
+    importing.chunks.forEach((entries, chunkIndex) => {
+      onChunk?.({
+        protocolVersion: 2,
+        type: "import-chunk",
+        requestId: importing.complete.requestId,
+        kind: "jiten",
+        name,
+        chunkIndex,
+        entries,
+      });
+    });
     return { ...importing.complete, name };
   }
 
@@ -152,7 +159,7 @@ class FakeWorkerClient implements WorkerClient {
     const importing = this.nextKnown ?? {
       chunks: [["新しい"]],
       complete: {
-        protocolVersion: 1 as const,
+        protocolVersion: 2 as const,
         type: "import-complete" as const,
         requestId: "known-import",
         kind: "known" as const,
@@ -160,15 +167,17 @@ class FakeWorkerClient implements WorkerClient {
         wordCount: 1,
       },
     };
-    importing.chunks.forEach((words, chunkIndex) => onChunk?.({
-      protocolVersion: 1,
-      type: "import-chunk",
-      requestId: importing.complete.requestId,
-      kind: "known",
-      name,
-      chunkIndex,
-      words,
-    }));
+    importing.chunks.forEach((words, chunkIndex) => {
+      onChunk?.({
+        protocolVersion: 2,
+        type: "import-chunk",
+        requestId: importing.complete.requestId,
+        kind: "known",
+        name,
+        chunkIndex,
+        words,
+      });
+    });
     return { ...importing.complete, name };
   }
 
@@ -213,30 +222,50 @@ class FakeWorkerClient implements WorkerClient {
 class TestStorage implements Storage {
   private readonly values = new Map<string, string>();
 
-  get length(): number { return this.values.size; }
-  clear(): void { this.values.clear(); }
-  getItem(key: string): string | null { return this.values.get(key) ?? null; }
-  key(index: number): string | null { return [...this.values.keys()][index] ?? null; }
-  removeItem(key: string): void { this.values.delete(key); }
-  setItem(key: string, value: string): void { this.values.set(key, value); }
+  get length(): number {
+    return this.values.size;
+  }
+  clear(): void {
+    this.values.clear();
+  }
+  getItem(key: string): string | null {
+    return this.values.get(key) ?? null;
+  }
+  key(index: number): string | null {
+    return [...this.values.keys()][index] ?? null;
+  }
+  removeItem(key: string): void {
+    this.values.delete(key);
+  }
+  setItem(key: string, value: string): void {
+    this.values.set(key, value);
+  }
 }
 
 async function seedActive(store: AppStore, id = "old-dataset"): Promise<void> {
-  await store.datasets.stage(metadata(id), (async function* () {
-    yield [entry("old-entry", "古い")];
-  })());
+  await store.datasets.stage(
+    metadata(id),
+    (async function* () {
+      yield [entry("old-entry", "古い")];
+    })(),
+  );
   await store.datasets.activate(id);
 }
 
-function controllerOptions(store: AppStore, worker: FakeWorkerClient, storage?: Storage): MinerControllerOptions {
+function controllerOptions(
+  store: AppStore,
+  worker: FakeWorkerClient,
+  storage?: Storage,
+): MinerControllerOptions {
   return { store, worker, legacyStorage: storage ?? new TestStorage() };
 }
 
 function flakyAppStore(inner: AppStore, shouldFail: () => boolean): AppStore {
-  const failure = () => new Error("simulated late storage failure");
+  const failure = () => new DOMException("simulated late storage failure", "SecurityError");
   // Methods are bound to their owner objects; detaching them would lose `this`
   // and turn every call into a spurious fallback-triggering failure.
-  const guard = <A extends unknown[], R>(operation: (...args: A) => Promise<R>) =>
+  const guard =
+    <A extends unknown[], R>(operation: (...args: A) => Promise<R>) =>
     async (...args: A): Promise<R> => {
       if (shouldFail()) throw failure();
       return operation(...args);
@@ -325,7 +354,8 @@ function createDelayedAppStore(
   };
   // Methods are bound to their owner objects; detaching them would lose `this`
   // and turn every call into a spurious fallback-triggering failure.
-  const delay = <A extends unknown[], R>(method: string, operation: (...args: A) => Promise<R>) =>
+  const delay =
+    <A extends unknown[], R>(method: string, operation: (...args: A) => Promise<R>) =>
     async (...args: A): Promise<R> => {
       const state = gates.get(method);
       if (state !== undefined && (state.blocking || state.failNext)) {
@@ -365,7 +395,10 @@ function createDelayedAppStore(
         list: delay("wordDecisions.list", inner.wordDecisions.list.bind(inner.wordDecisions)),
         set: delay("wordDecisions.set", inner.wordDecisions.set.bind(inner.wordDecisions)),
         remove: delay("wordDecisions.remove", inner.wordDecisions.remove.bind(inner.wordDecisions)),
-        replaceAll: delay("wordDecisions.replaceAll", inner.wordDecisions.replaceAll.bind(inner.wordDecisions)),
+        replaceAll: delay(
+          "wordDecisions.replaceAll",
+          inner.wordDecisions.replaceAll.bind(inner.wordDecisions),
+        ),
       },
       preferences: {
         load: delay("preferences.load", inner.preferences.load.bind(inner.preferences)),
@@ -375,10 +408,7 @@ function createDelayedAppStore(
       ...(options.forwardRestoreUserState === false || inner.restoreUserState === undefined
         ? {}
         : {
-            restoreUserState: delay(
-              "restoreUserState",
-              inner.restoreUserState.bind(inner),
-            ),
+            restoreUserState: delay("restoreUserState", inner.restoreUserState.bind(inner)),
           }),
     },
     started,
@@ -397,7 +427,11 @@ describe("MinerController", () => {
     const store = createMemoryAppStore();
     await seedActive(store);
     await store.knownWords.save("known", "known.txt", ["古い"]);
-    await store.preferences.save({ query: { ...query, page: 2 }, view, page: 2 });
+    await store.preferences.save({
+      query: { ...query, page: 2 },
+      view,
+      page: 2,
+    });
     const worker = new FakeWorkerClient();
     worker.queryResult = { ...result(), page: 2, totalPages: 2 };
     const controller = createMinerController(controllerOptions(store, worker));
@@ -409,17 +443,20 @@ describe("MinerController", () => {
     const ready = states.at(-1)!;
     expect(ready).toMatchObject({
       dataset: metadata("old-dataset"),
-      page: 2,
+      query: { ...query, page: 2 },
       status: "ready",
       persistence: "memory",
     });
     expect(ready.knownWords).toEqual(new Set(["古い"]));
     expect(worker.loadCalls[0]).toMatchObject({ datasetId: "old-dataset" });
-    expect(worker.queryCalls[0]).toMatchObject({ datasetId: "old-dataset", knownWords: ["古い"] });
+    expect(worker.queryCalls[0]).toMatchObject({
+      datasetId: "old-dataset",
+      knownWords: ["古い"],
+    });
 
     controller.updateView({ showDefinitions: false });
-    expect(states[0]!.view.showDefinitions).toBe(true);
-    expect(states.at(-1)!.view.showDefinitions).toBe(false);
+    expect(states[0]?.view.showDefinitions).toBe(true);
+    expect(states.at(-1)?.view.showDefinitions).toBe(false);
     expect(states[0]).not.toBe(states.at(-1));
   });
 
@@ -462,8 +499,8 @@ describe("MinerController", () => {
     // persistPreferences is fire-and-forget; flush the lock chain before reading the store.
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(states.at(-1)!.view.sentenceSize).toBe("large");
-    expect(states.at(-1)!.view.density).toBe("compact");
+    expect(states.at(-1)?.view.sentenceSize).toBe("large");
+    expect(states.at(-1)?.view.density).toBe("compact");
     const saved = await store.preferences.load();
     expect(saved?.view.sentenceSize).toBe("large");
     expect(saved?.view.density).toBe("compact");
@@ -473,9 +510,12 @@ describe("MinerController", () => {
     const store = createMemoryAppStore();
     const broken = metadata("broken-dataset");
     broken.entryCount = 2;
-    await store.datasets.stage(broken, (async function* () {
-      yield [entry("only-entry", "一つ")];
-    })());
+    await store.datasets.stage(
+      broken,
+      (async function* () {
+        yield [entry("only-entry", "一つ")];
+      })(),
+    );
     await store.datasets.activate(broken.id);
     const worker = new FakeWorkerClient();
     const controller = createMinerController(controllerOptions(store, worker));
@@ -492,7 +532,11 @@ describe("MinerController", () => {
   it("keeps current dataset and visible data when replacement import fails", async () => {
     const store = createMemoryAppStore();
     await seedActive(store);
-    await store.preferences.save({ query: { ...query, page: 2 }, view, page: 2 });
+    await store.preferences.save({
+      query: { ...query, page: 2 },
+      view,
+      page: 2,
+    });
     const worker = new FakeWorkerClient();
     worker.importError = new Error("bad replacement");
     const controller = createMinerController(controllerOptions(store, worker));
@@ -501,14 +545,16 @@ describe("MinerController", () => {
     await controller.init();
     const before = states.at(-1)!;
 
-    await controller.importJiten({ name: "broken.csv", text: async () => "broken" });
+    await controller.importJiten({
+      name: "broken.csv",
+      text: async () => "broken",
+    });
 
     const after = states.at(-1)!;
     expect(after.dataset).toEqual(before.dataset);
     expect(after.knownWords).toEqual(before.knownWords);
     expect(after.query).toEqual(before.query);
     expect(after.view).toEqual(before.view);
-    expect(after.page).toBe(before.page);
     expect(after.status).toBe("error");
     expect(after.errorMessage).toContain("bad replacement");
     expect(await store.datasets.getActive()).toEqual(metadata("old-dataset"));
@@ -518,12 +564,16 @@ describe("MinerController", () => {
   it("stages replacement before activation and resets page after success", async () => {
     const store = createMemoryAppStore();
     await seedActive(store);
-    await store.preferences.save({ query: { ...query, page: 2 }, view, page: 2 });
+    await store.preferences.save({
+      query: { ...query, page: 2 },
+      view,
+      page: 2,
+    });
     const worker = new FakeWorkerClient();
     worker.nextJiten = {
       chunks: [[entry("new-entry", "新しい")]],
       complete: {
-        protocolVersion: 1,
+        protocolVersion: 2,
         type: "import-complete",
         requestId: "import-new",
         kind: "jiten",
@@ -549,14 +599,16 @@ describe("MinerController", () => {
     controller.subscribe((state) => states.push(state));
     await controller.init();
 
-    await controller.importJiten({ name: "new.csv", text: async () => "Word\n新しい" });
+    await controller.importJiten({
+      name: "new.csv",
+      text: async () => "Word\n新しい",
+    });
 
     const active = await store.datasets.getActive();
     expect(order).toEqual(["stage", "activate"]);
     expect(active?.sourceName).toBe("new.csv");
     expect(states.at(-1)).toMatchObject({
       dataset: active,
-      page: 1,
       query: { page: 1 },
       status: "ready",
       errorMessage: null,
@@ -564,8 +616,14 @@ describe("MinerController", () => {
     expect(worker.loadCalls.at(-1)?.datasetId).toBe(active?.id);
     expect(worker.queryCalls).toHaveLength(3);
     expect(worker.queryCalls[0]?.queryChannel).toBe("user");
-    expect(worker.queryCalls[1]).toMatchObject({ datasetId: active?.id, queryChannel: "candidate" });
-    expect(worker.queryCalls[2]).toMatchObject({ datasetId: active?.id, queryChannel: "user" });
+    expect(worker.queryCalls[1]).toMatchObject({
+      datasetId: active?.id,
+      queryChannel: "candidate",
+    });
+    expect(worker.queryCalls[2]).toMatchObject({
+      datasetId: active?.id,
+      queryChannel: "user",
+    });
   });
 
   it("refreshes the user query on the activated dataset after committing a replacement", async () => {
@@ -575,8 +633,12 @@ describe("MinerController", () => {
     const originalImport = worker.importJiten.bind(worker);
     let releaseImport: (() => void) | undefined;
     let importStarted: (() => void) | undefined;
-    const importGate = new Promise<void>((resolve) => { releaseImport = resolve; });
-    const importReady = new Promise<void>((resolve) => { importStarted = resolve; });
+    const importGate = new Promise<void>((resolve) => {
+      releaseImport = resolve;
+    });
+    const importReady = new Promise<void>((resolve) => {
+      importStarted = resolve;
+    });
     worker.importJiten = async (name, text, onChunk) => {
       importStarted?.();
       await importGate;
@@ -587,7 +649,10 @@ describe("MinerController", () => {
     controller.subscribe((state) => states.push(state));
     await controller.init();
 
-    const importing = controller.importJiten({ name: "new.csv", text: async () => "Word\n新しい" });
+    const importing = controller.importJiten({
+      name: "new.csv",
+      text: async () => "Word\n新しい",
+    });
     await importReady;
     controller.updateQuery({ search: "最新" });
     releaseImport?.();
@@ -620,7 +685,7 @@ describe("MinerController", () => {
     worker.nextKnown = {
       chunks: [["新しい"]],
       complete: {
-        protocolVersion: 1,
+        protocolVersion: 2,
         type: "import-complete",
         requestId: "known-new",
         kind: "known",
@@ -633,7 +698,10 @@ describe("MinerController", () => {
     controller.subscribe((state) => states.push(state));
     await controller.init();
 
-    await controller.importKnown({ name: "known.txt", text: async () => "新しい\n" });
+    await controller.importKnown({
+      name: "known.txt",
+      text: async () => "新しい\n",
+    });
 
     expect(states.at(-1)?.status).toBe("error");
     expect(states.at(-1)?.knownWords).toEqual(new Set(["古い"]));
@@ -652,7 +720,10 @@ describe("MinerController", () => {
     await controller.init();
     worker.loadError = new Error("worker load failed");
 
-    await controller.importJiten({ name: "new.csv", text: async () => "Word\n新しい" });
+    await controller.importJiten({
+      name: "new.csv",
+      text: async () => "Word\n新しい",
+    });
 
     expect(await store.datasets.getActive()).toEqual(metadata("old-dataset"));
     expect((await store.datasets.list()).map((dataset) => dataset.id)).toEqual(["old-dataset"]);
@@ -671,12 +742,15 @@ describe("MinerController", () => {
     await controller.init();
     worker.queryErrors.push(new Error("candidate query failed"));
 
-    await controller.importJiten({ name: "new.csv", text: async () => "Word\n新しい" });
+    await controller.importJiten({
+      name: "new.csv",
+      text: async () => "Word\n新しい",
+    });
 
     expect(await store.datasets.getActive()).toEqual(metadata("old-dataset"));
     expect((await store.datasets.list()).map((dataset) => dataset.id)).toEqual(["old-dataset"]);
     expect(states.at(-1)?.dataset).toEqual(metadata("old-dataset"));
-    expect(states.at(-1)?.page).toBe(1);
+    expect(states.at(-1)?.query.page).toBe(1);
 
     controller.changePage(1);
     await Promise.resolve();
@@ -693,8 +767,12 @@ describe("MinerController", () => {
     const originalLoad = worker.loadDataset.bind(worker);
     let releaseFirstLoad: (() => void) | undefined;
     let firstLoadStarted: (() => void) | undefined;
-    const firstLoad = new Promise<void>((resolve) => { releaseFirstLoad = resolve; });
-    const firstLoadReady = new Promise<void>((resolve) => { firstLoadStarted = resolve; });
+    const firstLoad = new Promise<void>((resolve) => {
+      releaseFirstLoad = resolve;
+    });
+    const firstLoadReady = new Promise<void>((resolve) => {
+      firstLoadStarted = resolve;
+    });
     let isFirstLoad = true;
     worker.loadDataset = async (datasetId, chunks) => {
       if (isFirstLoad) {
@@ -714,12 +792,18 @@ describe("MinerController", () => {
       store,
       worker,
       legacyStorage: new TestStorage(),
-      createId: (kind) => kind === "dataset" ? `dataset-${++nextDatasetId}` : "known-1",
+      createId: (kind) => (kind === "dataset" ? `dataset-${++nextDatasetId}` : "known-1"),
     });
 
-    const first = controller.importJiten({ name: "first.csv", text: async () => "Word\n一つ" });
+    const first = controller.importJiten({
+      name: "first.csv",
+      text: async () => "Word\n一つ",
+    });
     await firstLoadReady;
-    const second = controller.importJiten({ name: "second.csv", text: async () => "Word\n二つ" });
+    const second = controller.importJiten({
+      name: "second.csv",
+      text: async () => "Word\n二つ",
+    });
     releaseFirstLoad?.();
     await Promise.all([first, second]);
 
@@ -732,8 +816,12 @@ describe("MinerController", () => {
     const worker = new FakeWorkerClient();
     let releaseFirstActivation: (() => void) | undefined;
     let firstActivationStarted: (() => void) | undefined;
-    const firstActivation = new Promise<void>((resolve) => { releaseFirstActivation = resolve; });
-    const firstActivationReady = new Promise<void>((resolve) => { firstActivationStarted = resolve; });
+    const firstActivation = new Promise<void>((resolve) => {
+      releaseFirstActivation = resolve;
+    });
+    const firstActivationReady = new Promise<void>((resolve) => {
+      firstActivationStarted = resolve;
+    });
     const originalActivate = store.datasets.activate.bind(store.datasets);
     store.datasets.activate = async (datasetId) => {
       if (datasetId === "dataset-1") {
@@ -747,14 +835,20 @@ describe("MinerController", () => {
       store,
       worker,
       legacyStorage: new TestStorage(),
-      createId: (kind) => kind === "dataset" ? `dataset-${nextDatasetId++}` : "known-1",
+      createId: (kind) => (kind === "dataset" ? `dataset-${nextDatasetId++}` : "known-1"),
     });
     let nextDatasetId = 1;
     controller.subscribe((state) => states.push(state));
 
-    const first = controller.importJiten({ name: "first.csv", text: async () => "Word\n一つ" });
+    const first = controller.importJiten({
+      name: "first.csv",
+      text: async () => "Word\n一つ",
+    });
     await firstActivationReady;
-    const second = controller.importJiten({ name: "second.csv", text: async () => "Word\n二つ" });
+    const second = controller.importJiten({
+      name: "second.csv",
+      text: async () => "Word\n二つ",
+    });
     releaseFirstActivation?.();
     await Promise.all([first, second]);
 
@@ -770,7 +864,7 @@ describe("MinerController", () => {
     worker.nextJiten = {
       chunks: [[entry("new-entry", "新しい")]],
       complete: {
-        protocolVersion: 1,
+        protocolVersion: 2,
         type: "import-complete",
         requestId: "import-count",
         kind: "jiten",
@@ -785,7 +879,10 @@ describe("MinerController", () => {
     controller.subscribe((state) => states.push(state));
     await controller.init();
 
-    await controller.importJiten({ name: "new.csv", text: async () => "Word\n新しい" });
+    await controller.importJiten({
+      name: "new.csv",
+      text: async () => "Word\n新しい",
+    });
 
     expect(await store.datasets.getActive()).toEqual(metadata("old-dataset"));
     expect((await store.datasets.list()).map((dataset) => dataset.id)).toEqual(["old-dataset"]);
@@ -799,7 +896,7 @@ describe("MinerController", () => {
     worker.nextKnown = {
       chunks: [["古い"]],
       complete: {
-        protocolVersion: 1,
+        protocolVersion: 2,
         type: "import-complete",
         requestId: "known-new",
         kind: "known",
@@ -812,9 +909,12 @@ describe("MinerController", () => {
     controller.subscribe((state) => states.push(state));
     await controller.init();
 
-    await controller.importKnown({ name: "known.txt", text: async () => "古い\n" });
+    await controller.importKnown({
+      name: "known.txt",
+      text: async () => "古い\n",
+    });
 
-    expect(states.at(-1)!.knownWords).toEqual(new Set(["古い"]));
+    expect(states.at(-1)?.knownWords).toEqual(new Set(["古い"]));
     expect(worker.queryCalls.at(-1)?.knownWords).toEqual(["古い"]);
     expect(worker.queryCalls.at(-1)?.query.hideKnown).toBe(true);
     expect((await store.knownWords.getActive())?.words).toEqual(new Set(["古い"]));
@@ -830,7 +930,7 @@ describe("MinerController", () => {
     worker.nextKnown = {
       chunks: [["新しい"]],
       complete: {
-        protocolVersion: 1,
+        protocolVersion: 2,
         type: "import-complete",
         requestId: "known-new",
         kind: "known",
@@ -843,7 +943,10 @@ describe("MinerController", () => {
     controller.subscribe((state) => states.push(state));
     await controller.init();
 
-    await controller.importKnown({ name: "known.txt", text: async () => "新しい\n" });
+    await controller.importKnown({
+      name: "known.txt",
+      text: async () => "新しい\n",
+    });
 
     expect(states.at(-1)?.status).toBe("error");
     expect(states.at(-1)?.errorMessage).toContain("verification");
@@ -851,22 +954,33 @@ describe("MinerController", () => {
 
   it("falls back to memory persistence with visible warning when IndexedDB fails", async () => {
     const original = globalThis.indexedDB;
-    Object.defineProperty(globalThis, "indexedDB", { configurable: true, value: undefined });
+    Object.defineProperty(globalThis, "indexedDB", {
+      configurable: true,
+      value: undefined,
+    });
     const worker = new FakeWorkerClient();
-    const controller = createMinerController({ worker, legacyStorage: new TestStorage() });
+    const controller = createMinerController({
+      worker,
+      legacyStorage: new TestStorage(),
+    });
     const states: Readonly<AppState>[] = [];
     controller.subscribe((state) => states.push(state));
 
     await controller.init();
 
-    expect(states.at(-1)!.persistence).toBe("memory");
-    expect(states.at(-1)!.errorMessage?.toLowerCase()).toContain("memory");
-    Object.defineProperty(globalThis, "indexedDB", { configurable: true, value: original });
+    expect(states.at(-1)?.persistence).toBe("memory");
+    expect(states.at(-1)?.errorMessage?.toLowerCase()).toContain("memory");
+    Object.defineProperty(globalThis, "indexedDB", {
+      configurable: true,
+      value: original,
+    });
   });
 
   it("switches to memory and keeps warning after a later IndexedDB stage failure", async () => {
     const failingStore = createMemoryAppStore();
-    failingStore.datasets.stage = async () => { throw new Error("IndexedDB stage failed"); };
+    failingStore.datasets.stage = async () => {
+      throw new DOMException("IndexedDB stage failed", "SecurityError");
+    };
     const worker = new FakeWorkerClient();
     const controller = createMinerController({
       indexedDbStoreFactory: () => failingStore,
@@ -877,7 +991,10 @@ describe("MinerController", () => {
     controller.subscribe((state) => states.push(state));
     await controller.init();
 
-    await controller.importJiten({ name: "new.csv", text: async () => "Word\n新しい" });
+    await controller.importJiten({
+      name: "new.csv",
+      text: async () => "Word\n新しい",
+    });
 
     expect(states.at(-1)?.persistence).toBe("memory");
     expect(states.at(-1)?.errorMessage?.toLowerCase()).toContain("memory");
@@ -888,7 +1005,9 @@ describe("MinerController", () => {
 
   it("switches to memory when preference persistence fails after initialization", async () => {
     const failingStore = createMemoryAppStore();
-    failingStore.preferences.save = async () => { throw new Error("IndexedDB preferences failed"); };
+    failingStore.preferences.save = async () => {
+      throw new DOMException("IndexedDB preferences failed", "SecurityError");
+    };
     const controller = createMinerController({
       indexedDbStoreFactory: () => failingStore,
       worker: new FakeWorkerClient(),
@@ -915,7 +1034,10 @@ describe("MinerController", () => {
     });
     await controller.init();
 
-    await controller.importKnown({ name: "known.txt", text: async () => "新しい\n" });
+    await controller.importKnown({
+      name: "known.txt",
+      text: async () => "新しい\n",
+    });
     failing = true;
     await controller.setWordDecision("新しい", "known").catch(() => undefined);
     failing = false;
@@ -925,13 +1047,17 @@ describe("MinerController", () => {
     expect(backup.knownWords.words).toContain("新しい");
     // The retried decision write succeeds against the replacement store, so the
     // export reflects the real post-fallback state; nothing is fabricated.
-    expect(backup.wordDecisions.map((d: { normalizedWord: string }) => d.normalizedWord)).toEqual(["新しい"]);
+    expect(backup.wordDecisions.map((d: { normalizedWord: string }) => d.normalizedWord)).toEqual([
+      "新しい",
+    ]);
   });
 
   it("clears abandoned persistent data and keeps fallback warning after clear", async () => {
     const persistent = createMemoryAppStore();
     await seedActive(persistent);
-    persistent.datasets.stage = async () => { throw new Error("persistent stage failed"); };
+    persistent.datasets.stage = async () => {
+      throw new DOMException("persistent stage failed", "SecurityError");
+    };
     const worker = new FakeWorkerClient();
     const controller = createMinerController({
       indexedDbStoreFactory: () => persistent,
@@ -942,7 +1068,10 @@ describe("MinerController", () => {
     controller.subscribe((state) => states.push(state));
     await controller.init();
 
-    await controller.importJiten({ name: "new.csv", text: async () => "Word\n新しい" });
+    await controller.importJiten({
+      name: "new.csv",
+      text: async () => "Word\n新しい",
+    });
     await controller.clearSavedData();
 
     expect(await persistent.datasets.getActive()).toBeNull();
@@ -975,11 +1104,15 @@ describe("MinerController", () => {
     const worker = new FakeWorkerClient();
     let candidateStarted: (() => void) | undefined;
     let rejectCandidate: ((reason: unknown) => void) | undefined;
-    const candidateReady = new Promise<void>((resolve) => { candidateStarted = resolve; });
+    const candidateReady = new Promise<void>((resolve) => {
+      candidateStarted = resolve;
+    });
     worker.queryHandler = async (request) => {
       if (request.datasetId === "candidate") {
         candidateStarted?.();
-        return new Promise<QueryResult>((_resolve, reject) => { rejectCandidate = reject; });
+        return new Promise<QueryResult>((_resolve, reject) => {
+          rejectCandidate = reject;
+        });
       }
       return result();
     };
@@ -987,13 +1120,16 @@ describe("MinerController", () => {
       store,
       worker,
       legacyStorage: new TestStorage(),
-      createId: (kind) => kind === "dataset" ? "candidate" : "known-1",
+      createId: (kind) => (kind === "dataset" ? "candidate" : "known-1"),
     });
     const states: Readonly<AppState>[] = [];
     controller.subscribe((state) => states.push(state));
     await controller.init();
 
-    const importing = controller.importJiten({ name: "new.csv", text: async () => "Word\n新しい" });
+    const importing = controller.importJiten({
+      name: "new.csv",
+      text: async () => "Word\n新しい",
+    });
     await candidateReady;
     controller.updateQuery({ search: "最新" });
     rejectCandidate?.(new Error("candidate query superseded"));
@@ -1008,9 +1144,14 @@ describe("MinerController", () => {
 
   it("retries legacy migration in memory after a later persistence failure", async () => {
     const failingStore = createMemoryAppStore();
-    failingStore.datasets.stage = async () => { throw new Error("IndexedDB migration stage failed"); };
+    failingStore.datasets.stage = async () => {
+      throw new DOMException("IndexedDB migration stage failed", "SecurityError");
+    };
     const storage = new TestStorage();
-    storage.setItem("jitenMiner.v1", JSON.stringify({ mediaFileName: "legacy.csv", mediaText: "Word\n猫" }));
+    storage.setItem(
+      "jitenMiner.v1",
+      JSON.stringify({ mediaFileName: "legacy.csv", mediaText: "Word\n猫" }),
+    );
     const controller = createMinerController({
       indexedDbStoreFactory: () => failingStore,
       worker: new FakeWorkerClient(),
@@ -1052,7 +1193,10 @@ describe("MinerController", () => {
 
     controller.updateViewport(4_500);
     await flushMicrotasks();
-    expect(worker.queryCalls.at(-1)?.window).toEqual({ start: 4_500, size: 100 });
+    expect(worker.queryCalls.at(-1)?.window).toEqual({
+      start: 4_500,
+      size: 100,
+    });
     expect(worker.queryCalls.at(-1)?.query.pageSize).toBe("all");
     expect(states.at(-1)?.status).toBe("ready");
 
@@ -1109,7 +1253,9 @@ function responseLike(
     ok: options.ok ?? true,
     redirected: false,
     url,
-    headers: new Headers(options.lastModified ? { "Last-Modified": options.lastModified } : undefined),
+    headers: new Headers(
+      options.lastModified ? { "Last-Modified": options.lastModified } : undefined,
+    ),
     text: async () => body,
   } as Response;
 }
@@ -1120,7 +1266,11 @@ async function flushMicrotasks(rounds = 6): Promise<void> {
 
 const FIXED_NOW = "2026-09-05T00:00:00.000Z";
 
-function decisionOptions(store: AppStore, worker: FakeWorkerClient, storage?: Storage): MinerControllerOptions {
+function decisionOptions(
+  store: AppStore,
+  worker: FakeWorkerClient,
+  storage?: Storage,
+): MinerControllerOptions {
   return { ...controllerOptions(store, worker, storage), now: () => FIXED_NOW };
 }
 
@@ -1132,11 +1282,23 @@ describe("MinerController word decisions", () => {
   it("restores persisted decisions on initialization and defaults missing preference decision to all", async () => {
     const store = createMemoryAppStore();
     await seedActive(store);
-    await store.wordDecisions.set({ normalizedWord: "猫", status: "known", updatedAt: "2026-09-01T00:00:00.000Z" });
-    await store.wordDecisions.set({ normalizedWord: "犬", status: "later", updatedAt: "2026-09-01T00:00:00.000Z" });
+    await store.wordDecisions.set({
+      normalizedWord: "猫",
+      status: "known",
+      updatedAt: "2026-09-01T00:00:00.000Z",
+    });
+    await store.wordDecisions.set({
+      normalizedWord: "犬",
+      status: "later",
+      updatedAt: "2026-09-01T00:00:00.000Z",
+    });
     const legacyQuery: Record<string, unknown> = { ...query };
     delete legacyQuery.decision;
-    await store.preferences.save({ query: legacyQuery as unknown as QueryState, view, page: 1 });
+    await store.preferences.save({
+      query: legacyQuery as unknown as QueryState,
+      view,
+      page: 1,
+    });
     const worker = new FakeWorkerClient();
     const controller = createMinerController(decisionOptions(store, worker));
     const states: Readonly<AppState>[] = [];
@@ -1148,7 +1310,12 @@ describe("MinerController word decisions", () => {
     expect(final.wordDecisions.get("猫")).toMatchObject({ status: "known" });
     expect(final.wordDecisions.get("犬")).toMatchObject({ status: "later" });
     expect(final.query.decision).toBe("all");
-    expect(worker.queryCalls[0]?.decisions).toEqual(expect.arrayContaining([["猫", "known"], ["犬", "later"]]));
+    expect(worker.queryCalls[0]?.decisions).toEqual(
+      expect.arrayContaining([
+        ["猫", "known"],
+        ["犬", "later"],
+      ]),
+    );
   });
 
   it("marks known, persists the record, and sends the decision on the next query", async () => {
@@ -1167,7 +1334,9 @@ describe("MinerController word decisions", () => {
       status: "known",
       updatedAt: FIXED_NOW,
     });
-    expect(states.at(-1)?.wordDecisions.get("猫")).toMatchObject({ status: "known" });
+    expect(states.at(-1)?.wordDecisions.get("猫")).toMatchObject({
+      status: "known",
+    });
     expect(worker.queryCalls.at(-1)?.decisions).toEqual([["猫", "known"]]);
   });
 
@@ -1182,7 +1351,9 @@ describe("MinerController word decisions", () => {
 
     await controller.setWordDecision("猫", "mined");
 
-    expect(await store.wordDecisions.get("猫")).toMatchObject({ status: "mined" });
+    expect(await store.wordDecisions.get("猫")).toMatchObject({
+      status: "mined",
+    });
     expect(states.at(-1)?.knownWords.size).toBe(0);
     expect(worker.queryCalls.at(-1)?.knownWords).toEqual([]);
     expect(worker.queryCalls.at(-1)?.decisions).toEqual([["猫", "mined"]]);
@@ -1191,7 +1362,11 @@ describe("MinerController word decisions", () => {
   it("removes the store record when resetting to unreviewed", async () => {
     const store = createMemoryAppStore();
     await seedActive(store);
-    await store.wordDecisions.set({ normalizedWord: "猫", status: "known", updatedAt: "2026-09-01T00:00:00.000Z" });
+    await store.wordDecisions.set({
+      normalizedWord: "猫",
+      status: "known",
+      updatedAt: "2026-09-01T00:00:00.000Z",
+    });
     const worker = new FakeWorkerClient();
     const controller = createMinerController(decisionOptions(store, worker));
     const states: Readonly<AppState>[] = [];
@@ -1209,7 +1384,9 @@ describe("MinerController word decisions", () => {
   it("keeps prior state and surfaces an error when the decision write fails", async () => {
     const store = createMemoryAppStore();
     await seedActive(store);
-    store.wordDecisions.set = async () => { throw new Error("decision write failed"); };
+    store.wordDecisions.set = async () => {
+      throw new Error("decision write failed");
+    };
     const worker = new FakeWorkerClient();
     const controller = createMinerController(decisionOptions(store, worker));
     const states: Readonly<AppState>[] = [];
@@ -1228,29 +1405,44 @@ describe("MinerController word decisions", () => {
   it("keeps decisions when a new Jiten CSV is imported", async () => {
     const store = createMemoryAppStore();
     await seedActive(store);
-    await store.wordDecisions.set({ normalizedWord: "猫", status: "known", updatedAt: "2026-09-01T00:00:00.000Z" });
+    await store.wordDecisions.set({
+      normalizedWord: "猫",
+      status: "known",
+      updatedAt: "2026-09-01T00:00:00.000Z",
+    });
     const worker = new FakeWorkerClient();
     const controller = createMinerController(decisionOptions(store, worker));
     const states: Readonly<AppState>[] = [];
     controller.subscribe((state) => states.push(state));
     await controller.init();
 
-    await controller.importJiten({ name: "new.csv", text: async () => "Word\n新しい" });
+    await controller.importJiten({
+      name: "new.csv",
+      text: async () => "Word\n新しい",
+    });
 
-    expect(await store.wordDecisions.get("猫")).toMatchObject({ status: "known" });
-    expect(states.at(-1)?.wordDecisions.get("猫")).toMatchObject({ status: "known" });
+    expect(await store.wordDecisions.get("猫")).toMatchObject({
+      status: "known",
+    });
+    expect(states.at(-1)?.wordDecisions.get("猫")).toMatchObject({
+      status: "known",
+    });
     expect(worker.queryCalls.at(-1)?.decisions).toEqual([["猫", "known"]]);
   });
 
   it("keeps decisions when the Migaku known file is replaced", async () => {
     const store = createMemoryAppStore();
     await seedActive(store);
-    await store.wordDecisions.set({ normalizedWord: "猫", status: "mined", updatedAt: "2026-09-01T00:00:00.000Z" });
+    await store.wordDecisions.set({
+      normalizedWord: "猫",
+      status: "mined",
+      updatedAt: "2026-09-01T00:00:00.000Z",
+    });
     const worker = new FakeWorkerClient();
     worker.nextKnown = {
       chunks: [["犬"]],
       complete: {
-        protocolVersion: 1,
+        protocolVersion: 2,
         type: "import-complete",
         requestId: "known-new",
         kind: "known",
@@ -1263,10 +1455,17 @@ describe("MinerController word decisions", () => {
     controller.subscribe((state) => states.push(state));
     await controller.init();
 
-    await controller.importKnown({ name: "known.txt", text: async () => "犬\n" });
+    await controller.importKnown({
+      name: "known.txt",
+      text: async () => "犬\n",
+    });
 
-    expect(await store.wordDecisions.get("猫")).toMatchObject({ status: "mined" });
-    expect(states.at(-1)?.wordDecisions.get("猫")).toMatchObject({ status: "mined" });
+    expect(await store.wordDecisions.get("猫")).toMatchObject({
+      status: "mined",
+    });
+    expect(states.at(-1)?.wordDecisions.get("猫")).toMatchObject({
+      status: "mined",
+    });
     expect(states.at(-1)?.knownWords).toEqual(new Set(["犬"]));
     expect(worker.queryCalls.at(-1)?.decisions).toEqual([["猫", "mined"]]);
   });
@@ -1274,7 +1473,11 @@ describe("MinerController word decisions", () => {
   it("removes decisions when saved data is cleared", async () => {
     const store = createMemoryAppStore();
     await seedActive(store);
-    await store.wordDecisions.set({ normalizedWord: "猫", status: "known", updatedAt: "2026-09-01T00:00:00.000Z" });
+    await store.wordDecisions.set({
+      normalizedWord: "猫",
+      status: "known",
+      updatedAt: "2026-09-01T00:00:00.000Z",
+    });
     const worker = new FakeWorkerClient();
     const controller = createMinerController(decisionOptions(store, worker));
     const states: Readonly<AppState>[] = [];
@@ -1290,9 +1493,18 @@ describe("MinerController word decisions", () => {
   it("preserves the current page when the changed row stays in the result set", async () => {
     const store = createMemoryAppStore();
     await seedActive(store);
-    await store.preferences.save({ query: { ...query, page: 2 }, view, page: 2 });
+    await store.preferences.save({
+      query: { ...query, page: 2 },
+      view,
+      page: 2,
+    });
     const worker = new FakeWorkerClient();
-    worker.queryResult = { ...result(), page: 2, totalPages: 2, totalEntries: 100 };
+    worker.queryResult = {
+      ...result(),
+      page: 2,
+      totalPages: 2,
+      totalEntries: 100,
+    };
     const controller = createMinerController(decisionOptions(store, worker));
     const states: Readonly<AppState>[] = [];
     controller.subscribe((state) => states.push(state));
@@ -1300,7 +1512,7 @@ describe("MinerController word decisions", () => {
 
     await controller.setWordDecision("猫", "known");
 
-    expect(states.at(-1)?.page).toBe(2);
+    expect(states.at(-1)?.query.page).toBe(2);
     expect(worker.queryCalls.at(-1)?.query.page).toBe(2);
     expect(worker.queryCalls.at(-1)?.decisions).toEqual([["猫", "known"]]);
   });
@@ -1308,7 +1520,11 @@ describe("MinerController word decisions", () => {
   it("clamps the page when the decision filter drops the last item on the last page", async () => {
     const store = createMemoryAppStore();
     await seedActive(store);
-    await store.preferences.save({ query: { ...query, page: 2 }, view, page: 2 });
+    await store.preferences.save({
+      query: { ...query, page: 2 },
+      view,
+      page: 2,
+    });
     const worker = new FakeWorkerClient();
     worker.queryHandler = async (request) => {
       if ((request.decisions ?? []).some(([word]) => word === "猫")) {
@@ -1320,11 +1536,11 @@ describe("MinerController word decisions", () => {
     const states: Readonly<AppState>[] = [];
     controller.subscribe((state) => states.push(state));
     await controller.init();
-    expect(states.at(-1)?.page).toBe(2);
+    expect(states.at(-1)?.query.page).toBe(2);
 
     await controller.setWordDecision("猫", "known");
 
-    expect(states.at(-1)?.page).toBe(1);
+    expect(states.at(-1)?.query.page).toBe(1);
     expect(worker.queryCalls.at(-1)?.query.page).toBe(2);
   });
 
@@ -1342,8 +1558,13 @@ describe("MinerController word decisions", () => {
       controller.setWordDecision("猫", "mined"),
     ]);
 
-    expect(await store.wordDecisions.get("猫")).toMatchObject({ status: "mined", updatedAt: FIXED_NOW });
-    expect(states.at(-1)?.wordDecisions.get("猫")).toMatchObject({ status: "mined" });
+    expect(await store.wordDecisions.get("猫")).toMatchObject({
+      status: "mined",
+      updatedAt: FIXED_NOW,
+    });
+    expect(states.at(-1)?.wordDecisions.get("猫")).toMatchObject({
+      status: "mined",
+    });
     expect(worker.queryCalls.at(-1)?.decisions).toEqual([["猫", "mined"]]);
   });
 });
@@ -1391,10 +1612,16 @@ describe("MinerController one-step undo", () => {
     expect(states.at(-1)?.undo).toEqual({ available: false, label: null });
 
     await controller.setWordDecision("新しい", "known");
-    expect(states.at(-1)?.undo).toEqual({ available: true, label: "Undo Known — 新しい" });
+    expect(states.at(-1)?.undo).toEqual({
+      available: true,
+      label: "Undo Known — 新しい",
+    });
 
     await controller.setWordDecision("新しい", "later");
-    expect(states.at(-1)?.undo).toEqual({ available: true, label: "Undo Later — 新しい" });
+    expect(states.at(-1)?.undo).toEqual({
+      available: true,
+      label: "Undo Later — 新しい",
+    });
 
     await controller.undoLastDecision();
     expect(states.at(-1)?.undo).toEqual({ available: false, label: null });
@@ -1446,7 +1673,11 @@ describe("MinerController one-step undo", () => {
   it("undoes a mined decision back to the prior known status", async () => {
     const store = createMemoryAppStore();
     await seedActive(store);
-    await store.wordDecisions.set({ normalizedWord: "猫", status: "known", updatedAt: "2026-09-01T00:00:00.000Z" });
+    await store.wordDecisions.set({
+      normalizedWord: "猫",
+      status: "known",
+      updatedAt: "2026-09-01T00:00:00.000Z",
+    });
     const worker = new FakeWorkerClient();
     const controller = createMinerController(decisionOptions(store, worker));
     const states: Readonly<AppState>[] = [];
@@ -1454,7 +1685,9 @@ describe("MinerController one-step undo", () => {
     await controller.init();
 
     await controller.setWordDecision("猫", "mined");
-    expect(states.at(-1)?.wordDecisions.get("猫")).toMatchObject({ status: "mined" });
+    expect(states.at(-1)?.wordDecisions.get("猫")).toMatchObject({
+      status: "mined",
+    });
 
     await controller.undoLastDecision();
 
@@ -1463,7 +1696,9 @@ describe("MinerController one-step undo", () => {
       status: "known",
       updatedAt: FIXED_NOW,
     });
-    expect(states.at(-1)?.wordDecisions.get("猫")).toMatchObject({ status: "known" });
+    expect(states.at(-1)?.wordDecisions.get("猫")).toMatchObject({
+      status: "known",
+    });
     expect(worker.queryCalls.at(-1)?.decisions).toEqual([["猫", "known"]]);
   });
 
@@ -1498,14 +1733,16 @@ describe("MinerController one-step undo", () => {
     await controller.setWordDecision("猫", "known");
     expect(states.at(-1)?.undo.available).toBe(true);
 
-    await controller.restoreBackup(JSON.stringify({
-      format: "jiten-migaku-miner-backup",
-      version: 1,
-      exportedAt: "2026-09-06T00:00:00.000Z",
-      knownWords: null,
-      wordDecisions: [],
-      preferences: null,
-    }));
+    await controller.restoreBackup(
+      JSON.stringify({
+        format: "jiten-migaku-miner-backup",
+        version: 1,
+        exportedAt: "2026-09-06T00:00:00.000Z",
+        knownWords: null,
+        wordDecisions: [],
+        preferences: null,
+      }),
+    );
 
     expect(states.at(-1)?.undo).toEqual({ available: false, label: null });
   });
@@ -1515,7 +1752,10 @@ describe("MinerController one-step undo", () => {
     await controller.setWordDecision("猫", "known");
     expect(states.at(-1)?.undo.available).toBe(true);
 
-    await controller.importJiten({ name: "new.csv", text: async () => "Word\n新しい" });
+    await controller.importJiten({
+      name: "new.csv",
+      text: async () => "Word\n新しい",
+    });
 
     expect(states.at(-1)?.undo).toEqual({ available: false, label: null });
   });
@@ -1532,16 +1772,25 @@ describe("MinerController one-step undo", () => {
     store.wordDecisions.remove = originalRemove;
 
     // The decision is still known everywhere and the undo stays retryable.
-    expect(await store.wordDecisions.get("猫")).toMatchObject({ status: "known" });
-    expect(states.at(-1)?.wordDecisions.get("猫")).toMatchObject({ status: "known" });
-    expect(states.at(-1)?.undo).toEqual({ available: true, label: "Undo Known — 猫" });
+    expect(await store.wordDecisions.get("猫")).toMatchObject({
+      status: "known",
+    });
+    expect(states.at(-1)?.wordDecisions.get("猫")).toMatchObject({
+      status: "known",
+    });
+    expect(states.at(-1)?.undo).toEqual({
+      available: true,
+      label: "Undo Known — 猫",
+    });
     expect(states.at(-1)?.errorMessage).toContain("undo write failed");
   });
 
   it("drops the queue re-add when a concurrent restore wins the lock", async () => {
     const inner = createMemoryAppStore();
     await seedActive(inner);
-    const delayed = createDelayedAppStore(inner, { forwardRestoreUserState: false });
+    const delayed = createDelayedAppStore(inner, {
+      forwardRestoreUserState: false,
+    });
     const worker = new FakeWorkerClient();
     const controller = createMinerController({
       store: delayed.store,
@@ -1649,16 +1898,19 @@ describe("MinerController review mode", () => {
     };
   }
 
-    function installPool(worker: FakeWorkerClient, pool: Entry[]): void {
-      worker.queryHandler = async (request) => {
-        // The real worker matches decisions against entries case-insensitively.
-        const decided = new Set((request.decisions ?? []).map(([word]) => word.toLocaleLowerCase()));
-        const remaining = pool.filter((value) => !decided.has(value.normalizedWord.toLocaleLowerCase()));
-      const numericSize = request.query.pageSize === "all" ? Math.max(1, remaining.length) : Number(request.query.pageSize);
+  function installPool(worker: FakeWorkerClient, pool: Entry[]): void {
+    worker.queryHandler = async (request) => {
+      // The real worker matches decisions against entries case-insensitively.
+      const decided = new Set((request.decisions ?? []).map(([word]) => word.toLocaleLowerCase()));
+      const remaining = pool.filter(
+        (value) => !decided.has(value.normalizedWord.toLocaleLowerCase()),
+      );
+      const numericSize =
+        request.query.pageSize === "all"
+          ? Math.max(1, remaining.length)
+          : Number(request.query.pageSize);
       const page = Math.max(1, request.query.page);
-      const items = remaining
-        .slice((page - 1) * numericSize, page * numericSize)
-        .map(decorated);
+      const items = remaining.slice((page - 1) * numericSize, page * numericSize).map(decorated);
       return {
         ...result(items),
         totalEntries: remaining.length,
@@ -1679,7 +1931,18 @@ describe("MinerController review mode", () => {
   it("startReview queries unreviewed-only with page size 1 and leaves normal query state untouched", async () => {
     const { store, worker, controller, states } = setup();
     await seedActive(store);
-    await store.preferences.save({ query: { ...query, search: "猫", sort: "occ-asc", page: 3, hideKanaOnly: true, decision: "mined" }, view, page: 3 });
+    await store.preferences.save({
+      query: {
+        ...query,
+        search: "猫",
+        sort: "occ-asc",
+        page: 3,
+        hideKanaOnly: true,
+        decision: "mined",
+      },
+      view,
+      page: 3,
+    });
     installPool(worker, reviewPool());
     await controller.init();
     const before = states.at(-1)!;
@@ -1693,7 +1956,6 @@ describe("MinerController review mode", () => {
     expect(final.review.initialTotal).toBe(3);
     expect(final.review.remaining).toBe(3);
     expect(final.query).toEqual(before.query);
-    expect(final.page).toBe(before.page);
 
     const reviewCall = worker.queryCalls.find((call) => call.queryChannel === "review");
     expect(reviewCall).toBeDefined();
@@ -1713,16 +1975,16 @@ describe("MinerController review mode", () => {
     await controller.init();
 
     await controller.startReview();
-    expect(states.at(-1)!.review.current?.normalizedWord).toBe("A");
+    expect(states.at(-1)?.review.current?.normalizedWord).toBe("A");
 
     await controller.reviewDecision("mined");
-    expect(states.at(-1)!.review.current?.normalizedWord).toBe("B");
-    expect(states.at(-1)!.review.processed).toBe(1);
-    expect(states.at(-1)!.review.remaining).toBe(2);
+    expect(states.at(-1)?.review.current?.normalizedWord).toBe("B");
+    expect(states.at(-1)?.review.processed).toBe(1);
+    expect(states.at(-1)?.review.remaining).toBe(2);
 
     await controller.reviewDecision("later");
-    expect(states.at(-1)!.review.current?.normalizedWord).toBe("C");
-    expect(states.at(-1)!.review.processed).toBe(2);
+    expect(states.at(-1)?.review.current?.normalizedWord).toBe("C");
+    expect(states.at(-1)?.review.processed).toBe(2);
 
     await controller.reviewDecision("known");
     const final = states.at(-1)!.review;
@@ -1736,8 +1998,15 @@ describe("MinerController review mode", () => {
     expect(reviewCalls.length).toBe(4);
     for (const call of reviewCalls) expect(call.query.page).toBe(1);
     expect(reviewCalls[1]?.decisions).toEqual([["a", "mined"]]);
-    expect(reviewCalls[2]?.decisions).toEqual([["a", "mined"], ["b", "later"]]);
-    expect(reviewCalls[3]?.decisions).toEqual([["a", "mined"], ["b", "later"], ["c", "known"]]);
+    expect(reviewCalls[2]?.decisions).toEqual([
+      ["a", "mined"],
+      ["b", "later"],
+    ]);
+    expect(reviewCalls[3]?.decisions).toEqual([
+      ["a", "mined"],
+      ["b", "later"],
+      ["c", "known"],
+    ]);
   });
 
   it("keeps mined separate from known while reviewing", async () => {
@@ -1749,9 +2018,13 @@ describe("MinerController review mode", () => {
 
     await controller.reviewDecision("mined");
 
-    expect(await store.wordDecisions.get("a")).toMatchObject({ status: "mined" });
-    expect(states.at(-1)!.knownWords.size).toBe(0);
-    expect(states.at(-1)!.wordDecisions.get("a")).toMatchObject({ status: "mined" });
+    expect(await store.wordDecisions.get("a")).toMatchObject({
+      status: "mined",
+    });
+    expect(states.at(-1)?.knownWords.size).toBe(0);
+    expect(states.at(-1)?.wordDecisions.get("a")).toMatchObject({
+      status: "mined",
+    });
   });
 
   it("keeps the current entry and surfaces an error when the decision write fails", async () => {
@@ -1760,7 +2033,7 @@ describe("MinerController review mode", () => {
     installPool(worker, reviewPool());
     await controller.init();
     await controller.startReview();
-    expect(states.at(-1)!.review.current?.normalizedWord).toBe("A");
+    expect(states.at(-1)?.review.current?.normalizedWord).toBe("A");
 
     store.wordDecisions.set = async () => {
       throw new Error("decision write failed");
@@ -1801,7 +2074,9 @@ describe("MinerController review mode", () => {
     await Promise.all([first, second]);
 
     const review = states.at(-1)!.review;
-    expect(await store.wordDecisions.get("a")).toMatchObject({ status: "mined" });
+    expect(await store.wordDecisions.get("a")).toMatchObject({
+      status: "mined",
+    });
     expect(review.current?.normalizedWord).toBe("B");
     expect(review.processed).toBe(1);
   });
@@ -1819,7 +2094,9 @@ describe("MinerController review mode", () => {
     const final = states.at(-1)!;
     expect(final.review.active).toBe(false);
     expect(final.review.status).toBe("idle");
-    expect(await store.wordDecisions.get("a")).toMatchObject({ status: "mined" });
+    expect(await store.wordDecisions.get("a")).toMatchObject({
+      status: "mined",
+    });
     expect(final.query.decision).toBe("all");
   });
 
@@ -1830,12 +2107,16 @@ describe("MinerController review mode", () => {
     await controller.init();
 
     await controller.reviewDecision("known");
-    expect(states.at(-1)!.review.active).toBe(false);
+    expect(states.at(-1)?.review.active).toBe(false);
 
     await controller.startReview();
-    const reviewCallsBefore = worker.queryCalls.filter((call) => call.queryChannel === "review").length;
+    const reviewCallsBefore = worker.queryCalls.filter(
+      (call) => call.queryChannel === "review",
+    ).length;
     await controller.startReview();
-    expect(worker.queryCalls.filter((call) => call.queryChannel === "review").length).toBe(reviewCallsBefore);
+    expect(worker.queryCalls.filter((call) => call.queryChannel === "review").length).toBe(
+      reviewCallsBefore,
+    );
   });
 
   it("review decisions share identity with list decisions on mixed-case words", async () => {
@@ -1845,7 +2126,7 @@ describe("MinerController review mode", () => {
     await controller.init();
 
     await controller.startReview();
-    expect(states.at(-1)!.review.current?.normalizedWord).toBe("NHK");
+    expect(states.at(-1)?.review.current?.normalizedWord).toBe("NHK");
 
     await controller.reviewDecision("known");
 
@@ -1858,8 +2139,10 @@ describe("MinerController review mode", () => {
 
     // The list path converges on the same canonical key instead of adding a second one.
     await controller.setWordDecision("NHK", "mined");
-    expect(states.at(-1)!.wordDecisions.size).toBe(1);
-    expect(states.at(-1)!.wordDecisions.get("nhk")).toMatchObject({ status: "mined" });
+    expect(states.at(-1)?.wordDecisions.size).toBe(1);
+    expect(states.at(-1)?.wordDecisions.get("nhk")).toMatchObject({
+      status: "mined",
+    });
   });
 
   it("stops review when a new dataset commits", async () => {
@@ -1868,9 +2151,12 @@ describe("MinerController review mode", () => {
     installPool(worker, reviewPool());
     await controller.init();
     await controller.startReview();
-    expect(states.at(-1)!.review.active).toBe(true);
+    expect(states.at(-1)?.review.active).toBe(true);
 
-    await controller.importJiten({ name: "new.csv", text: async () => "Word\n新しい" });
+    await controller.importJiten({
+      name: "new.csv",
+      text: async () => "Word\n新しい",
+    });
 
     const review = states.at(-1)!.review;
     expect(review.active).toBe(false);
@@ -1896,7 +2182,7 @@ describe("MinerController review mode", () => {
     await seedActive(inner);
     await controller.init();
     await controller.startReview();
-    expect(states.at(-1)!.review.current?.normalizedWord).toBe("A");
+    expect(states.at(-1)?.review.current?.normalizedWord).toBe("A");
 
     // Block the decision write so reviewDecision's continuation is in flight
     // across the restart.
@@ -1935,7 +2221,7 @@ describe("MinerController review mode", () => {
     await seedActive(inner);
     await controller.init();
     await controller.startReview();
-    expect(states.at(-1)!.review.current?.normalizedWord).toBe("A");
+    expect(states.at(-1)?.review.current?.normalizedWord).toBe("A");
 
     // Hold the old session's decision write open across a stop/start cycle.
     delayed.gate("wordDecisions.set");
@@ -1944,13 +2230,13 @@ describe("MinerController review mode", () => {
 
     controller.stopReview();
     await controller.startReview();
-    expect(states.at(-1)!.review.status).toBe("ready");
+    expect(states.at(-1)?.review.status).toBe("ready");
 
     // Triage on the new session must be accepted immediately — the busy flag
     // belongs to the superseded generation, not this one.
     const fresh = controller.reviewDecision("mined");
     await flushMicrotasks();
-    expect(states.at(-1)!.review.status).toBe("loading");
+    expect(states.at(-1)?.review.status).toBe("loading");
 
     delayed.release("wordDecisions.set");
     await Promise.all([stale, fresh]);
@@ -1959,7 +2245,9 @@ describe("MinerController review mode", () => {
     expect(review.active).toBe(true);
     expect(review.processed).toBe(1);
     expect(review.current?.normalizedWord).toBe("B");
-    expect(await inner.wordDecisions.get("a")).toMatchObject({ status: "mined" });
+    expect(await inner.wordDecisions.get("a")).toMatchObject({
+      status: "mined",
+    });
   });
 
   it("abandons a superseded review query after restart", async () => {
@@ -1971,7 +2259,9 @@ describe("MinerController review mode", () => {
     // Hold the first review query (issued by startReview) unresolved.
     let held = false;
     let resolveHeld: ((value: QueryResult) => void) | undefined;
-    const heldQuery = new Promise<QueryResult>((resolve) => { resolveHeld = resolve; });
+    const heldQuery = new Promise<QueryResult>((resolve) => {
+      resolveHeld = resolve;
+    });
     const originalHandler = worker.queryHandler;
     if (originalHandler === null) throw new Error("review pool handler missing");
     worker.queryHandler = async (request) => {
@@ -1989,7 +2279,10 @@ describe("MinerController review mode", () => {
     controller.stopReview();
     await controller.startReview();
 
-    resolveHeld?.({ ...result([decorated(reviewPool()[0]!)]), totalEntries: 3 });
+    resolveHeld?.({
+      ...result([decorated(reviewPool()[0]!)]),
+      totalEntries: 3,
+    });
     await started;
 
     const review = states.at(-1)!.review;
@@ -2007,14 +2300,18 @@ describe("MinerController review mode", () => {
     await controller.init();
 
     controller.toggleQueued("NHK");
-    expect(states.at(-1)!.queue.normalizedWords).toEqual(["nhk"]);
+    expect(states.at(-1)?.queue.normalizedWords).toEqual(["nhk"]);
 
     await controller.startReview();
     await controller.reviewDecision("known");
 
-    expect(states.at(-1)!.queue.normalizedWords).toEqual([]);
-    expect(states.at(-1)!.wordDecisions.get("nhk")).toMatchObject({ status: "known" });
-    expect(await store.wordDecisions.get("nhk")).toMatchObject({ status: "known" });
+    expect(states.at(-1)?.queue.normalizedWords).toEqual([]);
+    expect(states.at(-1)?.wordDecisions.get("nhk")).toMatchObject({
+      status: "known",
+    });
+    expect(await store.wordDecisions.get("nhk")).toMatchObject({
+      status: "known",
+    });
   });
 });
 
@@ -2051,8 +2348,16 @@ describe("MinerController backup and restore", () => {
       exportedAt: "2026-09-06T00:00:00.000Z",
       knownWords: { name: "known.txt", words: ["犬", "猫"] },
       wordDecisions: [
-        { normalizedWord: "犬", status: "mined", updatedAt: "2026-08-01T00:00:00.000Z" },
-        { normalizedWord: "鳥", status: "later", updatedAt: "2026-08-02T00:00:00.000Z" },
+        {
+          normalizedWord: "犬",
+          status: "mined",
+          updatedAt: "2026-08-01T00:00:00.000Z",
+        },
+        {
+          normalizedWord: "鳥",
+          status: "later",
+          updatedAt: "2026-08-02T00:00:00.000Z",
+        },
       ],
       preferences: { query: restoredQuery, view: restoredView, page: 2 },
       ...overrides,
@@ -2062,8 +2367,16 @@ describe("MinerController backup and restore", () => {
   async function seedForRestore(store: AppStore): Promise<void> {
     await seedActive(store);
     await store.knownWords.save("old-known", "old.txt", new Set(["古い"]));
-    await store.wordDecisions.set({ normalizedWord: "古い", status: "skip", updatedAt: "2026-07-01T00:00:00.000Z" });
-    await store.preferences.save({ query: { ...backupQuery, search: "古い", page: 1 }, view, page: 1 });
+    await store.wordDecisions.set({
+      normalizedWord: "古い",
+      status: "skip",
+      updatedAt: "2026-07-01T00:00:00.000Z",
+    });
+    await store.preferences.save({
+      query: { ...backupQuery, search: "古い", page: 1 },
+      view,
+      page: 1,
+    });
   }
 
   // Wave-1 rollback tests pin the sequential fallback path: strip the optional
@@ -2100,7 +2413,11 @@ describe("MinerController backup and restore", () => {
     expect(parsed.exportedAt).toBe(FIXED_NOW);
     expect(parsed.knownWords).toEqual({ name: "old.txt", words: ["古い"] });
     expect(parsed.wordDecisions).toEqual([
-      { normalizedWord: "古い", status: "skip", updatedAt: "2026-07-01T00:00:00.000Z" },
+      {
+        normalizedWord: "古い",
+        status: "skip",
+        updatedAt: "2026-07-01T00:00:00.000Z",
+      },
     ]);
     expect(parsed.preferences).toMatchObject({ page: 1 });
     expect(json).not.toContain("entryCount");
@@ -2140,7 +2457,6 @@ describe("MinerController backup and restore", () => {
     expect(final.wordDecisions.has("古い")).toBe(false);
     expect(final.query).toEqual(restoredQuery);
     expect(final.view).toEqual(restoredView);
-    expect(final.page).toBe(2);
     expect(final.dataset).toEqual(datasetBefore);
     expect(final.status).toBe("ready");
     expect(final.errorMessage).toBeNull();
@@ -2149,7 +2465,11 @@ describe("MinerController backup and restore", () => {
       ["犬", "mined"],
       ["鳥", "later"],
     ]);
-    expect(await store.preferences.load()).toEqual({ query: restoredQuery, view: restoredView, page: 2 });
+    expect(await store.preferences.load()).toEqual({
+      query: restoredQuery,
+      view: restoredView,
+      page: 2,
+    });
   });
 
   it("clears the imported known list when knownWords is null", async () => {
@@ -2177,7 +2497,6 @@ describe("MinerController backup and restore", () => {
     const final = states.at(-1)!;
     expect(final.query).toEqual({ ...DEFAULT_QUERY });
     expect(final.view).toEqual({ ...DEFAULT_VIEW });
-    expect(final.page).toBe(1);
     expect(await store.preferences.load()).toEqual({
       query: { ...DEFAULT_QUERY },
       view: { ...DEFAULT_VIEW },
@@ -2194,14 +2513,20 @@ describe("MinerController backup and restore", () => {
 
     await expect(controller.restoreBackup("{not json")).rejects.toThrow();
 
-    expect(await store.knownWords.getActive()).toMatchObject({ id: "old-known" });
+    expect(await store.knownWords.getActive()).toMatchObject({
+      id: "old-known",
+    });
     expect(await store.wordDecisions.list()).toEqual([
-      { normalizedWord: "古い", status: "skip", updatedAt: "2026-07-01T00:00:00.000Z" },
+      {
+        normalizedWord: "古い",
+        status: "skip",
+        updatedAt: "2026-07-01T00:00:00.000Z",
+      },
     ]);
     expect(await store.preferences.load()).toMatchObject({ page: 1 });
-    expect(states.at(-1)!.knownWords).toEqual(before.knownWords);
-    expect(states.at(-1)!.wordDecisions.size).toBe(before.wordDecisions.size);
-    expect(states.at(-1)!.errorMessage).toContain("Backup could not be restored");
+    expect(states.at(-1)?.knownWords).toEqual(before.knownWords);
+    expect(states.at(-1)?.wordDecisions.size).toBe(before.wordDecisions.size);
+    expect(states.at(-1)?.errorMessage).toContain("Backup could not be restored");
   });
 
   it("rejects oversized backups before any write", async () => {
@@ -2212,7 +2537,9 @@ describe("MinerController backup and restore", () => {
 
     const oversized = " ".repeat(MAX_BACKUP_BYTES + 1);
     await expect(controller.restoreBackup(oversized)).rejects.toThrow("too large");
-    expect(await store.knownWords.getActive()).toMatchObject({ id: "old-known" });
+    expect(await store.knownWords.getActive()).toMatchObject({
+      id: "old-known",
+    });
   });
 
   it("rolls back all three categories when the decision replacement fails", async () => {
@@ -2225,11 +2552,19 @@ describe("MinerController backup and restore", () => {
       throw new Error("decision replacement failed");
     };
 
-    await expect(controller.restoreBackup(backupText())).rejects.toThrow("decision replacement failed");
+    await expect(controller.restoreBackup(backupText())).rejects.toThrow(
+      "decision replacement failed",
+    );
 
-    expect(await store.knownWords.getActive()).toMatchObject({ id: "old-known" });
+    expect(await store.knownWords.getActive()).toMatchObject({
+      id: "old-known",
+    });
     expect(await store.wordDecisions.list()).toEqual([
-      { normalizedWord: "古い", status: "skip", updatedAt: "2026-07-01T00:00:00.000Z" },
+      {
+        normalizedWord: "古い",
+        status: "skip",
+        updatedAt: "2026-07-01T00:00:00.000Z",
+      },
     ]);
     expect(await store.preferences.load()).toMatchObject({ page: 1 });
 
@@ -2249,14 +2584,22 @@ describe("MinerController backup and restore", () => {
       throw new Error("preferences write failed");
     };
 
-    await expect(controller.restoreBackup(backupText())).rejects.toThrow("preferences write failed");
+    await expect(controller.restoreBackup(backupText())).rejects.toThrow(
+      "preferences write failed",
+    );
 
-    expect(await store.knownWords.getActive()).toMatchObject({ id: "old-known" });
+    expect(await store.knownWords.getActive()).toMatchObject({
+      id: "old-known",
+    });
     expect(await store.wordDecisions.list()).toEqual([
-      { normalizedWord: "古い", status: "skip", updatedAt: "2026-07-01T00:00:00.000Z" },
+      {
+        normalizedWord: "古い",
+        status: "skip",
+        updatedAt: "2026-07-01T00:00:00.000Z",
+      },
     ]);
-    expect(states.at(-1)!.errorMessage).toContain("preferences write failed");
-    expect(states.at(-1)!.knownWords).toEqual(new Set(["古い"]));
+    expect(states.at(-1)?.errorMessage).toContain("preferences write failed");
+    expect(states.at(-1)?.knownWords).toEqual(new Set(["古い"]));
   });
 
   it("reports rollback failures instead of reporting success", async () => {
@@ -2274,8 +2617,8 @@ describe("MinerController backup and restore", () => {
 
     await expect(controller.restoreBackup(backupText())).rejects.toThrow();
 
-    expect(states.at(-1)!.errorMessage).toContain("Known-word rollback failed");
-    expect(states.at(-1)!.status).toBe("ready");
+    expect(states.at(-1)?.errorMessage).toContain("Known-word rollback failed");
+    expect(states.at(-1)?.status).toBe("ready");
   });
 
   it("restoreBackup uses the single-transaction path when the store provides it", async () => {
@@ -2287,7 +2630,7 @@ describe("MinerController backup and restore", () => {
     const knownSave = vi.fn(inner.knownWords.save.bind(inner.knownWords));
     const replaceAll = vi.fn(inner.wordDecisions.replaceAll.bind(inner.wordDecisions));
     const preferencesSave = vi.fn(inner.preferences.save.bind(inner.preferences));
-    const restoreUserState = vi.fn(inner.restoreUserState!.bind(inner));
+    const restoreUserState = vi.fn(inner.restoreUserState?.bind(inner));
     const store: AppStore = {
       datasets: inner.datasets,
       knownWords: {
@@ -2333,11 +2676,23 @@ describe("MinerController backup and restore", () => {
     await controller.restoreBackup(backupText());
 
     expect(restoreUserState).toHaveBeenCalledTimes(1);
-    expect(restoreUserState.mock.calls[0]![0]).toEqual({
-      knownWords: { id: "known-restored", name: "known.txt", words: new Set(["犬", "猫"]) },
+    expect(restoreUserState.mock.calls[0]?.[0]).toEqual({
+      knownWords: {
+        id: "known-restored",
+        name: "known.txt",
+        words: new Set(["犬", "猫"]),
+      },
       decisions: [
-        { normalizedWord: "犬", status: "mined", updatedAt: "2026-08-01T00:00:00.000Z" },
-        { normalizedWord: "鳥", status: "later", updatedAt: "2026-08-02T00:00:00.000Z" },
+        {
+          normalizedWord: "犬",
+          status: "mined",
+          updatedAt: "2026-08-01T00:00:00.000Z",
+        },
+        {
+          normalizedWord: "鳥",
+          status: "later",
+          updatedAt: "2026-08-02T00:00:00.000Z",
+        },
       ],
       preferences: { query: restoredQuery, view: restoredView, page: 2 },
     });
@@ -2348,7 +2703,9 @@ describe("MinerController backup and restore", () => {
     expect(preferencesSave.mock.invocationCallOrder.at(-1)).toBeGreaterThan(
       restoreUserState.mock.invocationCallOrder[0]!,
     );
-    expect(await inner.knownWords.getActive()).toMatchObject({ id: "known-restored" });
+    expect(await inner.knownWords.getActive()).toMatchObject({
+      id: "known-restored",
+    });
     expect(await inner.wordDecisions.list()).toHaveLength(2);
     expect(await inner.preferences.load()).toMatchObject({ page: 2 });
     const final = states.at(-1)!;
@@ -2362,7 +2719,9 @@ describe("MinerController backup and restore", () => {
   it("restoreBackup falls back to sequential writes and rolls back without the method", async () => {
     const inner = createMemoryAppStore();
     await seedForRestore(inner);
-    const delayed = createDelayedAppStore(inner, { forwardRestoreUserState: false });
+    const delayed = createDelayedAppStore(inner, {
+      forwardRestoreUserState: false,
+    });
     const worker = new FakeWorkerClient();
     const controller = createMinerController({
       store: delayed.store,
@@ -2381,9 +2740,16 @@ describe("MinerController backup and restore", () => {
       "wordDecisions.replaceAll failed as requested",
     );
 
-    expect(await inner.knownWords.getActive()).toMatchObject({ id: "old-known", name: "old.txt" });
+    expect(await inner.knownWords.getActive()).toMatchObject({
+      id: "old-known",
+      name: "old.txt",
+    });
     expect(await inner.wordDecisions.list()).toEqual([
-      { normalizedWord: "古い", status: "skip", updatedAt: "2026-07-01T00:00:00.000Z" },
+      {
+        normalizedWord: "古い",
+        status: "skip",
+        updatedAt: "2026-07-01T00:00:00.000Z",
+      },
     ]);
     expect(await inner.preferences.load()).toMatchObject({ page: 1 });
     const final = states.at(-1)!;
@@ -2395,7 +2761,9 @@ describe("MinerController backup and restore", () => {
   it("a failing restore invalidates in-flight query renders so a late completion cannot clear the error", async () => {
     const inner = createMemoryAppStore();
     await seedForRestore(inner);
-    const delayed = createDelayedAppStore(inner, { forwardRestoreUserState: false });
+    const delayed = createDelayedAppStore(inner, {
+      forwardRestoreUserState: false,
+    });
     const worker = new FakeWorkerClient();
     const controller = createMinerController({
       store: delayed.store,
@@ -2412,9 +2780,13 @@ describe("MinerController backup and restore", () => {
     // A user query is in flight when the restore fails; its late resolution
     // must not be allowed to publish a ready render over the restore error.
     let resolveStale: ((value: QueryResult) => void) | undefined;
-    const staleGate = new Promise<QueryResult>((resolve) => { resolveStale = resolve; });
+    const staleGate = new Promise<QueryResult>((resolve) => {
+      resolveStale = resolve;
+    });
     let staleStarted: (() => void) | undefined;
-    const started = new Promise<void>((resolve) => { staleStarted = resolve; });
+    const started = new Promise<void>((resolve) => {
+      staleStarted = resolve;
+    });
     worker.queryHandler = async () => {
       staleStarted?.();
       return staleGate;
@@ -2426,7 +2798,7 @@ describe("MinerController backup and restore", () => {
     await expect(controller.restoreBackup(backupText())).rejects.toThrow(
       "preferences.save failed as requested",
     );
-    expect(states.at(-1)!.errorMessage).toContain("Backup could not be restored");
+    expect(states.at(-1)?.errorMessage).toContain("Backup could not be restored");
 
     resolveStale?.(result([decoratedReviewItem(entry("stale-entry", "残"))]));
     await flushMicrotasks();
@@ -2472,7 +2844,9 @@ describe("MinerController backup and restore", () => {
 
     let held = false;
     let resolveHeld: ((value: QueryResult) => void) | undefined;
-    const heldQuery = new Promise<QueryResult>((resolve) => { resolveHeld = resolve; });
+    const heldQuery = new Promise<QueryResult>((resolve) => {
+      resolveHeld = resolve;
+    });
     const unheld = worker.queryResult;
     worker.queryHandler = async (request) => {
       if (request.queryChannel === "review" && !held) {
@@ -2485,13 +2859,16 @@ describe("MinerController backup and restore", () => {
     const started = controller.startReview();
     await flushMicrotasks();
     expect(held).toBe(true);
-    expect(states.at(-1)!.review.active).toBe(true);
-    expect(states.at(-1)!.review.status).toBe("loading");
+    expect(states.at(-1)?.review.active).toBe(true);
+    expect(states.at(-1)?.review.status).toBe("loading");
 
     await world.failRestore(controller);
-    expect(states.at(-1)!.errorMessage).toContain("Backup could not be restored");
+    expect(states.at(-1)?.errorMessage).toContain("Backup could not be restored");
 
-    resolveHeld?.({ ...result([decoratedReviewItem(entry("late-entry", "遅"))]), totalEntries: 1 });
+    resolveHeld?.({
+      ...result([decoratedReviewItem(entry("late-entry", "遅"))]),
+      totalEntries: 1,
+    });
     await started;
     await flushMicrotasks();
 
@@ -2508,7 +2885,9 @@ describe("MinerController backup and restore", () => {
     await expectReviewHeldAcrossRestoreFailure({
       store: inner,
       failRestore: async (controller) => {
-        await expect(controller.restoreBackup("x".repeat(MAX_BACKUP_BYTES + 1))).rejects.toThrow("too large");
+        await expect(controller.restoreBackup("x".repeat(MAX_BACKUP_BYTES + 1))).rejects.toThrow(
+          "too large",
+        );
       },
     });
   });
@@ -2536,7 +2915,9 @@ describe("MinerController backup and restore", () => {
     await expectReviewHeldAcrossRestoreFailure({
       store,
       failRestore: async (controller) => {
-        await expect(controller.restoreBackup(backupText())).rejects.toThrow("atomic restore failed");
+        await expect(controller.restoreBackup(backupText())).rejects.toThrow(
+          "atomic restore failed",
+        );
       },
     });
   });
@@ -2544,7 +2925,9 @@ describe("MinerController backup and restore", () => {
   it("a sequential-rollback restore failure invalidates in-flight review continuations", async () => {
     const inner = createMemoryAppStore();
     await seedForRestore(inner);
-    const delayed = createDelayedAppStore(inner, { forwardRestoreUserState: false });
+    const delayed = createDelayedAppStore(inner, {
+      forwardRestoreUserState: false,
+    });
     await expectReviewHeldAcrossRestoreFailure({
       store: delayed.store,
       failRestore: async (controller) => {
@@ -2564,7 +2947,11 @@ describe("MinerController backup and restore", () => {
       status: "skip",
       updatedAt: "2026-07-01T00:00:00.000Z",
     });
-    await inner.preferences.save({ query: { ...backupQuery, page: 1 }, view, page: 1 });
+    await inner.preferences.save({
+      query: { ...backupQuery, page: 1 },
+      view,
+      page: 1,
+    });
     const sequentialReplaceAll = vi.fn(inner.wordDecisions.replaceAll.bind(inner.wordDecisions));
     inner.wordDecisions.replaceAll = sequentialReplaceAll;
     let atomicFailures = 0;
@@ -2576,8 +2963,9 @@ describe("MinerController backup and restore", () => {
       clearAll: inner.clearAll.bind(inner),
       restoreUserState: async (snapshot) => {
         atomicFailures += 1;
-        if (atomicFailures === 1) throw new Error("IndexedDB restore failed");
-        await inner.restoreUserState!(snapshot);
+        if (atomicFailures === 1)
+          throw new DOMException("IndexedDB restore failed", "SecurityError");
+        await inner.restoreUserState?.(snapshot);
       },
     };
     const worker = new FakeWorkerClient();
@@ -2606,7 +2994,9 @@ describe("MinerController backup and restore", () => {
     expect(final.errorMessage).toContain("memory");
     // The original store never received a successful atomic restore; the
     // backup lives in the replacement memory store.
-    expect(await inner.knownWords.getActive()).toMatchObject({ id: "old-known" });
+    expect(await inner.knownWords.getActive()).toMatchObject({
+      id: "old-known",
+    });
     const exported = JSON.parse(await controller.exportBackup()) as {
       knownWords: { words: string[] } | null;
     };
@@ -2656,7 +3046,10 @@ describe("MinerController user-state serialization", () => {
     await controller.init();
 
     delayed.gate("datasets.activate");
-    const importPromise = controller.importJiten({ name: "new.csv", text: async () => "Word\n新しい" });
+    const importPromise = controller.importJiten({
+      name: "new.csv",
+      text: async () => "Word\n新しい",
+    });
     await delayed.started("datasets.activate");
 
     const clearPromise = controller.clearSavedData();
@@ -2664,7 +3057,9 @@ describe("MinerController user-state serialization", () => {
     // Clear must be parked behind the import's locks, not run to completion
     // while the commit is mid-flight.
     let clearCompleted = false;
-    void clearPromise.then(() => { clearCompleted = true; });
+    void clearPromise.then(() => {
+      clearCompleted = true;
+    });
     await flushMicrotasks();
     expect(clearCompleted).toBe(false);
 
@@ -2672,8 +3067,8 @@ describe("MinerController user-state serialization", () => {
     await Promise.all([importPromise, clearPromise]);
 
     expect(await inner.datasets.list()).toEqual([]);
-    expect(states.at(-1)!.dataset).toBeNull();
-    expect(states.at(-1)!.status).toBe("empty");
+    expect(states.at(-1)?.dataset).toBeNull();
+    expect(states.at(-1)?.status).toBe("empty");
   });
 
   it("import commit user-state writes cannot resurrect durable records after clear", async () => {
@@ -2681,7 +3076,10 @@ describe("MinerController user-state serialization", () => {
     await controller.init();
 
     delayed.gate("preferences.save");
-    const importPromise = controller.importJiten({ name: "new.csv", text: async () => "Word\n新しい" });
+    const importPromise = controller.importJiten({
+      name: "new.csv",
+      text: async () => "Word\n新しい",
+    });
     await delayed.started("preferences.save");
 
     const clearPromise = controller.clearSavedData();
@@ -2691,8 +3089,8 @@ describe("MinerController user-state serialization", () => {
 
     expect(await inner.datasets.list()).toEqual([]);
     expect(await inner.preferences.load()).toBeNull();
-    expect(states.at(-1)!.dataset).toBeNull();
-    expect(states.at(-1)!.status).toBe("empty");
+    expect(states.at(-1)?.dataset).toBeNull();
+    expect(states.at(-1)?.status).toBe("empty");
   });
 
   it("restore is atomic relative to queued decisions; rollback is not overwritten", async () => {
@@ -2705,7 +3103,11 @@ describe("MinerController user-state serialization", () => {
       exportedAt: "2026-09-06T00:00:00.000Z",
       knownWords: null,
       wordDecisions: [
-        { normalizedWord: "透過", status: "known", updatedAt: "2026-09-06T00:00:00.000Z" },
+        {
+          normalizedWord: "透過",
+          status: "known",
+          updatedAt: "2026-09-06T00:00:00.000Z",
+        },
       ],
       preferences: { query: { ...query, page: 1 }, view, page: 1 },
     });
@@ -2726,7 +3128,9 @@ describe("MinerController user-state serialization", () => {
       .sort();
     expect(durable).toEqual(["mined:新しい", "skip:古い"]);
     const final = states.at(-1)!;
-    expect(final.wordDecisions.get("新しい")).toMatchObject({ status: "mined" });
+    expect(final.wordDecisions.get("新しい")).toMatchObject({
+      status: "mined",
+    });
     expect(final.wordDecisions.has("透過")).toBe(false);
   });
 
@@ -2739,13 +3143,20 @@ describe("MinerController user-state serialization", () => {
       exportedAt: "2026-09-06T00:00:00.000Z",
       knownWords: null,
       wordDecisions: [
-        { normalizedWord: "透過", status: "known", updatedAt: "2026-09-06T00:00:00.000Z" },
+        {
+          normalizedWord: "透過",
+          status: "known",
+          updatedAt: "2026-09-06T00:00:00.000Z",
+        },
       ],
       preferences: { query: { ...query, page: 1 }, view, page: 1 },
     });
 
     delayed.gate("restoreUserState");
-    const importPromise = controller.importKnown({ name: "known.csv", text: async () => "新しい" });
+    const importPromise = controller.importKnown({
+      name: "known.csv",
+      text: async () => "新しい",
+    });
     const restorePromise = controller.restoreBackup(backup);
     await delayed.started("restoreUserState");
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -2783,7 +3194,9 @@ describe("MinerController user-state serialization", () => {
     expect(await inner.wordDecisions.list()).toEqual([]);
 
     let resolveQuery: ((value: QueryResult) => void) | undefined;
-    const queryGate = new Promise<QueryResult>((resolve) => { resolveQuery = resolve; });
+    const queryGate = new Promise<QueryResult>((resolve) => {
+      resolveQuery = resolve;
+    });
     worker.queryHandler = async () => queryGate;
     const blockedDecision = controller.setWordDecision("猫", "known");
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -2857,23 +3270,26 @@ describe("MinerController coverage lifecycle", () => {
       decisions: [],
     });
     // Worker-side defaults apply when the controller omits targets.
-    expect(worker.coverageCalls[0]!.targets).toBeUndefined();
+    expect(worker.coverageCalls[0]?.targets).toBeUndefined();
   });
 
   it("keeps coverage null and idle when no dataset is active", async () => {
     const { worker, controller, states } = await coverageSetup(false);
     await controller.init();
 
-    expect(states.at(-1)!.dataset).toBeNull();
-    expect(states.at(-1)!.coverage).toBeNull();
-    expect(states.at(-1)!.coverageStatus).toBe("idle");
+    expect(states.at(-1)?.dataset).toBeNull();
+    expect(states.at(-1)?.coverage).toBeNull();
+    expect(states.at(-1)?.coverageStatus).toBe("idle");
     expect(worker.coverageCalls).toHaveLength(0);
 
-    await controller.importKnown({ name: "known.txt", text: async () => "新しい\n" });
+    await controller.importKnown({
+      name: "known.txt",
+      text: async () => "新しい\n",
+    });
 
     expect(worker.coverageCalls).toHaveLength(0);
-    expect(states.at(-1)!.coverage).toBeNull();
-    expect(states.at(-1)!.coverageStatus).toBe("idle");
+    expect(states.at(-1)?.coverage).toBeNull();
+    expect(states.at(-1)?.coverageStatus).toBe("idle");
   });
 
   it("refreshes coverage after a known-word import with updated inputs", async () => {
@@ -2882,7 +3298,7 @@ describe("MinerController coverage lifecycle", () => {
     worker.nextKnown = {
       chunks: [["新しい"]],
       complete: {
-        protocolVersion: 1,
+        protocolVersion: 2,
         type: "import-complete",
         requestId: "known-new",
         kind: "known",
@@ -2891,28 +3307,31 @@ describe("MinerController coverage lifecycle", () => {
       },
     };
 
-    await controller.importKnown({ name: "known.txt", text: async () => "新しい\n" });
+    await controller.importKnown({
+      name: "known.txt",
+      text: async () => "新しい\n",
+    });
 
     expect(worker.coverageCalls).toHaveLength(2);
     expect(worker.coverageCalls.at(-1)).toMatchObject({
       datasetId: "old-dataset",
       knownWords: ["新しい"],
     });
-    expect(states.at(-1)!.coverageStatus).toBe("ready");
-    expect(states.at(-1)!.coverage).toEqual(fixtureStats(["新しい"]));
+    expect(states.at(-1)?.coverageStatus).toBe("ready");
+    expect(states.at(-1)?.coverage).toEqual(fixtureStats(["新しい"]));
   });
 
   it("refreshes coverage upward after a local Known decision", async () => {
     const { worker, controller, states } = await coverageSetup();
     await controller.init();
-    expect(states.at(-1)!.coverage!.coveragePercent).toBe(0);
+    expect(states.at(-1)?.coverage?.coveragePercent).toBe(0);
 
     await controller.setWordDecision("新しい", "known");
 
     expect(worker.coverageCalls.at(-1)?.decisions).toEqual([["新しい", "known"]]);
-    expect(states.at(-1)!.coverageStatus).toBe("ready");
-    expect(states.at(-1)!.coverage).toEqual(fixtureStats([], [["新しい", "known"]]));
-    expect(states.at(-1)!.coverage!.coveragePercent).toBe(50);
+    expect(states.at(-1)?.coverageStatus).toBe("ready");
+    expect(states.at(-1)?.coverage).toEqual(fixtureStats([], [["新しい", "known"]]));
+    expect(states.at(-1)?.coverage?.coveragePercent).toBe(50);
   });
 
   it("does not count a Mined decision toward coverage", async () => {
@@ -2922,23 +3341,23 @@ describe("MinerController coverage lifecycle", () => {
     await controller.setWordDecision("新しい", "mined");
 
     expect(worker.coverageCalls.at(-1)?.decisions).toEqual([["新しい", "mined"]]);
-    expect(states.at(-1)!.coverageStatus).toBe("ready");
-    expect(states.at(-1)!.coverage).toEqual(fixtureStats([], [["新しい", "mined"]]));
-    expect(states.at(-1)!.coverage!.coveragePercent).toBe(0);
+    expect(states.at(-1)?.coverageStatus).toBe("ready");
+    expect(states.at(-1)?.coverage).toEqual(fixtureStats([], [["新しい", "mined"]]));
+    expect(states.at(-1)?.coverage?.coveragePercent).toBe(0);
   });
 
   it("refreshes coverage downward when a local Known is reset and the word is not in the Migaku list", async () => {
     const { worker, controller, states } = await coverageSetup();
     await controller.init();
     await controller.setWordDecision("新しい", "known");
-    expect(states.at(-1)!.coverage!.coveragePercent).toBe(50);
+    expect(states.at(-1)?.coverage?.coveragePercent).toBe(50);
 
     await controller.setWordDecision("新しい", "unreviewed");
 
     expect(worker.coverageCalls.at(-1)?.decisions).toEqual([]);
-    expect(states.at(-1)!.coverageStatus).toBe("ready");
-    expect(states.at(-1)!.coverage).toEqual(fixtureStats());
-    expect(states.at(-1)!.coverage!.coveragePercent).toBe(0);
+    expect(states.at(-1)?.coverageStatus).toBe("ready");
+    expect(states.at(-1)?.coverage).toEqual(fixtureStats());
+    expect(states.at(-1)?.coverage?.coveragePercent).toBe(0);
   });
 
   it("requests coverage for the new dataset after a Jiten import commits", async () => {
@@ -2946,21 +3365,25 @@ describe("MinerController coverage lifecycle", () => {
     await controller.init();
     const importCount = worker.coverageCalls.length;
 
-    await controller.importJiten({ name: "new.csv", text: async () => "Word\n新しい" });
+    await controller.importJiten({
+      name: "new.csv",
+      text: async () => "Word\n新しい",
+    });
 
-    const newDatasetId = states.at(-1)!.dataset!.id;
+    const newDatasetId = states.at(-1)?.dataset?.id;
     expect(newDatasetId).not.toBe("old-dataset");
     expect(worker.coverageCalls.length).toBeGreaterThan(importCount);
     expect(worker.coverageCalls.at(-1)?.datasetId).toBe(newDatasetId);
-    expect(states.at(-1)!.coverageStatus).toBe("ready");
+    expect(states.at(-1)?.coverageStatus).toBe("ready");
   });
 
   it("ignores a stale coverage response after a dataset swap", async () => {
     const { worker, controller, states } = await coverageSetup();
     const resolvers: Array<(stats: CoverageStats) => void> = [];
-    worker.coverageHandler = () => new Promise<CoverageStats>((resolve) => {
-      resolvers.push(resolve);
-    });
+    worker.coverageHandler = () =>
+      new Promise<CoverageStats>((resolve) => {
+        resolvers.push(resolve);
+      });
 
     // Both the init load and the replacement import below block on their
     // gated coverage responses, so neither promise can be awaited directly
@@ -2968,37 +3391,45 @@ describe("MinerController coverage lifecycle", () => {
     const initPromise = controller.init();
     await untilReady(() => resolvers.length === 1);
     expect(resolvers).toHaveLength(1);
-    expect(states.at(-1)!.coverageStatus).toBe("loading");
+    expect(states.at(-1)?.coverageStatus).toBe("loading");
 
-    const importPromise = controller.importJiten({ name: "new.csv", text: async () => "Word\n新しい" });
+    const importPromise = controller.importJiten({
+      name: "new.csv",
+      text: async () => "Word\n新しい",
+    });
     await untilReady(() => resolvers.length === 2);
     expect(resolvers).toHaveLength(2);
 
     const staleStats = fixtureStats(["新しい", "犬", "猫"]);
-    resolvers[0]!(staleStats);
+    resolvers[0]?.(staleStats);
     await flushMicrotasks();
 
-    expect(states.at(-1)!.coverage).not.toEqual(staleStats);
-    expect(states.at(-1)!.coverageStatus).toBe("loading");
+    expect(states.at(-1)?.coverage).not.toEqual(staleStats);
+    expect(states.at(-1)?.coverageStatus).toBe("loading");
 
-    const freshStats: CoverageStats = { ...fixtureStats(), totalUniqueWords: 1 };
-    resolvers[1]!(freshStats);
+    const freshStats: CoverageStats = {
+      ...fixtureStats(),
+      totalUniqueWords: 1,
+    };
+    resolvers[1]?.(freshStats);
     await flushMicrotasks();
 
-    expect(states.at(-1)!.coverage).toEqual(freshStats);
-    expect(states.at(-1)!.coverageStatus).toBe("ready");
+    expect(states.at(-1)?.coverage).toEqual(freshStats);
+    expect(states.at(-1)?.coverageStatus).toBe("ready");
     await Promise.all([initPromise, importPromise]);
   });
 
   it("keeps the results list usable when coverage fails", async () => {
     const { worker, controller, states } = await coverageSetup();
-    worker.queryResult = result([{
-      ...entry("old-entry", "古い"),
-      known: false,
-      decision: "unreviewed",
-      knownByMigaku: false,
-      knownByDecision: false,
-    }]);
+    worker.queryResult = result([
+      {
+        ...entry("old-entry", "古い"),
+        known: false,
+        decision: "unreviewed",
+        knownByMigaku: false,
+        knownByDecision: false,
+      },
+    ]);
     worker.coverageErrors = [new Error("coverage worker failed")];
     await controller.init();
 
@@ -3030,8 +3461,8 @@ describe("MinerController coverage lifecycle", () => {
   it("resets coverage when saved data is cleared", async () => {
     const { controller, states } = await coverageSetup();
     await controller.init();
-    expect(states.at(-1)!.coverageStatus).toBe("ready");
-    expect(states.at(-1)!.coverage).not.toBeNull();
+    expect(states.at(-1)?.coverageStatus).toBe("ready");
+    expect(states.at(-1)?.coverage).not.toBeNull();
 
     await controller.clearSavedData();
 
@@ -3051,17 +3482,27 @@ describe("MinerController coverage lifecycle", () => {
     controller.subscribe((state) => states.push(state));
     await controller.init();
     // Seeded known 古い over the single 古い entry = full coverage.
-    expect(states.at(-1)!.coverage!.coveragePercent).toBe(100);
+    expect(states.at(-1)?.coverage?.coveragePercent).toBe(100);
 
-    await controller.restoreBackup(serializeBackup({
-      exportedAt: FIXED_NOW,
-      knownWords: { name: "restored.txt", words: ["犬", "猫"] },
-      wordDecisions: [
-        { normalizedWord: "犬", status: "mined", updatedAt: "2026-08-01T00:00:00.000Z" },
-        { normalizedWord: "鳥", status: "later", updatedAt: "2026-08-02T00:00:00.000Z" },
-      ],
-      preferences: { query: { ...query, page: 1 }, view, page: 1 },
-    }));
+    await controller.restoreBackup(
+      serializeBackup({
+        exportedAt: FIXED_NOW,
+        knownWords: { name: "restored.txt", words: ["犬", "猫"] },
+        wordDecisions: [
+          {
+            normalizedWord: "犬",
+            status: "mined",
+            updatedAt: "2026-08-01T00:00:00.000Z",
+          },
+          {
+            normalizedWord: "鳥",
+            status: "later",
+            updatedAt: "2026-08-02T00:00:00.000Z",
+          },
+        ],
+        preferences: { query: { ...query, page: 1 }, view, page: 1 },
+      }),
+    );
 
     const final = states.at(-1)!;
     expect(final.coverageStatus).toBe("ready");
@@ -3071,8 +3512,8 @@ describe("MinerController coverage lifecycle", () => {
       ["鳥", "later"],
     ]);
     // Restored mined/later decisions do not count; 古い left the known list.
-    expect(final.coverage!.coveragePercent).toBe(0);
-    expect(final.coverage!.knownUniqueWords).toBe(0);
+    expect(final.coverage?.coveragePercent).toBe(0);
+    expect(final.coverage?.knownUniqueWords).toBe(0);
   });
 });
 
@@ -3116,7 +3557,10 @@ describe("MinerController backup freshness", () => {
   it("increments once per known-word import", async () => {
     const { controller, states } = await readyFreshnessSetup();
 
-    await controller.importKnown({ name: "known.txt", text: async () => "新しい\n" });
+    await controller.importKnown({
+      name: "known.txt",
+      text: async () => "新しい\n",
+    });
 
     expect(states.at(-1)?.changesSinceExport).toBe(1);
   });
@@ -3124,24 +3568,36 @@ describe("MinerController backup freshness", () => {
   it("increments once per restore backup, regardless of restored content size", async () => {
     const { controller, states } = await readyFreshnessSetup();
 
-    await controller.restoreBackup(JSON.stringify({
-      format: "jiten-migaku-miner-backup",
-      version: 1,
-      exportedAt: "2026-09-06T00:00:00.000Z",
-      knownWords: { name: "known.txt", words: ["犬", "猫"] },
-      wordDecisions: [
-        { normalizedWord: "犬", status: "mined", updatedAt: "2026-08-01T00:00:00.000Z" },
-        { normalizedWord: "鳥", status: "later", updatedAt: "2026-08-02T00:00:00.000Z" },
-      ],
-      preferences: null,
-    }));
+    await controller.restoreBackup(
+      JSON.stringify({
+        format: "jiten-migaku-miner-backup",
+        version: 1,
+        exportedAt: "2026-09-06T00:00:00.000Z",
+        knownWords: { name: "known.txt", words: ["犬", "猫"] },
+        wordDecisions: [
+          {
+            normalizedWord: "犬",
+            status: "mined",
+            updatedAt: "2026-08-01T00:00:00.000Z",
+          },
+          {
+            normalizedWord: "鳥",
+            status: "later",
+            updatedAt: "2026-08-02T00:00:00.000Z",
+          },
+        ],
+        preferences: null,
+      }),
+    );
 
     expect(states.at(-1)?.changesSinceExport).toBe(1);
   });
 
   it("does not increment when the decision write fails", async () => {
     const { store, controller, states } = await readyFreshnessSetup();
-    store.wordDecisions.set = async () => { throw new Error("decision write failed"); };
+    store.wordDecisions.set = async () => {
+      throw new Error("decision write failed");
+    };
 
     await controller.setWordDecision("猫", "known");
 
@@ -3208,7 +3664,9 @@ describe("MinerController backup freshness", () => {
     expect(second.states.at(-1)?.lastExportAt).toBeNull();
     expect(second.states.at(-1)?.changesSinceExport).toBe(0);
     // The persisted user state itself survived; only freshness is session-only.
-    expect(second.states.at(-1)?.wordDecisions.get("犬")).toMatchObject({ status: "later" });
+    expect(second.states.at(-1)?.wordDecisions.get("犬")).toMatchObject({
+      status: "later",
+    });
   });
 });
 
@@ -3233,27 +3691,43 @@ describe("source adapters", () => {
       const method = init?.method ?? "GET";
       requests.push({ url, method });
       if (url === listingUrl) {
-        return responseLike(url, '<a href="old file.csv">old file.csv</a><a href="new file.csv">new file.csv</a>');
+        return responseLike(
+          url,
+          '<a href="old file.csv">old file.csv</a><a href="new file.csv">new file.csv</a>',
+        );
       }
       const file = files.get(url.slice(listingUrl.length));
       if (file === undefined) return responseLike(url, "", { ok: false });
-      return responseLike(url, file.body ?? "", file.lastModified === undefined ? {} : { lastModified: file.lastModified });
+      return responseLike(
+        url,
+        file.body ?? "",
+        file.lastModified === undefined ? {} : { lastModified: file.lastModified },
+      );
     };
-     const source = createFolderSource({
-       fetch: fetcher,
-       protocol: "http:",
-       baseUrl: "https://app.example/miner/index.html",
-     });
+    const source = createFolderSource({
+      fetch: fetcher,
+      protocol: "http:",
+      baseUrl: "https://app.example/miner/index.html",
+    });
 
     const newest = await source.newest("WORDS TO MINE", ".csv");
 
     expect(newest?.name).toBe("new file.csv");
     await expect(newest?.text()).resolves.toBe("new");
     expect(requests).toEqual([
-       { url: "https://app.example/miner/WORDS%20TO%20MINE/", method: "GET" },
-       { url: "https://app.example/miner/WORDS%20TO%20MINE/old%20file.csv", method: "HEAD" },
-       { url: "https://app.example/miner/WORDS%20TO%20MINE/new%20file.csv", method: "HEAD" },
-       { url: "https://app.example/miner/WORDS%20TO%20MINE/new%20file.csv", method: "GET" },
+      { url: "https://app.example/miner/WORDS%20TO%20MINE/", method: "GET" },
+      {
+        url: "https://app.example/miner/WORDS%20TO%20MINE/old%20file.csv",
+        method: "HEAD",
+      },
+      {
+        url: "https://app.example/miner/WORDS%20TO%20MINE/new%20file.csv",
+        method: "HEAD",
+      },
+      {
+        url: "https://app.example/miner/WORDS%20TO%20MINE/new%20file.csv",
+        method: "GET",
+      },
     ]);
   });
 
@@ -3342,7 +3816,9 @@ describe("source adapters", () => {
     const fetcher = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
       const url = String(input);
       if (init?.method === "HEAD") {
-        return responseLike(url, "", { lastModified: "Thu, 03 Sep 2026 00:00:00 GMT" });
+        return responseLike(url, "", {
+          lastModified: "Thu, 03 Sep 2026 00:00:00 GMT",
+        });
       }
       if (url === listingUrl) return responseLike(url, '<a href="new.csv">new.csv</a>');
       return responseLike("https://evil.example/files/new.csv", "new");

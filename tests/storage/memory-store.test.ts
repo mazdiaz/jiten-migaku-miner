@@ -1,12 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { createMemoryAppStore } from "../../src/storage/memory-store";
+import type { Entry, QueryState, ViewState, WordDecision } from "../../src/domain/types";
 import type { AppStore, DatasetMetadata } from "../../src/storage/contracts";
-import type {
-  Entry,
-  QueryState,
-  ViewState,
-  WordDecision,
-} from "../../src/domain/types";
+import { createMemoryAppStore } from "../../src/storage/memory-store";
 
 const metadata = (id: string): DatasetMetadata => ({
   id,
@@ -72,7 +67,11 @@ const view: ViewState = {
   density: "compact",
 };
 
-const decision = (normalizedWord: string, status: WordDecision["status"], updatedAt: string): WordDecision => ({
+const decision = (
+  normalizedWord: string,
+  status: WordDecision["status"],
+  updatedAt: string,
+): WordDecision => ({
   normalizedWord,
   status,
   updatedAt,
@@ -104,9 +103,10 @@ describe("MemoryAppStore", () => {
       chunks([[values[0]!], [values[1]!, values[2]!]]),
     );
 
-    await expect(
-      collectChunks(store.datasets.readChunks("ordered", 2)),
-    ).resolves.toEqual([[values[0]!, values[1]!], [values[2]!]]);
+    await expect(collectChunks(store.datasets.readChunks("ordered", 2))).resolves.toEqual([
+      [values[0]!, values[1]!],
+      [values[2]!],
+    ]);
   });
 
   it("keeps multiple datasets and removes only the requested dataset", async () => {
@@ -119,9 +119,9 @@ describe("MemoryAppStore", () => {
 
     expect(await store.datasets.list()).toEqual([metadata("two")]);
     expect(await store.datasets.getActive()).toEqual(metadata("two"));
-    await expect(
-      collectChunks(store.datasets.readChunks("two", 10)),
-    ).resolves.toEqual([[entry("two-entry", 1)]]);
+    await expect(collectChunks(store.datasets.readChunks("two", 10))).resolves.toEqual([
+      [entry("two-entry", 1)],
+    ]);
   });
 
   it("rejects same-ID staging without replacing the active dataset", async () => {
@@ -131,14 +131,14 @@ describe("MemoryAppStore", () => {
     await store.datasets.stage(active, chunks([[entry("old-entry", 0)]]));
     await store.datasets.activate(active.id);
 
-    await expect(
-      store.datasets.stage(active, chunks([[entry("new-entry", 1)]])),
-    ).rejects.toThrow("Dataset already exists");
+    await expect(store.datasets.stage(active, chunks([[entry("new-entry", 1)]]))).rejects.toThrow(
+      "Dataset already exists",
+    );
 
     expect(await store.datasets.getActive()).toEqual(active);
-    await expect(
-      collectChunks(store.datasets.readChunks(active.id, 10)),
-    ).resolves.toEqual([[entry("old-entry", 0)]]);
+    await expect(collectChunks(store.datasets.readChunks(active.id, 10))).resolves.toEqual([
+      [entry("old-entry", 0)],
+    ]);
   });
 
   it("round-trips known words and preferences", async () => {
@@ -186,9 +186,9 @@ describe("MemoryAppStore", () => {
 
     expect(await store.datasets.getActive()).toEqual(previous);
     expect(await store.datasets.list()).toEqual([previous]);
-    await expect(
-      collectChunks(store.datasets.readChunks("failed", 10)),
-    ).rejects.toThrow("Dataset not found");
+    await expect(collectChunks(store.datasets.readChunks("failed", 10))).rejects.toThrow(
+      "Dataset not found",
+    );
   });
 });
 
@@ -199,8 +199,12 @@ describe("MemoryAppStore restoreUserState", () => {
     await store.wordDecisions.set(decision("古い", "skip", "2026-09-01T00:00:00.000Z"));
     await store.preferences.save({ query, view, page: 1 });
 
-    await store.restoreUserState!({
-      knownWords: { id: "new", name: "New words", words: ["beta", "gamma", "beta"] },
+    await store.restoreUserState?.({
+      knownWords: {
+        id: "new",
+        name: "New words",
+        words: ["beta", "gamma", "beta"],
+      },
       decisions: [decision("新しい", "mined", "2026-09-05T00:00:00.000Z")],
       preferences: { query, view, page: 5 },
     });
@@ -215,7 +219,7 @@ describe("MemoryAppStore restoreUserState", () => {
     ]);
     expect(await store.preferences.load()).toEqual({ query, view, page: 5 });
 
-    await store.restoreUserState!({
+    await store.restoreUserState?.({
       knownWords: null,
       decisions: [],
       preferences: { query, view, page: 1 },
@@ -234,7 +238,7 @@ describe("MemoryAppStore restoreUserState", () => {
     await store.preferences.save({ query, view, page: 1 });
 
     await expect(
-      store.restoreUserState!({
+      store.restoreUserState?.({
         knownWords: { id: "new", name: "New words", words: ["beta"] },
         decisions: [
           decision("新しい", "mined", "2026-09-05T00:00:00.000Z"),

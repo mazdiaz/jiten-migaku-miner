@@ -26,9 +26,13 @@ export function createVirtualList(
   const overscan = options.overscan ?? 10;
   const minRowHeight = options.minRowHeight ?? 96;
   const maxNodes = options.maxNodes ?? 120;
-  const scrollTarget: ScrollTarget = typeof window === "object" && window !== null
-    ? window as unknown as ScrollTarget
-    : { addEventListener: () => undefined, removeEventListener: () => undefined };
+  const scrollTarget: ScrollTarget =
+    typeof window === "object" && window !== null
+      ? (window as unknown as ScrollTarget)
+      : {
+          addEventListener: () => undefined,
+          removeEventListener: () => undefined,
+        };
 
   let total = 0;
   let currentStart = -1;
@@ -49,10 +53,12 @@ export function createVirtualList(
   const compensateScroll = (delta: number): void => {
     if (delta === 0) return;
     try {
-      const win = typeof window === "object" && window !== null
-        ? window as unknown as { scrollY?: unknown; scrollTo?: unknown }
-        : null;
-      if (win === null || typeof win.scrollTo !== "function" || typeof win.scrollY !== "number") return;
+      const win =
+        typeof window === "object" && window !== null
+          ? (window as unknown as { scrollY?: unknown; scrollTo?: unknown })
+          : null;
+      if (win === null || typeof win.scrollTo !== "function" || typeof win.scrollY !== "number")
+        return;
       (win.scrollTo as (x: number, y: number) => void)(0, (win.scrollY as number) + delta);
     } catch {
       return;
@@ -85,7 +91,9 @@ export function createVirtualList(
       const container = document.createElement("div");
       container.className = "vl-container";
       const fragment = document.createDocumentFragment();
-      mounted.forEach((entry, offset) => fragment.appendChild(renderItem(entry, safeStart + offset)));
+      mounted.forEach((entry, offset) => {
+        fragment.appendChild(renderItem(entry, safeStart + offset));
+      });
       container.appendChild(fragment);
 
       const spacerBottom = document.createElement("div");

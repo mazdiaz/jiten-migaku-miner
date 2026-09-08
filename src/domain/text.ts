@@ -1,8 +1,10 @@
-import { ImportError } from "./types";
 import type { FuriganaRun, HighlightSegment } from "./types";
+import { ImportError } from "./types";
 
 export function normalizeText(value: unknown): string {
-  return String(value ?? "").trim().normalize("NFC");
+  return String(value ?? "")
+    .trim()
+    .normalize("NFC");
 }
 
 // Queue membership, worker search, and controller decisions all key words by
@@ -87,7 +89,7 @@ export function parseKnownWords(text: string): Set<string> {
 export function parseFuriganaRuns(furigana: string): FuriganaRun[] {
   const source = normalizeText(furigana);
   const runs: FuriganaRun[] = [];
-  const re = /([^\[\]]+)(?:\[([^\]]+)\])?/g;
+  const re = /([^[\]]+)(?:\[([^\]]+)\])?/g;
   let match: RegExpExecArray | null;
 
   while ((match = re.exec(source))) {

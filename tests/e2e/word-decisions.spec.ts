@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 
 const SMALL_CSV = "tests/fixtures/jiten-small.csv";
 const FOLLOWUP_CSV = "tests/fixtures/jiten-followup.csv";
@@ -53,7 +53,9 @@ async function expectEntryDecision(
 }
 
 test.describe("persistent word decisions", () => {
-  test("restores known, mined, and later decisions after reload and filters by decision", async ({ page }) => {
+  test("restores known, mined, and later decisions after reload and filters by decision", async ({
+    page,
+  }) => {
     await page.goto("/");
     await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
@@ -88,7 +90,9 @@ test.describe("persistent word decisions", () => {
     await page.locator("#decisionFilter").selectOption("mined");
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(1);
     await expect(entryByWord(page, "プール")).toHaveCount(1);
-    await expect(page.locator("#resultsList .mining-entry .entry-badge-decision")).toHaveText("Mined");
+    await expect(page.locator("#resultsList .mining-entry .entry-badge-decision")).toHaveText(
+      "Mined",
+    );
   });
 
   test("follows a mined decision into a new import, resets it, and clears it", async ({ page }) => {
@@ -168,7 +172,9 @@ test.describe("persistent word decisions", () => {
     ).toHaveAttribute("aria-pressed", "true");
 
     await decisionButton(page, "気になる", "known").click();
-    await expect(entryByWord(page, "気になる").locator(".entry-badge-decision")).toHaveText("Known");
+    await expect(entryByWord(page, "気になる").locator(".entry-badge-decision")).toHaveText(
+      "Known",
+    );
     await expect(page.locator("#queueToggle")).toHaveText("Queue (0)");
 
     // The undo button carries the record label and fires the undo.
@@ -187,7 +193,10 @@ test.describe("persistent word decisions", () => {
     // The record is consumed: a second undo no-ops.
     await expect(page.locator("#undoButton")).toBeDisabled();
     await expect(page.locator("#undoButton")).toHaveText("Undo");
-    await page.locator("#undoButton").click({ force: true }).catch(() => undefined);
+    await page
+      .locator("#undoButton")
+      .click({ force: true })
+      .catch(() => undefined);
     await expectEntryDecision(page, "気になる", "unreviewed");
     await expect(page.locator("#queueToggle")).toHaveText("Queue (1)");
   });

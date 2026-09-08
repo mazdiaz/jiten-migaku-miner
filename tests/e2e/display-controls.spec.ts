@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 
 const SMALL_CSV = "tests/fixtures/jiten-small.csv";
 
@@ -9,23 +9,32 @@ async function waitForStoredView(
   page: Page,
   expected: { sentenceSize: string; density: string },
 ): Promise<void> {
-  await page.waitForFunction((want) => {
-    return new Promise<boolean>((resolve) => {
-      const open = indexedDB.open("jiten-migaku-miner");
-      open.onsuccess = () => {
-        const db = open.result;
-        const tx = db.transaction("preferences", "readonly");
-        const get = tx.objectStore("preferences").get("current");
-        get.onsuccess = () => {
-          const record = get.result as { view?: { sentenceSize?: string; density?: string } } | undefined;
-          resolve(record?.view?.sentenceSize === want.sentenceSize && record?.view?.density === want.density);
+  await page.waitForFunction(
+    (want) => {
+      return new Promise<boolean>((resolve) => {
+        const open = indexedDB.open("jiten-migaku-miner");
+        open.onsuccess = () => {
+          const db = open.result;
+          const tx = db.transaction("preferences", "readonly");
+          const get = tx.objectStore("preferences").get("current");
+          get.onsuccess = () => {
+            const record = get.result as
+              | { view?: { sentenceSize?: string; density?: string } }
+              | undefined;
+            resolve(
+              record?.view?.sentenceSize === want.sentenceSize &&
+                record?.view?.density === want.density,
+            );
+          };
+          get.onerror = () => resolve(false);
+          tx.oncomplete = () => db.close();
         };
-        get.onerror = () => resolve(false);
-        tx.oncomplete = () => db.close();
-      };
-      open.onerror = () => resolve(false);
-    });
-  }, expected, { timeout: 10_000 });
+        open.onerror = () => resolve(false);
+      });
+    },
+    expected,
+    { timeout: 10_000 },
+  );
 }
 
 async function openFilters(page: Page): Promise<void> {
@@ -46,7 +55,9 @@ test.describe("reading display controls", () => {
     await expect(page.locator("body")).not.toHaveClass(/density-compact/);
   });
 
-  test("toggles both controls, re-renders with classes, and computes a larger sentence font", async ({ page }) => {
+  test("toggles both controls, re-renders with classes, and computes a larger sentence font", async ({
+    page,
+  }) => {
     await page.goto("/");
     await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
@@ -86,7 +97,10 @@ test.describe("reading display controls", () => {
     await page.locator("#density").selectOption("compact");
     await expect(page.locator("body")).toHaveClass(/sent-size-lg/);
     await expect(page.locator("body")).toHaveClass(/density-compact/);
-    await waitForStoredView(page, { sentenceSize: "large", density: "compact" });
+    await waitForStoredView(page, {
+      sentenceSize: "large",
+      density: "compact",
+    });
 
     await page.reload();
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
