@@ -1,6 +1,6 @@
 import "fake-indexeddb/auto";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { isStorageUnavailableError } from "../../src/storage/fallback";
+import { isStorageUnavailableError, StorageUnavailableError } from "../../src/storage/fallback";
 import { createIndexedDbAppStore } from "../../src/storage/indexed-db";
 
 const databaseName = "jiten-migaku-miner-fallback-classification-test";
@@ -20,7 +20,7 @@ describe("IndexedDB transaction failure classification", () => {
     await deleteDatabase(databaseName);
   });
 
-  it("preserves ConstraintError instead of reclassifying it as storage-unavailable", async () => {
+  it("keeps wrapped ConstraintError out of the storage-unavailable fallback", async () => {
     const store = createIndexedDbAppStore(databaseName);
     const decision = {
       normalizedWord: "ねこ",
@@ -45,8 +45,9 @@ describe("IndexedDB transaction failure classification", () => {
       caught = error;
     }
 
-    expect(caught).toBeInstanceOf(DOMException);
-    expect((caught as DOMException).name).toBe("ConstraintError");
+    expect(caught).toBeInstanceOf(StorageUnavailableError);
+    expect((caught as StorageUnavailableError).cause).toBeInstanceOf(DOMException);
+    expect(((caught as StorageUnavailableError).cause as DOMException).name).toBe("ConstraintError");
     expect(isStorageUnavailableError(caught)).toBe(false);
   });
 });
