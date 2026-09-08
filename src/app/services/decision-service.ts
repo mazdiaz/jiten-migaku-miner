@@ -1,4 +1,4 @@
-import { normalizeText } from "../../domain/text";
+import { canonicalWord } from "../../domain/text";
 import type { WordDecision, WordDecisionStatus } from "../../domain/types";
 import { EMPTY_UNDO } from "../state";
 import { type ControllerCore, errorMessage, UNDO_STATUS_LABELS, type UndoRecord } from "./context";
@@ -33,7 +33,7 @@ export class DecisionService {
     normalizedWord: string,
     status: WordDecisionStatus | "unreviewed",
   ): Promise<void> {
-    if (normalizeText(normalizedWord).toLocaleLowerCase().length === 0) {
+    if (canonicalWord(normalizedWord).length === 0) {
       throw new Error("Word decision requires a non-empty normalized word");
     }
     const epoch = this.core.getUserStateEpoch();
@@ -103,7 +103,7 @@ export class DecisionService {
     // Single canonicalization choke point: every caller (list clicks, review
     // triage) funnels raw words through here so persisted keys always use the
     // canonical lowercase identity.
-    const canonical = normalizeText(normalizedWord).toLocaleLowerCase();
+    const canonical = canonicalWord(normalizedWord);
     if (canonical.length === 0) {
       throw new Error("Word decision requires a non-empty normalized word");
     }
