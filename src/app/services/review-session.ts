@@ -102,11 +102,14 @@ export class ReviewSession {
         query: reviewQuery,
         queryChannel: "review",
       });
-      if (generation !== this.generation || !state.review.active) return;
+      const currentState = this.core.state;
+      if (generation !== this.generation || !currentState.review.active) return;
       const current = result.items[0] ?? null;
-      state.review = {
-        ...state.review,
-        initialTotal: options.captureInitial ? result.totalEntries : state.review.initialTotal,
+      currentState.review = {
+        ...currentState.review,
+        initialTotal: options.captureInitial
+          ? result.totalEntries
+          : currentState.review.initialTotal,
         remaining: result.totalEntries,
         current,
         status: current === null ? "complete" : "ready",
@@ -114,9 +117,10 @@ export class ReviewSession {
       };
       this.core.publish();
     } catch (error) {
-      if (generation !== this.generation || !state.review.active) return;
-      state.review = {
-        ...state.review,
+      const currentState = this.core.state;
+      if (generation !== this.generation || !currentState.review.active) return;
+      currentState.review = {
+        ...currentState.review,
         status: "error",
         errorMessage: errorMessage(error),
       };
