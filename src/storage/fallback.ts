@@ -26,7 +26,13 @@ const UNAVAILABLE_DOM_EXCEPTION_NAMES = new Set([
  * silently switching stores and hiding the defect).
  */
 export function isStorageUnavailableError(error: unknown): boolean {
-  if (error instanceof StorageUnavailableError) return true;
+  if (error instanceof StorageUnavailableError) {
+    // Adapter wrappers may preserve the browser's original DOMException as
+    // the cause. In that case classify the cause, not the wrapper label, so
+    // application/data errors such as ConstraintError or DataError never
+    // become fallback-eligible merely because they crossed the adapter.
+    return error.cause === undefined ? true : isStorageUnavailableError(error.cause);
+  }
   if (typeof DOMException !== "undefined" && error instanceof DOMException) {
     return UNAVAILABLE_DOM_EXCEPTION_NAMES.has(error.name);
   }
