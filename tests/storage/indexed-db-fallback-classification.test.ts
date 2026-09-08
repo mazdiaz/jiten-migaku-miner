@@ -47,7 +47,9 @@ describe("IndexedDB transaction failure classification", () => {
 
     expect(caught).toBeInstanceOf(StorageUnavailableError);
     expect((caught as StorageUnavailableError).cause).toBeInstanceOf(DOMException);
-    expect(((caught as StorageUnavailableError).cause as DOMException).name).toBe("ConstraintError");
+    expect(((caught as StorageUnavailableError).cause as DOMException).name).toBe(
+      "ConstraintError",
+    );
     expect(isStorageUnavailableError(caught)).toBe(false);
   });
 });
