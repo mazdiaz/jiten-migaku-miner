@@ -121,7 +121,9 @@ export function bindControls(
   // one-shot: after it lands (or after the user focuses anything anywhere),
   // the intent is cleared so a later render cannot steal focus with it.
   const applyPendingFocus = (): void => {
-    const focusLost = document.activeElement === document.body || document.activeElement === null;
+    const activeElement = document.activeElement;
+    const focusLost =
+      activeElement === document.body || activeElement === null || !activeElement.isConnected;
     // Focus is somewhere the user chose (not <body>): any remembered intent
     // is stale — drop it instead of keeping it for a later body-fallback.
     if (!focusLost && pendingFocus === null) {

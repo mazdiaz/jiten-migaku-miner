@@ -1,4 +1,4 @@
-import { normalizeText } from "../../domain/text";
+import { canonicalWord } from "../../domain/text";
 import type { EntryWithKnown, QueryState } from "../../domain/types";
 import { type ControllerCore, errorMessage } from "./context";
 
@@ -9,11 +9,11 @@ function orderByQueue(
   items: readonly EntryWithKnown[],
   queue: readonly string[],
 ): EntryWithKnown[] {
-  const order = new Map(queue.map((word, index) => [word.toLocaleLowerCase(), index]));
+  const order = new Map(queue.map((word, index) => [canonicalWord(word), index]));
   return [...items].sort(
     (left, right) =>
-      (order.get(left.normalizedWord.toLocaleLowerCase()) ?? Number.MAX_SAFE_INTEGER) -
-        (order.get(right.normalizedWord.toLocaleLowerCase()) ?? Number.MAX_SAFE_INTEGER) ||
+      (order.get(canonicalWord(left.normalizedWord)) ?? Number.MAX_SAFE_INTEGER) -
+        (order.get(canonicalWord(right.normalizedWord)) ?? Number.MAX_SAFE_INTEGER) ||
       left.originalIndex - right.originalIndex,
   );
 }
@@ -52,7 +52,7 @@ export class MiningQueueService {
   toggleQueued(normalizedWord: string): void {
     const dataset = this.core.state.dataset;
     if (dataset === null) return;
-    const word = normalizeText(normalizedWord).toLocaleLowerCase();
+    const word = canonicalWord(normalizedWord);
     if (word.length === 0) return;
     const words = this.core.state.queue.normalizedWords;
     // Adding an already-queued word leaves the queue unchanged; removal is a
@@ -64,7 +64,7 @@ export class MiningQueueService {
   removeQueued(normalizedWord: string): void {
     const dataset = this.core.state.dataset;
     if (dataset === null) return;
-    const word = normalizeText(normalizedWord).toLocaleLowerCase();
+    const word = canonicalWord(normalizedWord);
     this.setQueueWords(
       dataset.id,
       this.core.state.queue.normalizedWords.filter((queued) => queued !== word),

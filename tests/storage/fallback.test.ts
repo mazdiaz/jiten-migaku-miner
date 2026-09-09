@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { MinerControllerOptions } from "../../src/app/controller";
 import { createMinerController } from "../../src/app/controller";
-import type { AppState, FileSource } from "../../src/app/state";
+import type { AppState } from "../../src/app/state";
 import type {
   WorkerClient,
   WorkerCoverageInput,
@@ -12,7 +12,7 @@ import { createSessionQueueStore } from "../../src/platform/session-queue";
 import type { AppStore } from "../../src/storage/contracts";
 import { isStorageUnavailableError, StorageUnavailableError } from "../../src/storage/fallback";
 import { createMemoryAppStore } from "../../src/storage/memory-store";
-import type { ImportChunkResponse, ImportCompleteResponse } from "../../src/worker/protocol";
+import type { ImportCompleteResponse } from "../../src/worker/protocol";
 
 function entry(id: string, word: string, originalIndex = 0): Entry {
   return {
@@ -28,9 +28,7 @@ function entry(id: string, word: string, originalIndex = 0): Entry {
   };
 }
 
-function withKnown(
-  value: Entry,
-): Entry & {
+function withKnown(value: Entry): Entry & {
   known: boolean;
   knownByMigaku: boolean;
   knownByDecision: boolean;
@@ -130,7 +128,7 @@ class FakeWorkerClient implements WorkerClient {
     };
   }
 
-  async loadDataset(datasetId: string, chunks: AsyncIterable<readonly Entry[]>): Promise<void> {
+  async loadDataset(_datasetId: string, chunks: AsyncIterable<readonly Entry[]>): Promise<void> {
     for await (const chunk of chunks) void chunk;
   }
 
@@ -156,10 +154,6 @@ function coverageStats() {
     coveragePercent: 0,
     targets: [],
   };
-}
-
-function fileSource(name = "book.csv"): FileSource {
-  return { name, text: async () => "Word,Occurences\nねこ,3,1\n" };
 }
 
 async function seedActive(store: AppStore): Promise<void> {
