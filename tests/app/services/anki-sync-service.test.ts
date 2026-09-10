@@ -32,12 +32,27 @@ function fakePort(): AnkiConnectPort {
   };
 }
 
+function dataset(id = "dataset-1"): NonNullable<AppState["dataset"]> {
+  return {
+    id,
+    name: "dataset",
+    sourceType: "file",
+    sourceName: "dataset.csv",
+    headers: ["Word"],
+    entryCount: 1,
+    createdAt: "2026-09-10T09:00:00.000Z",
+    updatedAt: "2026-09-10T09:00:00.000Z",
+    schemaVersion: 1,
+  };
+}
+
 interface Harness {
   core: ControllerCore;
   state: AppState;
   port: AnkiConnectPort;
   decisionSpy: { clearUndo: () => void };
   coverageSpy: { request: () => Promise<void> };
+  previewSpy: ReturnType<typeof vi.fn>;
 }
 
 function coreFor(store: AppStore, port = fakePort()): Harness {
@@ -46,8 +61,14 @@ function coreFor(store: AppStore, port = fakePort()): Harness {
   let queryGeneration = 0;
   const decisionSpy = { clearUndo: vi.fn() as () => void };
   const coverageSpy = { request: vi.fn(async () => undefined) };
+  const previewSpy = vi.fn(async () => ({
+    matchedWords: 2,
+    knownCount: 1,
+    minedCount: 1,
+    manualProtected: 0,
+  }));
   const core: ControllerCore = {
-    worker: {} as ControllerCore["worker"],
+    worker: { previewAnkiMatch: previewSpy } as unknown as ControllerCore["worker"],
     sessionQueue: { save: vi.fn(), load: vi.fn(() => null), clear: vi.fn() },
     now: () => "2026-09-10T11:00:00.000Z",
     createId: (kind) => `${kind}-id`,
@@ -80,7 +101,7 @@ function coreFor(store: AppStore, port = fakePort()): Harness {
       state.changesSinceExport += 1;
     },
   };
-  return { core, state, port, decisionSpy, coverageSpy };
+  return { core, state, port, decisionSpy, coverageSpy, previewSpy };
 }
 
 function serviceFor(harness: Harness): AnkiSyncService {
@@ -172,5 +193,110 @@ describe("AnkiSyncService", () => {
       deckScopeLabel: "MAIN::Mining",
     });
     expect(harness.state.changesSinceExport).toBe(1);
+  });
+
+  it("builds a candidate with canonical duplicate merging without mutating the saved snapshot", async () => {
+    const store = createMemoryAppStore();
+    await store.ankiSync.saveConfig(config);
+    await store.ankiSync.replaceSnapshot(snapshot);
+    const harness = coreFor(store);
+    harness.state.dataset = dataset();
+    vi.mocked(harness.port.findCards).mockImplementation(async (search) =>
+      search.includes("is:new") ? [1] : [1, 2, 3],
+    );
+    vi.mocked(harness.port.cardsInfo).mockResolvedValue([
+      { cardId: 1, fields: { [config.targetField]: " Word " } },
+      { cardId: 2, fields: { [config.targetField]: "word" } },
+      { cardId: 3, fields: { [config.targetField]: "other" } },
+    ]);
+    const service = serviceFor(harness);
+    await service.initialize();
+
+    await service.previewSync();
+
+    expect(harness.state.ankiPreview).toMatchObject({
+      scannedCards: 3,
+      uniqueWords: 2,
+      emptyTargetFields: 0,
+      datasetAvailable: true,
+    });
+    expect(service.ankiStatusTuples()).toEqual(snapshot.statuses);
+    expect(await store.ankiSync.loadSnapshot()).toEqual(snapshot);
+    expect(harness.previewSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        datasetId: "dataset-1",
+        ankiStatuses: [
+          ["word", "known"],
+          ["other", "known"],
+        ],
+      }),
+    );
+  });
+
+  it("reports a valid zero-card preview without changing the saved snapshot", async () => {
+    const store = createMemoryAppStore();
+    await store.ankiSync.saveConfig(config);
+    await store.ankiSync.replaceSnapshot(snapshot);
+    const harness = coreFor(store);
+    vi.mocked(harness.port.findCards).mockResolvedValue([]);
+    const service = serviceFor(harness);
+    await service.initialize();
+
+    await service.previewSync();
+
+    expect(harness.state.ankiPreview).toMatchObject({
+      scannedCards: 0,
+      uniqueWords: 0,
+      emptyTargetFields: 0,
+      zeroCards: true,
+      datasetAvailable: false,
+      matchedWords: null,
+    });
+    expect(harness.state.anki.status).toBe("preview");
+    expect(await store.ankiSync.loadSnapshot()).toEqual(snapshot);
+  });
+
+  it("skips empty target fields while retaining non-empty card candidates", async () => {
+    const store = createMemoryAppStore();
+    await store.ankiSync.saveConfig(config);
+    const harness = coreFor(store);
+    vi.mocked(harness.port.findCards).mockImplementation(async (search) =>
+      search.includes("is:new") ? [1] : [1, 2],
+    );
+    vi.mocked(harness.port.cardsInfo).mockResolvedValue([
+      { cardId: 1, fields: { [config.targetField]: "" } },
+      { cardId: 2, fields: { [config.targetField]: "word" } },
+    ]);
+    const service = serviceFor(harness);
+    await service.initialize();
+
+    await service.previewSync();
+
+    expect(harness.state.ankiPreview).toMatchObject({
+      scannedCards: 2,
+      uniqueWords: 1,
+      emptyTargetFields: 1,
+      zeroCards: false,
+    });
+  });
+
+  it("keeps the previous snapshot when a cardsInfo batch fails", async () => {
+    const store = createMemoryAppStore();
+    await store.ankiSync.saveConfig(config);
+    await store.ankiSync.replaceSnapshot(snapshot);
+    const harness = coreFor(store);
+    vi.mocked(harness.port.findCards).mockResolvedValue(Array.from({ length: 501 }, (_, i) => i));
+    vi.mocked(harness.port.cardsInfo).mockRejectedValue(
+      new AnkiConnectError("anki-error", "batch failed"),
+    );
+    const service = serviceFor(harness);
+    await service.initialize();
+
+    await expect(service.previewSync()).rejects.toThrow("batch failed");
+
+    expect(service.ankiStatusTuples()).toEqual(snapshot.statuses);
+    expect(await store.ankiSync.loadSnapshot()).toEqual(snapshot);
+    expect(harness.state.ankiPreview).toBeNull();
+    expect(harness.state.anki.status).toBe("error");
   });
 });

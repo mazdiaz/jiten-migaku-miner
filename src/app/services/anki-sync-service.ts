@@ -1,6 +1,16 @@
-import type { AnkiSyncConfig, AnkiSyncSnapshot, AnkiWordStatus } from "../../domain/anki";
+import {
+  type AnkiSyncConfig,
+  type AnkiSyncSnapshot,
+  type AnkiWordStatus,
+  aggregateAnkiStatuses,
+  ankiCardStatus,
+} from "../../domain/anki";
 import { canonicalWord } from "../../domain/text";
-import type { AnkiConnectPort } from "../../platform/anki-connect";
+import {
+  AnkiConnectError,
+  type AnkiConnectPort,
+  buildAnkiBaseSearch,
+} from "../../platform/anki-connect";
 import { type ControllerCore, errorMessage } from "./context";
 import type { CoverageService } from "./coverage-service";
 import type { DecisionService } from "./decision-service";
@@ -70,6 +80,16 @@ function snapshotCounts(snapshot: ReadonlyMap<string, AnkiWordStatus>): {
   return { wordCount: snapshot.size, knownCount, minedCount };
 }
 
+interface PreviewCandidate {
+  statuses: Map<string, AnkiWordStatus>;
+  scannedCards: number;
+  uniqueWords: number;
+  emptyTargetFields: number;
+  configRevision: number;
+  userStateEpoch: number;
+  datasetId: string | null;
+}
+
 function validConfig(config: AnkiSyncConfig): string | null {
   if (config === null || typeof config !== "object") return "Anki configuration must be an object";
   if (config.deckScope === null || typeof config.deckScope !== "object") {
@@ -97,6 +117,8 @@ export class AnkiSyncService {
   private snapshot = new Map<string, AnkiWordStatus>();
   private snapshotSyncedAt: string | null = null;
   private port: AnkiConnectPort | null = null;
+  private previewCandidate: PreviewCandidate | null = null;
+  private configRevision = 0;
 
   constructor(
     private readonly core: ControllerCore,
@@ -200,12 +222,143 @@ export class AnkiSyncService {
     return [...this.snapshot].map(([word, status]) => [word, status]);
   }
 
+  async previewSync(): Promise<void> {
+    const config = this.config;
+    if (config === null) {
+      const error = new AnkiSyncServiceError(
+        "not-configured",
+        "Anki sync configuration has not been saved",
+      );
+      this.publishError(error);
+      throw error;
+    }
+
+    const configRevision = this.configRevision;
+    const userStateEpoch = this.core.getUserStateEpoch();
+    const datasetId = this.core.state.dataset?.id ?? null;
+    this.setStatus("syncing", null);
+    try {
+      const port = this.getPort();
+      await port.requestPermission();
+      const baseSearch = buildAnkiBaseSearch(config);
+      const selectedCardIds = [...new Set(await port.findCards(baseSearch))];
+      const minedCardIds = new Set(await port.findCards(`${baseSearch} is:new -is:suspended`));
+      const selectedCardIdSet = new Set(selectedCardIds);
+      const statuses = new Map<string, AnkiWordStatus>();
+      let emptyTargetFields = 0;
+      const cards = await port.cardsInfo(selectedCardIds);
+      for (const card of cards) {
+        if (!selectedCardIdSet.has(card.cardId)) {
+          throw new AnkiConnectError(
+            "protocol-error",
+            `cardsInfo returned an unexpected card ID: ${card.cardId}`,
+          );
+        }
+        const rawValue = card.fields[config.targetField];
+        if (rawValue === undefined) {
+          throw new AnkiConnectError(
+            "protocol-error",
+            `cardsInfo card ${card.cardId} is missing configured field: ${config.targetField}`,
+          );
+        }
+        const word = canonicalWord(rawValue);
+        if (word.length === 0) {
+          emptyTargetFields += 1;
+          continue;
+        }
+        const status = ankiCardStatus(minedCardIds.has(card.cardId));
+        const existing = statuses.get(word);
+        if (existing === undefined) statuses.set(word, status);
+        else statuses.set(word, aggregateAnkiStatuses([existing, status])!);
+      }
+
+      let match: {
+        matchedWords: number;
+        knownCount: number;
+        minedCount: number;
+        manualProtected: number;
+      } | null = null;
+      if (datasetId !== null) {
+        match = await this.core.worker.previewAnkiMatch({
+          datasetId,
+          knownWords: [...this.core.state.knownWords],
+          decisions: this.core.decisionTuples(),
+          ankiStatuses: [...statuses],
+        });
+      }
+
+      if (
+        configRevision !== this.configRevision ||
+        userStateEpoch !== this.core.getUserStateEpoch() ||
+        datasetId !== (this.core.state.dataset?.id ?? null)
+      ) {
+        throw new AnkiSyncServiceError("stale-preview", "Anki sync preview is no longer current");
+      }
+
+      const candidate: PreviewCandidate = {
+        statuses,
+        scannedCards: selectedCardIds.length,
+        uniqueWords: statuses.size,
+        emptyTargetFields,
+        configRevision,
+        userStateEpoch,
+        datasetId,
+      };
+      this.previewCandidate = candidate;
+      const queueRemovals = this.queueRemovalCount(statuses, datasetId);
+      this.core.state.ankiPreview = {
+        scannedCards: candidate.scannedCards,
+        uniqueWords: candidate.uniqueWords,
+        matchedWords: match?.matchedWords ?? null,
+        knownCount: match?.knownCount ?? null,
+        minedCount: match?.minedCount ?? null,
+        manualProtected: match?.manualProtected ?? null,
+        emptyTargetFields: candidate.emptyTargetFields,
+        queueRemovals,
+        zeroCards: candidate.scannedCards === 0,
+        datasetAvailable: datasetId !== null,
+      };
+      this.publishSummary("preview", null);
+    } catch (error) {
+      this.previewCandidate = null;
+      this.core.state.ankiPreview = null;
+      this.publishError(error);
+      throw error;
+    }
+  }
+
+  cancelPreview(): void {
+    const hadPreview =
+      this.previewCandidate !== null ||
+      this.core.state.ankiPreview !== null ||
+      this.core.state.anki.status === "preview";
+    this.previewCandidate = null;
+    this.core.state.ankiPreview = null;
+    if (hadPreview) this.publishSummary("idle", null);
+  }
+
   private getPort(): AnkiConnectPort {
     return (this.port ??= this.portFactory());
   }
 
   private invalidatePreview(): void {
+    this.configRevision = this.configRevision + 1;
+    this.previewCandidate = null;
     this.core.state.ankiPreview = null;
+  }
+
+  private queueRemovalCount(
+    statuses: ReadonlyMap<string, AnkiWordStatus>,
+    datasetId: string | null,
+  ): number {
+    if (datasetId === null || this.core.state.queue.datasetId !== datasetId) return 0;
+    const manual = new Set(this.core.decisionTuples().map(([word]) => canonicalWord(word)));
+    const queued = new Set(this.core.state.queue.normalizedWords.map(canonicalWord));
+    let count = 0;
+    for (const word of queued) {
+      if (statuses.has(word) && !manual.has(word)) count += 1;
+    }
+    return count;
   }
 
   private setStatus(
