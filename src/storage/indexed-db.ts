@@ -1,5 +1,7 @@
+import type { AnkiSyncConfig, AnkiSyncSnapshot } from "../domain/anki";
 import type { Entry, QueryState, ViewState, WordDecision } from "../domain/types";
 import type {
+  AnkiSyncStore,
   AppStore,
   DatasetMetadata,
   DatasetStore,
@@ -11,7 +13,7 @@ import type {
 import { StorageUnavailableError } from "./fallback";
 
 export const INDEXED_DB_NAME = "jiten-migaku-miner";
-export const INDEXED_DB_VERSION = 2;
+export const INDEXED_DB_VERSION = 3;
 
 const DATASETS_STORE = "datasets";
 const ENTRY_CHUNKS_STORE = "entryChunks";
@@ -19,9 +21,11 @@ const KNOWN_WORD_SETS_STORE = "knownWordSets";
 const PREFERENCES_STORE = "preferences";
 const META_STORE = "meta";
 const WORD_DECISIONS_STORE = "wordDecisions";
+const ANKI_SYNC_STORE = "ankiSync";
 const ACTIVE_DATASET_KEY = "activeDatasetId";
 const ACTIVE_KNOWN_WORD_SET_KEY = "activeKnownWordSetId";
 const PREFERENCES_KEY = "current";
+const ANKI_SYNC_KEY = "current";
 const READ_BATCH_SIZE = 32;
 
 type StoreName =
@@ -30,7 +34,8 @@ type StoreName =
   | typeof KNOWN_WORD_SETS_STORE
   | typeof PREFERENCES_STORE
   | typeof META_STORE
-  | typeof WORD_DECISIONS_STORE;
+  | typeof WORD_DECISIONS_STORE
+  | typeof ANKI_SYNC_STORE;
 
 interface DatasetRecord extends DatasetMetadata {
   ready: boolean;
@@ -60,6 +65,12 @@ interface MetaRecord {
   value: string;
 }
 
+interface AnkiSyncRecord {
+  id: typeof ANKI_SYNC_KEY;
+  config: AnkiSyncConfig | null;
+  snapshot: AnkiSyncSnapshot | null;
+}
+
 function cloneEntry(value: Entry): Entry {
   return {
     ...value,
@@ -73,6 +84,21 @@ function cloneMetadata(value: DatasetMetadata): DatasetMetadata {
 
 function cloneDecision(value: WordDecision): WordDecision {
   return { ...value };
+}
+
+function cloneConfig(value: AnkiSyncConfig | null): AnkiSyncConfig | null {
+  return value === null ? null : { ...value, deckScope: { ...value.deckScope } };
+}
+
+function cloneSnapshot(value: AnkiSyncSnapshot | null): AnkiSyncSnapshot | null {
+  return value === null
+    ? null
+    : {
+        ...value,
+        statuses: value.statuses.map(
+          ([normalizedWord, status]) => [normalizedWord, status] as [string, typeof status],
+        ),
+      };
 }
 
 function datasetRange(datasetId: string): IDBKeyRange {
@@ -122,6 +148,9 @@ function openDatabase(name: string): Promise<IDBDatabase> {
         database.createObjectStore(WORD_DECISIONS_STORE, {
           keyPath: "normalizedWord",
         });
+      }
+      if (!database.objectStoreNames.contains(ANKI_SYNC_STORE)) {
+        database.createObjectStore(ANKI_SYNC_STORE, { keyPath: "id" });
       }
     };
     request.onerror = () => reject(requestError(request));
@@ -809,11 +838,110 @@ class IndexedDbWordDecisionStore implements WordDecisionStore {
   }
 }
 
+class IndexedDbAnkiSyncStore implements AnkiSyncStore {
+  constructor(private readonly databaseName: string) {}
+
+  async loadConfig(): Promise<AnkiSyncConfig | null> {
+    return withDatabase(this.databaseName, async (database) => {
+      const record = await runTransaction<AnkiSyncRecord | undefined>(
+        database,
+        [ANKI_SYNC_STORE],
+        "readonly",
+        (transaction, resolveResult) => {
+          const request = transaction.objectStore(ANKI_SYNC_STORE).get(ANKI_SYNC_KEY) as IDBRequest<
+            AnkiSyncRecord | undefined
+          >;
+          request.onsuccess = () => resolveResult(request.result);
+        },
+      );
+      return cloneConfig(record?.config ?? null);
+    });
+  }
+
+  async saveConfig(config: AnkiSyncConfig): Promise<void> {
+    const nextConfig = cloneConfig(config);
+    await withDatabase(this.databaseName, async (database) => {
+      await runTransaction<void>(
+        database,
+        [ANKI_SYNC_STORE],
+        "readwrite",
+        (transaction, resolveResult) => {
+          const store = transaction.objectStore(ANKI_SYNC_STORE);
+          const request = store.get(ANKI_SYNC_KEY) as IDBRequest<AnkiSyncRecord | undefined>;
+          request.onsuccess = () => {
+            store.put({
+              id: ANKI_SYNC_KEY,
+              config: nextConfig,
+              snapshot: cloneSnapshot(request.result?.snapshot ?? null),
+            } satisfies AnkiSyncRecord);
+            resolveResult(undefined);
+          };
+        },
+      );
+    });
+  }
+
+  async loadSnapshot(): Promise<AnkiSyncSnapshot | null> {
+    return withDatabase(this.databaseName, async (database) => {
+      const record = await runTransaction<AnkiSyncRecord | undefined>(
+        database,
+        [ANKI_SYNC_STORE],
+        "readonly",
+        (transaction, resolveResult) => {
+          const request = transaction.objectStore(ANKI_SYNC_STORE).get(ANKI_SYNC_KEY) as IDBRequest<
+            AnkiSyncRecord | undefined
+          >;
+          request.onsuccess = () => resolveResult(request.result);
+        },
+      );
+      return cloneSnapshot(record?.snapshot ?? null);
+    });
+  }
+
+  async replaceSnapshot(snapshot: AnkiSyncSnapshot): Promise<void> {
+    const nextSnapshot = cloneSnapshot(snapshot);
+    await withDatabase(this.databaseName, async (database) => {
+      await runTransaction<void>(
+        database,
+        [ANKI_SYNC_STORE],
+        "readwrite",
+        (transaction, resolveResult) => {
+          const store = transaction.objectStore(ANKI_SYNC_STORE);
+          const request = store.get(ANKI_SYNC_KEY) as IDBRequest<AnkiSyncRecord | undefined>;
+          request.onsuccess = () => {
+            store.put({
+              id: ANKI_SYNC_KEY,
+              config: cloneConfig(request.result?.config ?? null),
+              snapshot: nextSnapshot,
+            } satisfies AnkiSyncRecord);
+            resolveResult(undefined);
+          };
+        },
+      );
+    });
+  }
+
+  async clear(): Promise<void> {
+    await withDatabase(this.databaseName, async (database) => {
+      await runTransaction<void>(
+        database,
+        [ANKI_SYNC_STORE],
+        "readwrite",
+        (transaction, resolveResult) => {
+          transaction.objectStore(ANKI_SYNC_STORE).delete(ANKI_SYNC_KEY);
+          resolveResult(undefined);
+        },
+      );
+    });
+  }
+}
+
 export class IndexedDbAppStore implements AppStore {
   readonly datasets: DatasetStore;
   readonly knownWords: KnownWordStore;
   readonly wordDecisions: WordDecisionStore;
   readonly preferences: PreferencesStore;
+  readonly ankiSync: AnkiSyncStore;
 
   private readonly databaseName: string;
 
@@ -823,6 +951,7 @@ export class IndexedDbAppStore implements AppStore {
     this.knownWords = new IndexedDbKnownWordStore(databaseName);
     this.wordDecisions = new IndexedDbWordDecisionStore(databaseName);
     this.preferences = new IndexedDbPreferencesStore(databaseName);
+    this.ankiSync = new IndexedDbAnkiSyncStore(databaseName);
   }
 
   async restoreUserState(snapshot: RestoreUserStateSnapshot): Promise<void> {
@@ -841,10 +970,22 @@ export class IndexedDbAppStore implements AppStore {
       view: { ...snapshot.preferences.view },
       page: snapshot.preferences.page,
     };
+    const requestedAnkiSync = snapshot.ankiSync ?? { config: null, snapshot: null };
+    const ankiSyncRecord: AnkiSyncRecord = {
+      id: ANKI_SYNC_KEY,
+      config: cloneConfig(requestedAnkiSync.config),
+      snapshot: cloneSnapshot(requestedAnkiSync.snapshot),
+    };
     await withDatabase(this.databaseName, async (database) => {
       await runTransaction<void>(
         database,
-        [KNOWN_WORD_SETS_STORE, META_STORE, WORD_DECISIONS_STORE, PREFERENCES_STORE],
+        [
+          KNOWN_WORD_SETS_STORE,
+          META_STORE,
+          WORD_DECISIONS_STORE,
+          PREFERENCES_STORE,
+          ANKI_SYNC_STORE,
+        ],
         "readwrite",
         (transaction, resolveResult, abort) => {
           const knownSets = transaction.objectStore(KNOWN_WORD_SETS_STORE);
@@ -872,6 +1013,7 @@ export class IndexedDbAppStore implements AppStore {
             decisions.put(record);
           }
           transaction.objectStore(PREFERENCES_STORE).put(preferencesRecord);
+          transaction.objectStore(ANKI_SYNC_STORE).put(ankiSyncRecord);
           resolveResult(undefined);
         },
       );
@@ -889,6 +1031,7 @@ export class IndexedDbAppStore implements AppStore {
           PREFERENCES_STORE,
           META_STORE,
           WORD_DECISIONS_STORE,
+          ANKI_SYNC_STORE,
         ],
         "readwrite",
         (transaction, resolveResult) => {
@@ -898,6 +1041,7 @@ export class IndexedDbAppStore implements AppStore {
           transaction.objectStore(PREFERENCES_STORE).clear();
           transaction.objectStore(META_STORE).clear();
           transaction.objectStore(WORD_DECISIONS_STORE).clear();
+          transaction.objectStore(ANKI_SYNC_STORE).clear();
           resolveResult(undefined);
         },
       );

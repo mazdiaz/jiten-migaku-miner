@@ -1,5 +1,6 @@
 import "fake-indexeddb/auto";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { AnkiSyncConfig, AnkiSyncSnapshot } from "../../src/domain/anki";
 import type { Entry, QueryState, ViewState, WordDecision } from "../../src/domain/types";
 import type { AppStore, DatasetMetadata } from "../../src/storage/contracts";
 import { createIndexedDbAppStore } from "../../src/storage/indexed-db";
@@ -206,13 +207,13 @@ describe("IndexedDbAppStore", () => {
     expect(await store.datasets.getActive()).toEqual(metadata("first"));
   });
 
-  it("creates version 2 schema with required object stores", async () => {
+  it("creates version 3 schema with required object stores", async () => {
     const store = createIndexedDbAppStore(databaseName);
     await store.datasets.list();
 
     const database = await openRawDatabase(databaseName);
     try {
-      expect(database.version).toBe(2);
+      expect(database.version).toBe(3);
       expect([...database.objectStoreNames]).toEqual(
         expect.arrayContaining([
           "datasets",
@@ -221,9 +222,10 @@ describe("IndexedDbAppStore", () => {
           "preferences",
           "meta",
           "wordDecisions",
+          "ankiSync",
         ]),
       );
-      expect(database.objectStoreNames.length).toBe(6);
+      expect(database.objectStoreNames.length).toBe(7);
     } finally {
       database.close();
     }
@@ -248,9 +250,10 @@ describe("IndexedDbAppStore", () => {
 
     const database = await openRawDatabase(databaseName);
     try {
-      expect(database.version).toBe(2);
-      expect(database.objectStoreNames.length).toBe(6);
+      expect(database.version).toBe(3);
+      expect(database.objectStoreNames.length).toBe(7);
       expect([...database.objectStoreNames]).toContain("wordDecisions");
+      expect([...database.objectStoreNames]).toContain("ankiSync");
     } finally {
       database.close();
     }
@@ -340,6 +343,107 @@ describe("IndexedDbAppStore", () => {
     expect(await store.preferences.load()).toEqual({ query, view, page: 3 });
   });
 
+  it("round-trips and replaces Anki config and snapshot independently", async () => {
+    const store = createIndexedDbAppStore(databaseName);
+    const config: AnkiSyncConfig = {
+      deckScope: { kind: "deck", name: "MAIN::Mining" },
+      noteType: "Mine",
+      targetField: "Word",
+    };
+    const snapshot: AnkiSyncSnapshot = {
+      syncedAt: "2026-09-10T10:00:00.000Z",
+      statuses: [
+        ["word", "mined"],
+        ["known-word", "known"],
+      ],
+    };
+
+    await store.ankiSync.saveConfig(config);
+    await store.ankiSync.replaceSnapshot(snapshot);
+
+    expect(await store.ankiSync.loadConfig()).toEqual(config);
+    expect(await store.ankiSync.loadSnapshot()).toEqual(snapshot);
+
+    await store.ankiSync.replaceSnapshot({
+      syncedAt: "2026-09-10T11:00:00.000Z",
+      statuses: [],
+    });
+    expect(await store.ankiSync.loadConfig()).toEqual(config);
+    expect(await store.ankiSync.loadSnapshot()).toEqual({
+      syncedAt: "2026-09-10T11:00:00.000Z",
+      statuses: [],
+    });
+
+    await store.ankiSync.saveConfig({
+      deckScope: { kind: "all-decks" },
+      noteType: "Updated",
+      targetField: "Expression",
+    });
+    expect(await store.ankiSync.loadConfig()).toEqual({
+      deckScope: { kind: "all-decks" },
+      noteType: "Updated",
+      targetField: "Expression",
+    });
+    expect(await store.ankiSync.loadSnapshot()).toEqual({
+      syncedAt: "2026-09-10T11:00:00.000Z",
+      statuses: [],
+    });
+
+    await store.ankiSync.clear();
+    expect(await store.ankiSync.loadConfig()).toBeNull();
+    expect(await store.ankiSync.loadSnapshot()).toBeNull();
+  });
+
+  it("returns defensive copies of nested Anki config and snapshot values", async () => {
+    const store = createIndexedDbAppStore(databaseName);
+    const config: AnkiSyncConfig = {
+      deckScope: { kind: "deck", name: "MAIN::Mining" },
+      noteType: "Mine",
+      targetField: "Word",
+    };
+    const snapshot: AnkiSyncSnapshot = {
+      syncedAt: "2026-09-10T10:00:00.000Z",
+      statuses: [["word", "mined"]],
+    };
+
+    await store.ankiSync.saveConfig(config);
+    await store.ankiSync.replaceSnapshot(snapshot);
+
+    config.deckScope = { kind: "deck", name: "MUTATED" };
+    config.noteType = "Changed";
+    snapshot.statuses[0]![0] = "changed-word";
+    snapshot.statuses.push(["added-word", "known"]);
+
+    expect(await store.ankiSync.loadConfig()).toEqual({
+      deckScope: { kind: "deck", name: "MAIN::Mining" },
+      noteType: "Mine",
+      targetField: "Word",
+    });
+    expect(await store.ankiSync.loadSnapshot()).toEqual({
+      syncedAt: "2026-09-10T10:00:00.000Z",
+      statuses: [["word", "mined"]],
+    });
+
+    const loadedConfig = await store.ankiSync.loadConfig();
+    const loadedSnapshot = await store.ankiSync.loadSnapshot();
+    if (loadedConfig?.deckScope.kind === "deck") {
+      loadedConfig.deckScope.name = "READ-MUTATED";
+    }
+    if (loadedSnapshot !== null) {
+      loadedSnapshot.statuses[0]![1] = "known";
+    }
+
+    expect(await store.ankiSync.loadConfig()).toEqual({
+      deckScope: { kind: "deck", name: "MAIN::Mining" },
+      noteType: "Mine",
+      targetField: "Word",
+    });
+    expect(await store.ankiSync.loadSnapshot()).toEqual({
+      syncedAt: "2026-09-10T10:00:00.000Z",
+      statuses: [["word", "mined"]],
+    });
+  });
+
   it("removes every store on clearAll", async () => {
     const store = createIndexedDbAppStore(databaseName);
 
@@ -348,6 +452,15 @@ describe("IndexedDbAppStore", () => {
     await store.knownWords.save("known", "Known words", ["alpha"]);
     await store.preferences.save({ query, view, page: 1 });
     await store.wordDecisions.set(decision("透過", "known", "2026-09-05T00:00:00.000Z"));
+    await store.ankiSync.saveConfig({
+      deckScope: { kind: "all-decks" },
+      noteType: "Mine",
+      targetField: "Word",
+    });
+    await store.ankiSync.replaceSnapshot({
+      syncedAt: "2026-09-05T00:00:00.000Z",
+      statuses: [["透過", "known"]],
+    });
 
     await store.clearAll();
 
@@ -356,6 +469,8 @@ describe("IndexedDbAppStore", () => {
     expect(await store.knownWords.getActive()).toBeNull();
     expect(await store.preferences.load()).toBeNull();
     expect(await store.wordDecisions.list()).toEqual([]);
+    expect(await store.ankiSync.loadConfig()).toBeNull();
+    expect(await store.ankiSync.loadSnapshot()).toBeNull();
   });
 
   it("round-trips word decisions and removes them by word", async () => {
@@ -459,6 +574,10 @@ describe("IndexedDbAppStore", () => {
         decision("透過", "later", "2026-09-05T01:00:00.000Z"),
       ],
       preferences: { query, view, page: 4 },
+      ankiSync: {
+        config: { deckScope: { kind: "all-decks" }, noteType: "Mine", targetField: "Word" },
+        snapshot: { syncedAt: "2026-09-05T00:00:00.000Z", statuses: [["新しい", "mined"]] },
+      },
     });
 
     expect(await store.knownWords.getActive()).toEqual({
@@ -471,6 +590,15 @@ describe("IndexedDbAppStore", () => {
       decision("透過", "later", "2026-09-05T01:00:00.000Z"),
     ]);
     expect(await store.preferences.load()).toEqual({ query, view, page: 4 });
+    expect(await store.ankiSync.loadConfig()).toEqual({
+      deckScope: { kind: "all-decks" },
+      noteType: "Mine",
+      targetField: "Word",
+    });
+    expect(await store.ankiSync.loadSnapshot()).toEqual({
+      syncedAt: "2026-09-05T00:00:00.000Z",
+      statuses: [["新しい", "mined"]],
+    });
     const diagnostics = await readRestoreDiagnostics(databaseName);
     expect(diagnostics.knownSets).toEqual([{ id: "set-b" }]);
     expect(diagnostics.activeKnown).toBe("set-b");
@@ -481,6 +609,15 @@ describe("IndexedDbAppStore", () => {
     await store.knownWords.save("set-a", "Set A", ["alpha"]);
     await store.wordDecisions.set(decision("古い", "skip", "2026-09-01T00:00:00.000Z"));
     await store.preferences.save({ query, view, page: 1 });
+    await store.ankiSync.saveConfig({
+      deckScope: { kind: "all-decks" },
+      noteType: "Mine",
+      targetField: "Word",
+    });
+    await store.ankiSync.replaceSnapshot({
+      syncedAt: "2026-09-01T00:00:00.000Z",
+      statuses: [["古い", "known"]],
+    });
 
     await store.restoreUserState?.({
       knownWords: null,
@@ -490,6 +627,8 @@ describe("IndexedDbAppStore", () => {
 
     expect(await store.knownWords.getActive()).toBeNull();
     expect(await store.wordDecisions.list()).toEqual([]);
+    expect(await store.ankiSync.loadConfig()).toBeNull();
+    expect(await store.ankiSync.loadSnapshot()).toBeNull();
     const diagnostics = await readRestoreDiagnostics(databaseName);
     expect(diagnostics.knownSets).toEqual([]);
     expect(diagnostics.activeKnown).toBeNull();
@@ -501,6 +640,17 @@ describe("IndexedDbAppStore", () => {
     const priorDecision = decision("古い", "skip", "2026-09-01T00:00:00.000Z");
     await store.wordDecisions.set(priorDecision);
     await store.preferences.save({ query, view, page: 1 });
+    const priorAnkiConfig: AnkiSyncConfig = {
+      deckScope: { kind: "deck", name: "MAIN" },
+      noteType: "Mine",
+      targetField: "Word",
+    };
+    const priorAnkiSnapshot: AnkiSyncSnapshot = {
+      syncedAt: "2026-09-01T00:00:00.000Z",
+      statuses: [["古い", "known"]],
+    };
+    await store.ankiSync.saveConfig(priorAnkiConfig);
+    await store.ankiSync.replaceSnapshot(priorAnkiSnapshot);
 
     const originalPut = IDBObjectStore.prototype.put;
     const putSpy = vi.spyOn(IDBObjectStore.prototype, "put").mockImplementation(function (
@@ -508,8 +658,8 @@ describe("IndexedDbAppStore", () => {
       value: unknown,
       key?: IDBValidKey,
     ) {
-      if ((value as { id?: unknown }).id === "current") {
-        throw new Error("injected preferences failure");
+      if (this.name === "ankiSync") {
+        throw new Error("injected Anki failure");
       }
       return originalPut.call(this, value, key);
     });
@@ -519,8 +669,12 @@ describe("IndexedDbAppStore", () => {
         knownWords: { id: "set-b", name: "Set B", words: ["beta"] },
         decisions: [decision("新しい", "mined", "2026-09-05T00:00:00.000Z")],
         preferences: { query, view, page: 4 },
+        ankiSync: {
+          config: { deckScope: { kind: "all-decks" }, noteType: "New", targetField: "Word" },
+          snapshot: { syncedAt: "2026-09-05T00:00:00.000Z", statuses: [["新しい", "mined"]] },
+        },
       }),
-    ).rejects.toThrow("injected preferences failure");
+    ).rejects.toThrow("injected Anki failure");
 
     putSpy.mockRestore();
     expect(await store.knownWords.getActive()).toEqual({
@@ -530,6 +684,8 @@ describe("IndexedDbAppStore", () => {
     });
     expect(await store.wordDecisions.list()).toEqual([priorDecision]);
     expect(await store.preferences.load()).toEqual({ query, view, page: 1 });
+    expect(await store.ankiSync.loadConfig()).toEqual(priorAnkiConfig);
+    expect(await store.ankiSync.loadSnapshot()).toEqual(priorAnkiSnapshot);
     const diagnostics = await readRestoreDiagnostics(databaseName);
     expect(diagnostics.knownSets).toEqual([{ id: "set-a" }]);
     expect(diagnostics.activeKnown).toBe("set-a");
