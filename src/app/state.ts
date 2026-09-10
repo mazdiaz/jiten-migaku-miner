@@ -30,6 +30,34 @@ export interface UndoState {
   label: string | null;
 }
 
+export type AnkiUiStatus = "idle" | "connecting" | "syncing" | "preview" | "error";
+
+export interface AnkiUiState {
+  configured: boolean;
+  status: AnkiUiStatus;
+  lastSyncedAt: string | null;
+  wordCount: number;
+  knownCount: number;
+  minedCount: number;
+  deckScopeLabel: string | null;
+  noteType: string | null;
+  targetField: string | null;
+  errorMessage: string | null;
+}
+
+export interface AnkiPreviewState {
+  scannedCards: number;
+  uniqueWords: number;
+  matchedWords: number | null;
+  knownCount: number | null;
+  minedCount: number | null;
+  manualProtected: number | null;
+  emptyTargetFields: number;
+  queueRemovals: number;
+  zeroCards: boolean;
+  datasetAvailable: boolean;
+}
+
 export interface AppState {
   dataset: DatasetMetadata | null;
   knownWords: Set<string>;
@@ -49,6 +77,8 @@ export interface AppState {
   coverage: CoverageStats | null;
   coverageStatus: "idle" | "loading" | "ready" | "error";
   coverageErrorMessage: string | null;
+  anki: AnkiUiState;
+  ankiPreview: AnkiPreviewState | null;
   // Session-only backup freshness signal (never persisted, never in backups):
   // when the last exportBackup() of THIS session ran, and how many counted
   // user-state mutations have landed since.
@@ -133,6 +163,19 @@ export const EMPTY_UNDO: UndoState = {
   label: null,
 };
 
+export const EMPTY_ANKI: AnkiUiState = {
+  configured: false,
+  status: "idle",
+  lastSyncedAt: null,
+  wordCount: 0,
+  knownCount: 0,
+  minedCount: 0,
+  deckScopeLabel: null,
+  noteType: null,
+  targetField: null,
+  errorMessage: null,
+};
+
 export function createInitialAppState(
   persistence: AppState["persistence"] = "indexeddb",
 ): AppState {
@@ -153,6 +196,8 @@ export function createInitialAppState(
     coverage: null,
     coverageStatus: "idle",
     coverageErrorMessage: null,
+    anki: { ...EMPTY_ANKI },
+    ankiPreview: null,
     lastExportAt: null,
     changesSinceExport: 0,
   };
@@ -209,6 +254,14 @@ function cloneCoverage(value: CoverageStats | null): CoverageStats | null {
     : { ...value, targets: value.targets.map((target) => ({ ...target })) };
 }
 
+function cloneAnki(value: AnkiUiState): AnkiUiState {
+  return { ...value };
+}
+
+function cloneAnkiPreview(value: AnkiPreviewState | null): AnkiPreviewState | null {
+  return value === null ? null : { ...value };
+}
+
 export function cloneAppState(value: AppState): AppState {
   return {
     ...value,
@@ -222,6 +275,8 @@ export function cloneAppState(value: AppState): AppState {
     queue: cloneQueue(value.queue),
     undo: cloneUndo(value.undo),
     coverage: cloneCoverage(value.coverage),
+    anki: cloneAnki(value.anki),
+    ankiPreview: cloneAnkiPreview(value.ankiPreview),
   };
 }
 

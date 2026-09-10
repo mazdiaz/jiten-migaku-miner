@@ -196,6 +196,37 @@ function capture(controller: ReturnType<typeof createMinerController>): Readonly
 }
 
 describe("snapshotAppState structural isolation", () => {
+  it("clones lightweight Anki state without exposing a full status map", () => {
+    const state = createInitialAppState("memory");
+    state.anki = {
+      ...state.anki,
+      configured: true,
+      wordCount: 2,
+      knownCount: 1,
+      minedCount: 1,
+    };
+    state.ankiPreview = {
+      scannedCards: 2,
+      uniqueWords: 2,
+      matchedWords: 2,
+      knownCount: 1,
+      minedCount: 1,
+      manualProtected: 0,
+      emptyTargetFields: 0,
+      queueRemovals: 0,
+      zeroCards: false,
+      datasetAvailable: true,
+    };
+
+    const snapshot = snapshotAppState(state);
+
+    snapshot.anki.wordCount = 99;
+    snapshot.ankiPreview!.matchedWords = 99;
+    expect(state.anki.wordCount).toBe(2);
+    expect(state.ankiPreview?.matchedWords).toBe(2);
+    expect((snapshot as { ankiStatuses?: unknown }).ankiStatuses).toBeUndefined();
+  });
+
   it("clones decision objects so subscriber mutation cannot alter the source", () => {
     const state = createInitialAppState("memory");
     state.wordDecisions.set("ねこ", {

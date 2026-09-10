@@ -1,3 +1,4 @@
+import type { AnkiWordStatus } from "../../domain/anki";
 import type { WordDecisionStatus } from "../../domain/types";
 import type { SessionQueueStore } from "../../platform/session-queue";
 import type { AppStore } from "../../storage/contracts";
@@ -54,6 +55,7 @@ export interface ControllerCore {
     options?: { callerHoldsUserStateLock?: boolean },
   ): Promise<void>;
   decisionTuples(): Array<[string, WordDecisionStatus]>;
+  ankiStatusTuples(): Array<[string, AnkiWordStatus]>;
   /** Counted user-state mutation (backup freshness counter). */
   countChangeSinceExport(): void;
 }

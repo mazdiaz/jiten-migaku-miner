@@ -165,6 +165,7 @@ class MinerControllerImpl implements MinerController {
       loadAndQuery: (datasetId, expectedEntryCount, options) =>
         impl.loadAndQuery(datasetId, expectedEntryCount, options),
       decisionTuples: () => impl.decisionTuples(),
+      ankiStatusTuples: () => [],
       countChangeSinceExport: () => impl.countChangeSinceExport(),
     };
     this.coverageService = new CoverageService(core);
