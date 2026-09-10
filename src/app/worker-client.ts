@@ -1,3 +1,4 @@
+import type { AnkiPreviewMatchStats, AnkiWordStatus } from "../domain/anki";
 import type {
   CoverageStats,
   Entry,
@@ -43,6 +44,7 @@ export interface WorkerQueryInput {
   datasetId: string;
   knownWords: Iterable<string>;
   decisions?: Array<[string, WordDecisionStatus]>;
+  ankiStatuses?: Array<[string, AnkiWordStatus]>;
   includeNormalizedWords?: string[];
   query: QueryState;
   window?: QueryWindow;
@@ -53,7 +55,15 @@ export interface WorkerCoverageInput {
   datasetId: string;
   knownWords: Iterable<string>;
   decisions?: Array<[string, WordDecisionStatus]>;
+  ankiStatuses?: Array<[string, AnkiWordStatus]>;
   targets?: number[];
+}
+
+export interface WorkerAnkiPreviewInput {
+  datasetId: string;
+  knownWords: Iterable<string>;
+  decisions?: Array<[string, WordDecisionStatus]>;
+  ankiStatuses: Array<[string, AnkiWordStatus]>;
 }
 
 export interface WorkerClient {
@@ -70,6 +80,7 @@ export interface WorkerClient {
   loadDataset(datasetId: string, chunks: AsyncIterable<readonly Entry[]>): Promise<void>;
   query(input: WorkerQueryInput): Promise<QueryResult>;
   coverage(input: WorkerCoverageInput): Promise<CoverageStats>;
+  previewAnkiMatch(input: WorkerAnkiPreviewInput): Promise<AnkiPreviewMatchStats>;
   dispose(): void;
 }
 
@@ -83,12 +94,19 @@ export class WorkerClientError extends Error {
   }
 }
 
-type OperationKind = "import-jiten" | "import-known" | "load" | "query" | "coverage";
+type OperationKind =
+  | "import-jiten"
+  | "import-known"
+  | "load"
+  | "query"
+  | "coverage"
+  | "anki-preview";
 type PendingValue =
   | JitenImportComplete
   | KnownImportComplete
   | QueryResult
   | CoverageStats
+  | AnkiPreviewMatchStats
   | undefined;
 
 interface PendingOperation {
@@ -116,6 +134,7 @@ function isWorkerResponse(value: unknown): value is WorkerResponse {
     value.type === "load-complete" ||
     value.type === "query-result" ||
     value.type === "coverage-result" ||
+    value.type === "anki-preview-result" ||
     value.type === "error"
   );
 }
@@ -251,6 +270,13 @@ class BrowserWorkerClient implements WorkerClient {
 
     if (response.type === "coverage-result") {
       if (pending.kind !== "coverage") return;
+      this.pending.delete(response.requestId);
+      pending.resolve(response.result);
+      return;
+    }
+
+    if (response.type === "anki-preview-result") {
+      if (pending.kind !== "anki-preview") return;
       this.pending.delete(response.requestId);
       pending.resolve(response.result);
       return;
@@ -470,6 +496,7 @@ class BrowserWorkerClient implements WorkerClient {
       datasetId: input.datasetId,
       knownWords: [...input.knownWords],
       decisions: input.decisions ?? [],
+      ankiStatuses: input.ankiStatuses ?? [],
       query: { ...input.query },
     };
     if (input.includeNormalizedWords !== undefined)
@@ -496,6 +523,7 @@ class BrowserWorkerClient implements WorkerClient {
       datasetId: input.datasetId,
       knownWords: [...input.knownWords],
       decisions: input.decisions ?? [],
+      ankiStatuses: input.ankiStatuses ?? [],
     };
     if (input.targets !== undefined) request.targets = [...input.targets];
 
@@ -504,6 +532,21 @@ class BrowserWorkerClient implements WorkerClient {
     } catch (error) {
       this.rejectPending(requestId, error);
     }
+    return result;
+  }
+
+  async previewAnkiMatch(input: WorkerAnkiPreviewInput): Promise<AnkiPreviewMatchStats> {
+    const requestId = this.requestId("anki-preview");
+    const result = this.register<AnkiPreviewMatchStats>(requestId, "anki-preview");
+    this.post({
+      protocolVersion: WORKER_PROTOCOL_VERSION,
+      type: "anki-preview-match",
+      requestId,
+      datasetId: input.datasetId,
+      knownWords: [...input.knownWords],
+      decisions: input.decisions ?? [],
+      ankiStatuses: [...input.ankiStatuses],
+    });
     return result;
   }
 

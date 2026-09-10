@@ -81,7 +81,7 @@ function queryResult(page: number): QueryResult {
 
 function queryResponse(requestId: string, page: number): WorkerResponse {
   return {
-    protocolVersion: 2,
+    protocolVersion: 3,
     type: "query-result",
     requestId,
     datasetId: "dataset-1",
@@ -111,7 +111,7 @@ function coverageStats(): CoverageStats {
 
 function coverageResponse(requestId: string, result: CoverageStats): WorkerResponse {
   return {
-    protocolVersion: 2,
+    protocolVersion: 3,
     type: "coverage-result",
     requestId,
     datasetId: "dataset-1",
@@ -141,7 +141,7 @@ describe("worker client", () => {
     const secondRequest = queryRequests[1];
     expect(secondRequest?.type).toBe("query");
     expect(worker.messages).toContainEqual({
-      protocolVersion: 2,
+      protocolVersion: 3,
       type: "cancel",
       requestId: firstRequest?.requestId,
     });
@@ -164,7 +164,7 @@ describe("worker client", () => {
     if (request?.type !== "import-jiten") throw new Error("missing import request");
 
     worker.emit({
-      protocolVersion: 2,
+      protocolVersion: 3,
       type: "import-chunk",
       requestId: request.requestId,
       kind: "jiten",
@@ -173,7 +173,7 @@ describe("worker client", () => {
       entries: [],
     });
     const complete: Extract<ImportCompleteResponse, { kind: "jiten" }> = {
-      protocolVersion: 2,
+      protocolVersion: 3,
       type: "import-complete",
       requestId: request.requestId,
       kind: "jiten",
@@ -217,7 +217,7 @@ describe("worker client", () => {
     expect(settled).toBe(false);
     if (complete.type !== "load-complete") throw new Error("missing load completion request");
     worker.emit({
-      protocolVersion: 2,
+      protocolVersion: 3,
       type: "load-complete",
       requestId: complete.requestId,
       datasetId: complete.datasetId,
@@ -246,7 +246,7 @@ describe("worker client", () => {
       if (message.type === "load-chunk" && !errorSent) {
         errorSent = true;
         worker.emit({
-          protocolVersion: 2,
+          protocolVersion: 3,
           type: "error",
           requestId: message.requestId,
           code: "invalid-chunk",
@@ -295,7 +295,7 @@ describe("worker client", () => {
       const loadStart = worker.messages.find((message) => message.type === "load-start");
       if (loadStart?.type !== "load-start") throw new Error("missing load-start request");
       worker.emit({
-        protocolVersion: 2,
+        protocolVersion: 3,
         type: "error",
         requestId: loadStart.requestId,
         code: "invalid-chunk",
@@ -353,7 +353,7 @@ describe("worker client", () => {
     const loadStart = worker.messages.find((message) => message.type === "load-start");
     if (loadStart?.type !== "load-start") throw new Error("missing load-start request");
     worker.emit({
-      protocolVersion: 2,
+      protocolVersion: 3,
       type: "error",
       requestId: loadStart.requestId,
       code: "invalid-chunk",
@@ -407,7 +407,7 @@ describe("worker client", () => {
     worker.postHook = (message) => {
       if (message.type === "load-complete") {
         worker.emit({
-          protocolVersion: 2,
+          protocolVersion: 3,
           type: "load-complete",
           requestId: message.requestId,
           datasetId: message.datasetId,
@@ -430,7 +430,7 @@ describe("worker client", () => {
     const loadStart = worker.messages.find((message) => message.type === "load-start");
     if (loadStart?.type !== "load-start") throw new Error("missing load-start request");
     worker.emit({
-      protocolVersion: 2,
+      protocolVersion: 3,
       type: "error",
       requestId: loadStart.requestId,
       code: "invalid-chunk",
@@ -462,7 +462,7 @@ describe("worker client", () => {
     worker.postHook = (message) => {
       if (message.type === "load-complete") {
         worker.emit({
-          protocolVersion: 2,
+          protocolVersion: 3,
           type: "load-complete",
           requestId: message.requestId,
           datasetId: message.datasetId,
@@ -557,7 +557,7 @@ describe("worker client", () => {
     if (candidateRequest?.type !== "query" || userRequest?.type !== "query")
       throw new Error("missing query requests");
     expect(worker.messages).not.toContainEqual({
-      protocolVersion: 2,
+      protocolVersion: 3,
       type: "cancel",
       requestId: candidateRequest.requestId,
     });
@@ -589,7 +589,7 @@ describe("worker client", () => {
     if (userRequest?.type !== "query" || candidateRequest?.type !== "query")
       throw new Error("missing query requests");
     expect(worker.messages).not.toContainEqual({
-      protocolVersion: 2,
+      protocolVersion: 3,
       type: "cancel",
       requestId: userRequest.requestId,
     });
@@ -609,7 +609,7 @@ describe("worker client", () => {
         worker.postHook = (message) => {
           if (message.type === "load-complete") {
             worker.emit({
-              protocolVersion: 2,
+              protocolVersion: 3,
               type: "load-complete",
               requestId: message.requestId,
               datasetId: message.datasetId,
@@ -653,7 +653,7 @@ describe("worker client", () => {
     });
     const request = worker.messages.find((message) => message.type === "coverage");
     expect(request).toMatchObject({
-      protocolVersion: 2,
+      protocolVersion: 3,
       type: "coverage",
       datasetId: "dataset-1",
       knownWords: ["猫", "犬"],
@@ -694,7 +694,7 @@ describe("worker client", () => {
     if (!request) throw new Error("missing coverage request");
 
     worker.emit({
-      protocolVersion: 2,
+      protocolVersion: 3,
       type: "error",
       requestId: request.requestId,
       code: "dataset-not-found",
@@ -743,5 +743,34 @@ describe("worker client", () => {
     await expect(query).resolves.toMatchObject({ page: 1 });
     await expect(first).resolves.toMatchObject({ coveragePercent: 50 });
     await expect(second).resolves.toMatchObject({ coveragePercent: 75 });
+  });
+
+  it("sends Anki tuples and resolves preview results", async () => {
+    const fakeWorker = new FakeWorker();
+    const client = createWorkerClient(() => fakeWorker);
+    const resultPromise = client.previewAnkiMatch({
+      datasetId: "dataset-1",
+      knownWords: [],
+      decisions: [],
+      ankiStatuses: [["word", "mined"]],
+    });
+    expect(fakeWorker.messages.at(-1)).toMatchObject({
+      type: "anki-preview-match",
+      protocolVersion: 3,
+      ankiStatuses: [["word", "mined"]],
+    });
+    fakeWorker.emit({
+      protocolVersion: 3,
+      type: "anki-preview-result",
+      requestId: (fakeWorker.messages.at(-1) as { requestId: string }).requestId,
+      datasetId: "dataset-1",
+      result: { matchedWords: 1, knownCount: 0, minedCount: 1, manualProtected: 0 },
+    });
+    await expect(resultPromise).resolves.toEqual({
+      matchedWords: 1,
+      knownCount: 0,
+      minedCount: 1,
+      manualProtected: 0,
+    });
   });
 });
