@@ -1,3 +1,5 @@
+import type { AnkiDeckScope, AnkiSyncConfig, AnkiSyncSnapshot, AnkiWordStatus } from "./anki";
+import { isAnkiWordStatus } from "./anki";
 import { normalizeText } from "./text";
 import type {
   QueryState,
@@ -8,7 +10,8 @@ import type {
 } from "./types";
 
 export const BACKUP_FORMAT = "jiten-migaku-miner-backup" as const;
-export const BACKUP_VERSION = 1 as const;
+export const BACKUP_VERSION = 2 as const;
+const LEGACY_BACKUP_VERSION = 1 as const;
 export const DECISION_STATUSES: readonly WordDecisionStatus[] = ["known", "mined", "skip", "later"];
 export const SENTENCE_SIZES: readonly ViewState["sentenceSize"][] = ["medium", "large"];
 export const DENSITIES: readonly ViewState["density"][] = ["comfortable", "compact"];
@@ -23,7 +26,7 @@ function isDecisionFilter(value: unknown): value is WordDecisionFilter {
 
 export interface MinerBackupV1 {
   format: typeof BACKUP_FORMAT;
-  version: typeof BACKUP_VERSION;
+  version: typeof LEGACY_BACKUP_VERSION | typeof BACKUP_VERSION;
   exportedAt: string;
   knownWords: null | {
     name: string;
@@ -35,6 +38,21 @@ export interface MinerBackupV1 {
     view: ViewState;
     page: number;
   } | null;
+}
+
+export interface AnkiSyncBackupSection {
+  config: AnkiSyncConfig | null;
+  snapshot: AnkiSyncSnapshot | null;
+}
+
+export interface MinerBackupV2 extends Omit<MinerBackupV1, "version"> {
+  version: typeof BACKUP_VERSION;
+  ankiSync: AnkiSyncBackupSection;
+}
+
+export interface ParsedMinerBackup extends MinerBackupV1 {
+  version: typeof LEGACY_BACKUP_VERSION | typeof BACKUP_VERSION;
+  ankiSync: AnkiSyncBackupSection | null;
 }
 
 export type BackupErrorCode =
@@ -65,6 +83,21 @@ function fail(code: BackupErrorCode, message: string): never {
 
 function requiredString(value: unknown, label: string): string {
   if (typeof value !== "string" || value.length === 0) {
+    fail("invalid-shape", `${label} must be a non-empty string`);
+  }
+  return value;
+}
+
+function validTimestamp(value: unknown, label: string): string {
+  const timestamp = requiredString(value, label);
+  if (!Number.isFinite(Date.parse(timestamp))) {
+    fail("invalid-shape", `${label} must be a valid timestamp`);
+  }
+  return timestamp;
+}
+
+function nonEmptyConfigString(value: unknown, label: string): string {
+  if (typeof value !== "string" || normalizeText(value).length === 0) {
     fail("invalid-shape", `${label} must be a non-empty string`);
   }
   return value;
@@ -112,7 +145,7 @@ function validateKnownWords(value: unknown): MinerBackupV1["knownWords"] {
   return { name, words: [...(value.words as string[])] };
 }
 
-function validateDecision(value: unknown, index: number): WordDecision {
+function validateDecision(value: unknown, index: number, strictTimestamp = false): WordDecision {
   if (!isRecord(value)) fail("invalid-shape", `wordDecisions[${index}] must be an object`);
   const rawWord = requiredString(value.normalizedWord, `wordDecisions[${index}].normalizedWord`);
   const normalizedWord = normalizeText(rawWord);
@@ -135,13 +168,15 @@ function validateDecision(value: unknown, index: number): WordDecision {
       `wordDecisions[${index}].status must be one of: ${DECISION_STATUSES.join(", ")}`,
     );
   }
-  const updatedAt = requiredString(value.updatedAt, `wordDecisions[${index}].updatedAt`);
+  const updatedAt = strictTimestamp
+    ? validTimestamp(value.updatedAt, `wordDecisions[${index}].updatedAt`)
+    : requiredString(value.updatedAt, `wordDecisions[${index}].updatedAt`);
   return { normalizedWord, status: status as WordDecisionStatus, updatedAt };
 }
 
-function validateDecisions(value: unknown): WordDecision[] {
+function validateDecisions(value: unknown, strictTimestamp = false): WordDecision[] {
   if (!Array.isArray(value)) fail("invalid-shape", "wordDecisions must be an array");
-  const decisions = value.map((entry, index) => validateDecision(entry, index));
+  const decisions = value.map((entry, index) => validateDecision(entry, index, strictTimestamp));
   const seen = new Set<string>();
   for (const decision of decisions) {
     if (seen.has(decision.normalizedWord)) {
@@ -231,11 +266,83 @@ function validatePreferences(value: unknown): MinerBackupV1["preferences"] {
   };
 }
 
+function validateAnkiDeckScope(value: unknown): AnkiDeckScope {
+  if (!isRecord(value)) fail("invalid-shape", "ankiSync.config.deckScope must be an object");
+  if (value.kind === "all-decks") return { kind: "all-decks" };
+  if (value.kind === "deck") {
+    return {
+      kind: "deck",
+      name: nonEmptyConfigString(value.name, "ankiSync.config.deckScope.name"),
+    };
+  }
+  fail("invalid-shape", 'ankiSync.config.deckScope.kind must be "all-decks" or "deck"');
+}
+
+function validateAnkiConfig(value: unknown): AnkiSyncConfig | null {
+  if (value === null) return null;
+  if (!isRecord(value)) fail("invalid-shape", "ankiSync.config must be an object or null");
+  return {
+    deckScope: validateAnkiDeckScope(value.deckScope),
+    noteType: nonEmptyConfigString(value.noteType, "ankiSync.config.noteType"),
+    targetField: nonEmptyConfigString(value.targetField, "ankiSync.config.targetField"),
+  };
+}
+
+function validateAnkiStatuses(value: unknown): Array<[string, AnkiWordStatus]> {
+  if (!Array.isArray(value)) fail("invalid-shape", "ankiSync.snapshot.statuses must be an array");
+  const seen = new Set<string>();
+  return value.map((entry, index) => {
+    if (!Array.isArray(entry) || entry.length !== 2) {
+      fail("invalid-shape", `ankiSync.snapshot.statuses[${index}] must be a [key, status] pair`);
+    }
+    const key = requiredString(entry[0], `ankiSync.snapshot.statuses[${index}][0]`);
+    const normalizedKey = normalizeText(key);
+    if (normalizedKey.length === 0) {
+      fail(
+        "invalid-shape",
+        `ankiSync.snapshot.statuses[${index}][0] must not be empty or whitespace-only`,
+      );
+    }
+    if (normalizedKey !== key) {
+      fail(
+        "invalid-shape",
+        `ankiSync.snapshot.statuses[${index}][0] must be canonical: ${JSON.stringify(key)}`,
+      );
+    }
+    if (!isAnkiWordStatus(entry[1])) {
+      fail("invalid-shape", `ankiSync.snapshot.statuses[${index}][1] must be "known" or "mined"`);
+    }
+    if (seen.has(key)) {
+      fail("invalid-shape", `ankiSync.snapshot.statuses contains a duplicate key: ${key}`);
+    }
+    seen.add(key);
+    return [key, entry[1]];
+  });
+}
+
+function validateAnkiSnapshot(value: unknown): AnkiSyncSnapshot | null {
+  if (value === null) return null;
+  if (!isRecord(value)) fail("invalid-shape", "ankiSync.snapshot must be an object or null");
+  return {
+    syncedAt: validTimestamp(value.syncedAt, "ankiSync.snapshot.syncedAt"),
+    statuses: validateAnkiStatuses(value.statuses),
+  };
+}
+
+function validateAnkiSync(value: unknown): AnkiSyncBackupSection {
+  if (!isRecord(value)) fail("invalid-shape", "ankiSync must be an object");
+  return {
+    config: validateAnkiConfig(value.config),
+    snapshot: validateAnkiSnapshot(value.snapshot),
+  };
+}
+
 export function serializeBackup(input: {
   exportedAt: string;
   knownWords: { name: string; words: Iterable<string> } | null;
   wordDecisions: Iterable<WordDecision>;
   preferences: MinerBackupV1["preferences"];
+  ankiSync?: AnkiSyncBackupSection | null;
 }): string {
   const knownWords =
     input.knownWords === null
@@ -253,8 +360,9 @@ export function serializeBackup(input: {
       updatedAt: decision.updatedAt,
     }))
     .sort((left, right) => left.normalizedWord.localeCompare(right.normalizedWord));
+  const ankiSync = validateAnkiSync(input.ankiSync ?? { config: null, snapshot: null });
 
-  const backup: MinerBackupV1 = {
+  const backup: MinerBackupV2 = {
     format: BACKUP_FORMAT,
     version: BACKUP_VERSION,
     exportedAt: input.exportedAt,
@@ -268,11 +376,12 @@ export function serializeBackup(input: {
             view: { ...input.preferences.view },
             page: input.preferences.page,
           },
+    ankiSync,
   };
   return JSON.stringify(backup, null, 2);
 }
 
-export function parseBackup(text: string): MinerBackupV1 {
+export function parseBackup(text: string): ParsedMinerBackup {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
@@ -284,20 +393,24 @@ export function parseBackup(text: string): MinerBackupV1 {
   if (parsed.format !== BACKUP_FORMAT) {
     fail("invalid-format", `Backup format must be "${BACKUP_FORMAT}"`);
   }
-  if (parsed.version !== BACKUP_VERSION) {
+  if (parsed.version !== LEGACY_BACKUP_VERSION && parsed.version !== BACKUP_VERSION) {
     fail(
       "unsupported-version",
       `Unsupported backup version: ${String(parsed.version)}. This application supports version ${BACKUP_VERSION}.`,
     );
   }
-  const exportedAt = requiredString(parsed.exportedAt, "exportedAt");
+  const isV2 = parsed.version === BACKUP_VERSION;
+  const exportedAt = isV2
+    ? validTimestamp(parsed.exportedAt, "exportedAt")
+    : requiredString(parsed.exportedAt, "exportedAt");
 
   return {
     format: BACKUP_FORMAT,
-    version: BACKUP_VERSION,
+    version: parsed.version,
     exportedAt,
     knownWords: validateKnownWords(parsed.knownWords),
-    wordDecisions: validateDecisions(parsed.wordDecisions),
+    wordDecisions: validateDecisions(parsed.wordDecisions, isV2),
     preferences: validatePreferences(parsed.preferences),
+    ankiSync: isV2 ? validateAnkiSync(parsed.ankiSync) : null,
   };
 }

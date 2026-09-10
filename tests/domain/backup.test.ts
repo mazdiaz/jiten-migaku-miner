@@ -75,6 +75,29 @@ function validBackupJson(): string {
   });
 }
 
+function v2Fixture(ankiSync: Record<string, unknown> = {}): string {
+  return JSON.stringify({
+    format: BACKUP_FORMAT,
+    version: 2,
+    exportedAt: "2026-09-10T10:00:00.000Z",
+    knownWords: null,
+    wordDecisions: [],
+    preferences: null,
+    ankiSync: {
+      config: {
+        deckScope: { kind: "all-decks" },
+        noteType: "Mine",
+        targetField: "Word",
+      },
+      snapshot: {
+        syncedAt: "2026-09-10T09:00:00.000Z",
+        statuses: [["word", "known"]],
+      },
+      ...ankiSync,
+    },
+  });
+}
+
 function mutatedBackup(mutate: (backup: any) => void): string {
   const backup = JSON.parse(validBackupJson());
   mutate(backup);
@@ -103,7 +126,7 @@ describe("serializeBackup", () => {
 
     expect(JSON.parse(json)).toEqual({
       format: BACKUP_FORMAT,
-      version: 1,
+      version: 2,
       exportedAt: EXPORTED_AT,
       knownWords: { name: "known.txt", words: ["あめ", "ばら", "アメ"] },
       wordDecisions: [
@@ -111,6 +134,7 @@ describe("serializeBackup", () => {
         { normalizedWord: "躊躇う", status: "mined", updatedAt: EXPORTED_AT },
       ],
       preferences: { query, view, page: 3 },
+      ankiSync: { config: null, snapshot: null },
     });
     expect(json).toContain('\n  "format"');
     expect(json).toContain('\n      "normalizedWord"');
@@ -179,10 +203,11 @@ describe("parseBackup", () => {
     });
     const backup = parseBackup(json);
     expect(backup.format).toBe("jiten-migaku-miner-backup");
-    expect(backup.version).toBe(1);
+    expect(backup.version).toBe(2);
     expect(backup.exportedAt).toBe(EXPORTED_AT);
     expect(backup.knownWords).toEqual({ name: "known.txt", words: ["古い"] });
     expect(backup.preferences?.query.decision).toBe("mined");
+    expect(backup.ankiSync).toEqual({ config: null, snapshot: null });
   });
 
   it("accepts unknown extra fields for forward compatibility", () => {
@@ -451,8 +476,14 @@ describe("parseBackup canonical identities", () => {
       knownWords: parsed.knownWords,
       wordDecisions: parsed.wordDecisions,
       preferences: parsed.preferences,
+      ankiSync: parsed.ankiSync,
     });
-    expect(parseBackup(serialized)).toEqual(parsed);
+    const roundTripped = parseBackup(serialized);
+    expect(roundTripped).toEqual({
+      ...parsed,
+      version: 2,
+      ankiSync: { config: null, snapshot: null },
+    });
   });
 });
 
@@ -510,13 +541,114 @@ describe("parseBackup display preferences", () => {
 describe("MinerBackupV1 shape", () => {
   it("keeps the parsed type assignable to the documented interface", () => {
     const backup: MinerBackupV1 = parseBackup(
-      serializeBackup({
-        exportedAt: EXPORTED_AT,
+      mutatedBackup((record) => {
+        record.preferences = null;
+      }),
+    );
+    expect(backup.preferences).toBeNull();
+  });
+});
+
+describe("backup format v2 Anki state", () => {
+  const malformedStatuses: Array<[unknown]> = [
+    [["", "known"]],
+    [["word", "bad"]],
+    [
+      [
+        ["word", "known"],
+        ["word", "mined"],
+      ],
+    ],
+  ];
+
+  it("round-trips Anki config and snapshot in v2", () => {
+    const text = serializeBackup({
+      exportedAt: "2026-09-10T10:00:00.000Z",
+      knownWords: null,
+      wordDecisions: [],
+      preferences: null,
+      ankiSync: {
+        config: {
+          deckScope: { kind: "deck", name: "MAIN::Mining" },
+          noteType: "Mine",
+          targetField: "Word",
+        },
+        snapshot: {
+          syncedAt: "2026-09-10T09:00:00.000Z",
+          statuses: [["word", "known"]],
+        },
+      },
+    });
+    const parsed = parseBackup(text);
+    expect(parsed.version).toBe(2);
+    expect(parsed.ankiSync?.snapshot?.statuses).toEqual([["word", "known"]]);
+  });
+
+  it("accepts v1 and normalizes missing Anki state to null", () => {
+    const parsed = parseBackup(
+      JSON.stringify({
+        format: BACKUP_FORMAT,
+        version: 1,
+        exportedAt: "2026-09-10T10:00:00.000Z",
         knownWords: null,
         wordDecisions: [],
         preferences: null,
       }),
     );
-    expect(backup.preferences).toBeNull();
+    expect(parsed.ankiSync).toBeNull();
+  });
+
+  it.each<[unknown]>(malformedStatuses)("rejects malformed Anki statuses %j", (statuses) => {
+    expect(() =>
+      parseBackup(
+        v2Fixture({
+          snapshot: {
+            syncedAt: "2026-09-10T09:00:00.000Z",
+            statuses,
+          },
+        }),
+      ),
+    ).toThrow();
+  });
+
+  it.each([{ kind: "unknown" }, { kind: "deck", name: "" }, { kind: "deck", name: "   " }])(
+    "rejects invalid Anki deck scope %j",
+    (deckScope) => {
+      expect(() =>
+        parseBackup(
+          v2Fixture({
+            config: { deckScope, noteType: "Mine", targetField: "Word" },
+          }),
+        ),
+      ).toThrow();
+    },
+  );
+
+  it.each([
+    { noteType: "", targetField: "Word" },
+    { noteType: "Mine", targetField: "" },
+  ])("rejects empty Anki config strings %j", (config) => {
+    expect(() =>
+      parseBackup(v2Fixture({ config: { deckScope: { kind: "all-decks" }, ...config } })),
+    ).toThrow();
+  });
+
+  it.each(["not-a-timestamp", ""])("rejects invalid Anki timestamps %j", (syncedAt) => {
+    expect(() =>
+      parseBackup(v2Fixture({ snapshot: { syncedAt, statuses: [["word", "known"]] } })),
+    ).toThrow();
+  });
+
+  it.each(["", " word "])("rejects empty or non-canonical Anki keys %j", (key) => {
+    expect(() =>
+      parseBackup(
+        v2Fixture({
+          snapshot: {
+            syncedAt: "2026-09-10T09:00:00.000Z",
+            statuses: [[key, "known"]],
+          },
+        }),
+      ),
+    ).toThrow();
   });
 });
