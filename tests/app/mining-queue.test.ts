@@ -373,6 +373,29 @@ describe("queue mode", () => {
     expect(queueQuery?.query.page).toBe(1);
   });
 
+  it("passes saved Anki statuses through queue queries", async () => {
+    const env = await setup();
+    await env.store.ankiSync.saveConfig({
+      deckScope: { kind: "all-decks" },
+      noteType: "Diaz Custom Mine",
+      targetField: "Target Word (no syntax)",
+    });
+    await env.store.ankiSync.replaceSnapshot({
+      syncedAt: "2026-09-10T10:00:00.000Z",
+      statuses: [["a", "known"]],
+    });
+    const controller = createMinerController(env.options());
+    await controller.init();
+    controller.toggleQueued("A");
+
+    await controller.startQueueMode();
+
+    expect(env.worker.queryCalls.at(-1)).toMatchObject({
+      queryChannel: "queue",
+      ankiStatuses: [["a", "known"]],
+    });
+  });
+
   it("omits queued words that no longer exist in the dataset", async () => {
     const env = await setup();
     const controller = createMinerController(env.options());

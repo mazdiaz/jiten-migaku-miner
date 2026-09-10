@@ -1,3 +1,4 @@
+import type { AnkiSyncConfig } from "../domain/anki";
 import type {
   CoverageStats,
   EntryWithKnown,
@@ -116,6 +117,13 @@ export interface MinerController {
   exportBackup(): Promise<string>;
   restoreBackup(text: string): Promise<void>;
   clearSavedData(): Promise<void>;
+  connectAnki(): Promise<{ decks: string[]; models: string[] }>;
+  loadAnkiModelFields(noteType: string): Promise<string[]>;
+  validateAndSaveAnkiConfig(config: AnkiSyncConfig): Promise<void>;
+  previewAnkiSync(): Promise<void>;
+  applyAnkiSync(): Promise<void>;
+  cancelAnkiSyncPreview(): void;
+  clearAnkiSyncData(): Promise<void>;
   init(): Promise<void>;
 }
 

@@ -212,6 +212,7 @@ function setup(): Harness {
     },
     decisionTuples: () =>
       [...state.wordDecisions.values()].map((d) => [d.normalizedWord, d.status]),
+    ankiStatusTuples: () => [],
     countChangeSinceExport: () => {
       state.changesSinceExport += 1;
     },

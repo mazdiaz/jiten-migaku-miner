@@ -99,6 +99,7 @@ export class ReviewSession {
         datasetId: dataset.id,
         knownWords: [...state.knownWords],
         decisions: this.core.decisionTuples(),
+        ankiStatuses: this.core.ankiStatusTuples(),
         query: reviewQuery,
         queryChannel: "review",
       });

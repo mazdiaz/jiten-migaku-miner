@@ -57,6 +57,7 @@ export class CoverageService {
         datasetId: dataset.id,
         knownWords: [...state.knownWords],
         decisions: this.core.decisionTuples(),
+        ankiStatuses: this.core.ankiStatusTuples(),
       });
       if (generation !== this.generation) return;
       const current = this.core.state;

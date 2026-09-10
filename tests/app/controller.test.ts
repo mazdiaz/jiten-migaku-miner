@@ -8,10 +8,12 @@ import {
 import type { AppState, MinerController } from "../../src/app/state";
 import { DEFAULT_QUERY, DEFAULT_VIEW } from "../../src/app/state";
 import type {
+  WorkerAnkiPreviewInput,
   WorkerClient,
   WorkerCoverageInput,
   WorkerQueryInput,
 } from "../../src/app/worker-client";
+import type { AnkiSyncConfig, AnkiSyncSnapshot } from "../../src/domain/anki";
 import { serializeBackup } from "../../src/domain/backup";
 import { computeCoverage } from "../../src/domain/coverage";
 import type {
@@ -22,6 +24,7 @@ import type {
   ViewState,
   WordDecisionStatus,
 } from "../../src/domain/types";
+import type { AnkiConnectPort } from "../../src/platform/anki-connect";
 import { createFileSource } from "../../src/platform/file-source";
 import { createFolderSource } from "../../src/platform/folder-source";
 import { createSessionQueueStore } from "../../src/platform/session-queue";
@@ -48,6 +51,17 @@ const view: ViewState = {
   showDefinitions: true,
   sentenceSize: "medium",
   density: "comfortable",
+};
+
+const ankiConfig: AnkiSyncConfig = {
+  deckScope: { kind: "deck", name: "MAIN::Mining" },
+  noteType: "Diaz Custom Mine",
+  targetField: "Target Word (no syntax)",
+};
+
+const ankiSnapshot: AnkiSyncSnapshot = {
+  syncedAt: "2026-09-10T10:00:00.000Z",
+  statuses: [["古い", "known"]],
 };
 
 function entry(id: string, word: string, originalIndex = 0): Entry {
@@ -92,6 +106,17 @@ function result(items: QueryResult["items"] = []): QueryResult {
   };
 }
 
+function ankiPort(): AnkiConnectPort {
+  return {
+    requestPermission: vi.fn(async () => {}),
+    deckNames: vi.fn(async () => ["MAIN::Mining"]),
+    modelNames: vi.fn(async () => ["Diaz Custom Mine"]),
+    modelFieldNames: vi.fn(async () => ["Target Word (no syntax)"]),
+    findCards: vi.fn(async (search: string) => (search.includes("is:new") ? [] : [1])),
+    cardsInfo: vi.fn(async () => [{ cardId: 1, fields: { "Target Word (no syntax)": "古い" } }]),
+  };
+}
+
 class FakeWorkerClient implements WorkerClient {
   readonly loadCalls: Array<{ datasetId: string; chunks: Entry[][] }> = [];
   readonly queryCalls: WorkerQueryInput[] = [];
@@ -114,6 +139,7 @@ class FakeWorkerClient implements WorkerClient {
   coverageEntries: readonly Entry[] = [entry("old-entry", "古い")];
   coverageHandler: ((request: WorkerCoverageInput) => Promise<CoverageStats>) | null = null;
   readonly coverageCalls: WorkerCoverageInput[] = [];
+  readonly ankiPreviewCalls: WorkerAnkiPreviewInput[] = [];
 
   async importJiten(
     name: string,
@@ -214,6 +240,11 @@ class FakeWorkerClient implements WorkerClient {
     );
   }
 
+  async previewAnkiMatch(request: WorkerAnkiPreviewInput) {
+    this.ankiPreviewCalls.push(request);
+    return { matchedWords: 1, knownCount: 1, minedCount: 0, manualProtected: 0 };
+  }
+
   dispose(): void {
     this.events.push("dispose");
   }
@@ -256,8 +287,14 @@ function controllerOptions(
   store: AppStore,
   worker: FakeWorkerClient,
   storage?: Storage,
+  ankiConnect?: AnkiConnectPort,
 ): MinerControllerOptions {
-  return { store, worker, legacyStorage: storage ?? new TestStorage() };
+  return {
+    store,
+    worker,
+    legacyStorage: storage ?? new TestStorage(),
+    ...(ankiConnect === undefined ? {} : { ankiConnect }),
+  };
 }
 
 function flakyAppStore(inner: AppStore, shouldFail: () => boolean): AppStore {
@@ -298,6 +335,16 @@ function flakyAppStore(inner: AppStore, shouldFail: () => boolean): AppStore {
     preferences: {
       load: guard(inner.preferences.load.bind(inner.preferences)),
       save: guard(inner.preferences.save.bind(inner.preferences)),
+    },
+    ankiSync: {
+      loadConfig: guard(inner.ankiSync.loadConfig.bind(inner.ankiSync)),
+      saveConfig: guard(inner.ankiSync.saveConfig.bind(inner.ankiSync)),
+      loadSnapshot: guard(inner.ankiSync.loadSnapshot.bind(inner.ankiSync)),
+      replaceSnapshot: guard(inner.ankiSync.replaceSnapshot.bind(inner.ankiSync)),
+      clear: async () => {
+        if (shouldFail()) throw failure();
+        await inner.ankiSync.clear();
+      },
     },
     clearAll: guard(inner.clearAll.bind(inner)),
     ...(inner.restoreUserState !== undefined
@@ -404,6 +451,21 @@ function createDelayedAppStore(
         load: delay("preferences.load", inner.preferences.load.bind(inner.preferences)),
         save: delay("preferences.save", inner.preferences.save.bind(inner.preferences)),
       },
+      ankiSync: {
+        loadConfig: delay("ankiSync.loadConfig", inner.ankiSync.loadConfig.bind(inner.ankiSync)),
+        saveConfig: delay("ankiSync.saveConfig", inner.ankiSync.saveConfig.bind(inner.ankiSync)),
+        loadSnapshot: delay(
+          "ankiSync.loadSnapshot",
+          inner.ankiSync.loadSnapshot.bind(inner.ankiSync),
+        ),
+        replaceSnapshot: delay(
+          "ankiSync.replaceSnapshot",
+          inner.ankiSync.replaceSnapshot.bind(inner.ankiSync),
+        ),
+        clear: delay("ankiSync.clear", async () => {
+          await inner.ankiSync.clear();
+        }),
+      },
       clearAll: delay("clearAll", inner.clearAll.bind(inner)),
       ...(options.forwardRestoreUserState === false || inner.restoreUserState === undefined
         ? {}
@@ -458,6 +520,68 @@ describe("MinerController", () => {
     expect(states[0]?.view.showDefinitions).toBe(true);
     expect(states.at(-1)?.view.showDefinitions).toBe(false);
     expect(states[0]).not.toBe(states.at(-1));
+  });
+
+  it("keeps saved Anki classifications active when Anki is unavailable", async () => {
+    const store = createMemoryAppStore();
+    await seedActive(store);
+    await store.ankiSync.saveConfig(ankiConfig);
+    await store.ankiSync.replaceSnapshot(ankiSnapshot);
+    const worker = new FakeWorkerClient();
+    worker.queryResult = result([
+      {
+        ...entry("old-entry", "古い"),
+        known: true,
+        knownByMigaku: false,
+        knownByDecision: false,
+        knownByAnki: true,
+        decision: "known",
+        decisionSource: "anki",
+      },
+    ]);
+    const port = ankiPort();
+    vi.mocked(port.requestPermission).mockRejectedValue(new Error("Anki is not running"));
+    const controller = createMinerController(controllerOptions(store, worker, undefined, port));
+    let latest: Readonly<AppState> | null = null;
+    controller.subscribe((state) => {
+      latest = state;
+    });
+
+    await controller.init();
+
+    expect(latest?.anki.wordCount).toBe(1);
+    expect(latest?.result?.items[0]?.decisionSource).toBe("anki");
+    expect(worker.queryCalls[0]?.ankiStatuses).toEqual(ankiSnapshot.statuses);
+    expect(port.requestPermission).not.toHaveBeenCalled();
+  });
+
+  it("forwards Anki state through normal, preview, apply, hide-known, and review flows", async () => {
+    const store = createMemoryAppStore();
+    await seedActive(store);
+    const worker = new FakeWorkerClient();
+    const port = ankiPort();
+    const controller = createMinerController(controllerOptions(store, worker, undefined, port));
+    await controller.init();
+
+    await controller.validateAndSaveAnkiConfig(ankiConfig);
+    await controller.previewAnkiSync();
+    await controller.applyAnkiSync();
+    expect(worker.ankiPreviewCalls[0]?.ankiStatuses).toEqual([["古い", "known"]]);
+    expect(worker.queryCalls.at(-1)?.ankiStatuses).toEqual([["古い", "known"]]);
+
+    controller.updateQuery({ hideKnown: true });
+    await flushMicrotasks();
+    expect(worker.queryCalls.at(-1)).toMatchObject({
+      ankiStatuses: [["古い", "known"]],
+      query: { hideKnown: true },
+    });
+
+    await controller.startReview();
+    const reviewQuery = worker.queryCalls.find((request) => request.queryChannel === "review");
+    expect(reviewQuery).toMatchObject({
+      ankiStatuses: [["古い", "known"]],
+      query: { decision: "unreviewed", hideKnown: true },
+    });
   });
 
   it("fills display-preference defaults when stored preferences predate the fields", async () => {
@@ -2387,6 +2511,7 @@ describe("MinerController backup and restore", () => {
       knownWords: inner.knownWords,
       wordDecisions: inner.wordDecisions,
       preferences: inner.preferences,
+      ankiSync: inner.ankiSync,
       clearAll: inner.clearAll.bind(inner),
     };
   }

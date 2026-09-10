@@ -6,6 +6,7 @@ import { MiningQueueService } from "../../../src/app/services/mining-queue-servi
 import { ReviewSession } from "../../../src/app/services/review-session";
 import { createInitialAppState, EMPTY_REVIEW } from "../../../src/app/state";
 import type {
+  WorkerAnkiPreviewInput,
   WorkerClient,
   WorkerCoverageInput,
   WorkerQueryInput,
@@ -92,6 +93,10 @@ class DeferredWorker implements WorkerClient {
     };
   }
 
+  async previewAnkiMatch(_request: WorkerAnkiPreviewInput) {
+    return { matchedWords: 0, knownCount: 0, minedCount: 0, manualProtected: 0 };
+  }
+
   dispose(): void {}
 }
 
@@ -142,6 +147,13 @@ describe("ReviewSession state replacement", () => {
             replaceAll: async () => {},
           },
           preferences: { load: async () => null, save: async () => {}, clear: async () => {} },
+          ankiSync: {
+            loadConfig: async () => null,
+            saveConfig: async () => {},
+            loadSnapshot: async () => null,
+            replaceSnapshot: async () => {},
+            clear: async () => {},
+          },
           clearAll: async () => {},
           restoreUserState: async () => {},
         }),
@@ -163,6 +175,7 @@ describe("ReviewSession state replacement", () => {
       runQuery: async () => {},
       loadAndQuery: async () => {},
       decisionTuples: () => [],
+      ankiStatusTuples: () => [],
       countChangeSinceExport: () => {},
     };
 

@@ -1,3 +1,4 @@
+import type { AnkiSyncConfig } from "../domain/anki";
 import type {
   Entry,
   QueryResult,
@@ -6,6 +7,7 @@ import type {
   WordDecision,
   WordDecisionStatus,
 } from "../domain/types";
+import { type AnkiConnectPort, createAnkiConnectPort } from "../platform/anki-connect";
 import { createSessionQueueStore, type SessionQueueStore } from "../platform/session-queue";
 import type { AppStore, DatasetMetadata } from "../storage/contracts";
 import { isStorageUnavailableError } from "../storage/fallback";
@@ -13,6 +15,7 @@ import { createIndexedDbAppStore } from "../storage/indexed-db";
 import { clearLegacyData } from "../storage/legacy";
 import { createMemoryAppStore } from "../storage/memory-store";
 import { migrateLegacy } from "./migrate-legacy";
+import { AnkiSyncService } from "./services/anki-sync-service";
 import { BackupService, MAX_BACKUP_BYTES } from "./services/backup-service";
 import { type ControllerCore, errorMessage } from "./services/context";
 import { CoverageService } from "./services/coverage-service";
@@ -46,6 +49,8 @@ export interface MinerControllerOptions {
   sessionQueueStore?: SessionQueueStore;
   now?: () => string;
   createId?: (kind: "dataset" | "known") => string;
+  ankiConnect?: AnkiConnectPort;
+  ankiConnectFactory?: () => AnkiConnectPort;
 }
 
 function defaultId(kind: "dataset" | "known"): string {
@@ -115,6 +120,7 @@ class MinerControllerImpl implements MinerController {
   private readonly queueService: MiningQueueService;
   private readonly decisionService: DecisionService;
   private readonly backupService: BackupService;
+  private readonly ankiSyncService: AnkiSyncService;
 
   constructor(options: MinerControllerOptions) {
     this.storeWasProvided = options.store !== undefined;
@@ -130,6 +136,7 @@ class MinerControllerImpl implements MinerController {
     this.state = createInitialAppState(this.storeWasProvided ? "memory" : "indexeddb");
 
     const impl = this;
+    let ankiSyncService: AnkiSyncService;
     const core: ControllerCore = {
       worker: this.worker,
       sessionQueue: this.sessionQueue,
@@ -165,13 +172,20 @@ class MinerControllerImpl implements MinerController {
       loadAndQuery: (datasetId, expectedEntryCount, options) =>
         impl.loadAndQuery(datasetId, expectedEntryCount, options),
       decisionTuples: () => impl.decisionTuples(),
-      ankiStatusTuples: () => [],
+      ankiStatusTuples: () => ankiSyncService.ankiStatusTuples(),
       countChangeSinceExport: () => impl.countChangeSinceExport(),
     };
     this.coverageService = new CoverageService(core);
     this.queueService = new MiningQueueService(core);
     this.decisionService = new DecisionService(core, this.queueService, this.coverageService);
     this.reviewSession = new ReviewSession(core, this.decisionService);
+    ankiSyncService = new AnkiSyncService(
+      core,
+      options.ankiConnectFactory ?? (() => options.ankiConnect ?? createAnkiConnectPort()),
+      this.decisionService,
+      this.coverageService,
+    );
+    this.ankiSyncService = ankiSyncService;
     this.backupService = new BackupService(
       core,
       this.reviewSession,
@@ -255,6 +269,7 @@ class MinerControllerImpl implements MinerController {
         datasetId: dataset.id,
         knownWords: [...this.state.knownWords],
         decisions: this.decisionTuples(),
+        ankiStatuses: this.ankiSyncService.ankiStatusTuples(),
         query: { ...this.state.query, page: 1 },
         queryChannel: "candidate",
         ...(candidateWindow === undefined ? {} : { window: candidateWindow }),
@@ -481,6 +496,34 @@ class MinerControllerImpl implements MinerController {
     this.queueService.clearQueue();
   }
 
+  connectAnki(): Promise<{ decks: string[]; models: string[] }> {
+    return this.ankiSyncService.connect();
+  }
+
+  loadAnkiModelFields(noteType: string): Promise<string[]> {
+    return this.ankiSyncService.loadModelFields(noteType);
+  }
+
+  validateAndSaveAnkiConfig(config: AnkiSyncConfig): Promise<void> {
+    return this.ankiSyncService.validateAndSaveConfig(config);
+  }
+
+  previewAnkiSync(): Promise<void> {
+    return this.ankiSyncService.previewSync();
+  }
+
+  applyAnkiSync(): Promise<void> {
+    return this.ankiSyncService.applySync();
+  }
+
+  cancelAnkiSyncPreview(): void {
+    this.ankiSyncService.cancelPreview();
+  }
+
+  clearAnkiSyncData(): Promise<void> {
+    return this.ankiSyncService.clearSyncData();
+  }
+
   startQueueMode(): Promise<void> {
     return this.queueService.startQueueMode();
   }
@@ -532,6 +575,7 @@ class MinerControllerImpl implements MinerController {
         // Fresh initial state nulls lastExportAt and zeroes changesSinceExport:
         // clearing saved data also wipes the export this session referred to.
         this.state = createInitialAppState(this.state.persistence);
+        this.ankiSyncService.resetLocal();
         // The service-owned undo record described the cleared world; drop it.
         this.decisionService.clearUndo();
         this.warningMessage =
@@ -597,6 +641,7 @@ class MinerControllerImpl implements MinerController {
           store.preferences.load(),
         ]),
       );
+      await this.ankiSyncService.initialize();
     } catch (error) {
       this.setState({ status: "error", errorMessage: errorMessage(error) });
       return;
@@ -857,6 +902,7 @@ class MinerControllerImpl implements MinerController {
         datasetId: dataset.id,
         knownWords: [...this.state.knownWords],
         decisions: this.decisionTuples(),
+        ankiStatuses: this.ankiSyncService.ankiStatusTuples(),
         query: { ...this.state.query },
         queryChannel: "user",
         ...(window === undefined ? {} : { window }),
