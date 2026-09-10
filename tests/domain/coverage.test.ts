@@ -71,6 +71,31 @@ describe("computeCoverage", () => {
     expect(stats.coveragePercent).toBe(80);
   });
 
+  it("counts Anki Known statuses as effectively known", () => {
+    const anki = new Map([["b", "known" as const]]);
+    const stats = computeCoverage(basicEntries, new Set(), new Map(), undefined, anki);
+
+    expect(stats.knownUniqueWords).toBe(1);
+    expect(stats.unknownUniqueWords).toBe(2);
+    expect(stats.knownTrackedOccurrences).toBe(30);
+    expect(stats.unknownTrackedOccurrences).toBe(70);
+    expect(stats.coveragePercent).toBe(30);
+  });
+
+  it("does not let Anki Known override manual Mined in coverage", () => {
+    const decisions = new Map<string, WordDecision>([
+      ["b", { normalizedWord: "b", status: "mined", updatedAt: "now" }],
+    ]);
+    const anki = new Map([["b", "known" as const]]);
+    const stats = computeCoverage(basicEntries, new Set(), decisions, undefined, anki);
+
+    expect(stats.knownUniqueWords).toBe(0);
+    expect(stats.unknownUniqueWords).toBe(3);
+    expect(stats.knownTrackedOccurrences).toBe(0);
+    expect(stats.unknownTrackedOccurrences).toBe(100);
+    expect(stats.coveragePercent).toBe(0);
+  });
+
   it("accepts a WordDecision-valued decision map", () => {
     const stats = computeCoverage(basicEntries, new Set(), decisionMap({ b: "known" }));
 
