@@ -82,13 +82,6 @@ function snapshotCounts(snapshot: ReadonlyMap<string, AnkiWordStatus>): {
   return { wordCount: snapshot.size, knownCount, minedCount };
 }
 
-function snapshotRecord(
-  syncedAt: string | null,
-  statuses: ReadonlyMap<string, AnkiWordStatus>,
-): AnkiSyncSnapshot | null {
-  return syncedAt === null ? null : { syncedAt, statuses: [...statuses] };
-}
-
 interface PreviewCandidate {
   statuses: Map<string, AnkiWordStatus>;
   scannedCards: number;
@@ -131,6 +124,7 @@ export class AnkiSyncService {
   private configRevision = 0;
   private previewGeneration = 0;
   private previewAbortController: AbortController | null = null;
+  private applyInProgress = false;
 
   constructor(
     private readonly core: ControllerCore,
@@ -372,6 +366,7 @@ export class AnkiSyncService {
   }
 
   cancelPreview(): void {
+    if (this.applyInProgress) return;
     const hadPreview =
       this.previewCandidate !== null ||
       this.core.state.ankiPreview !== null ||
@@ -397,23 +392,19 @@ export class AnkiSyncService {
       throw error;
     }
 
+    this.applyInProgress = true;
+    this.setStatus("syncing", null);
     try {
       await this.core.withUserStateLock(async () => {
         if (epoch !== this.core.getUserStateEpoch() || !this.isCurrentCandidate(candidate)) {
           throw this.stalePreviewError();
         }
 
-        const previousSnapshot = snapshotRecord(this.snapshotSyncedAt, this.snapshot);
         const nextSnapshot: AnkiSyncSnapshot = {
           syncedAt: this.core.now(),
           statuses: [...candidate.statuses],
         };
         await this.core.storageOperation((store) => store.ankiSync.replaceSnapshot(nextSnapshot));
-
-        if (!this.isCurrentCandidate(candidate)) {
-          await this.restoreStoredSnapshot(previousSnapshot);
-          throw this.stalePreviewError();
-        }
 
         this.snapshot = new Map(candidate.statuses);
         this.snapshotSyncedAt = nextSnapshot.syncedAt;
@@ -427,6 +418,8 @@ export class AnkiSyncService {
     } catch (error) {
       this.reportApplyError(candidate, error);
       throw error;
+    } finally {
+      this.applyInProgress = false;
     }
 
     await this.core.runQuery();
@@ -503,10 +496,6 @@ export class AnkiSyncService {
     controller?.abort();
   }
 
-  private async restoreStoredSnapshot(snapshot: AnkiSyncSnapshot | null): Promise<void> {
-    await this.core.storageOperation((store) => store.ankiSync.replaceSnapshot(snapshot));
-  }
-
   private async validateConfigAgainstAnki(
     port: AnkiConnectPort,
     config: AnkiSyncConfig,
@@ -562,8 +551,8 @@ export class AnkiSyncService {
   }
 
   private reportApplyError(candidate: PreviewCandidate, error: unknown): void {
+    if (!this.ownsCandidate(candidate)) return;
     if (error instanceof AnkiSyncServiceError && error.code === "stale-preview") {
-      if (!this.ownsCandidate(candidate)) return;
       this.dropPreview();
     }
     this.publishError(error);
