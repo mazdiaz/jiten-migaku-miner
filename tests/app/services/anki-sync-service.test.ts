@@ -53,6 +53,7 @@ interface Harness {
   decisionSpy: { clearUndo: () => void };
   coverageSpy: { request: () => Promise<void> };
   previewSpy: ReturnType<typeof vi.fn>;
+  runQuerySpy: ReturnType<typeof vi.fn>;
 }
 
 function coreFor(store: AppStore, port = fakePort()): Harness {
@@ -67,6 +68,7 @@ function coreFor(store: AppStore, port = fakePort()): Harness {
     minedCount: 1,
     manualProtected: 0,
   }));
+  const runQuerySpy = vi.fn(async () => {});
   const core: ControllerCore = {
     worker: { previewAnkiMatch: previewSpy } as unknown as ControllerCore["worker"],
     sessionQueue: { save: vi.fn(), load: vi.fn(() => null), clear: vi.fn() },
@@ -93,7 +95,7 @@ function coreFor(store: AppStore, port = fakePort()): Harness {
     getViewportStart: () => 0,
     setViewportStart: () => {},
     persistPreferencesUnlocked: async () => {},
-    runQuery: async () => {},
+    runQuery: runQuerySpy,
     loadAndQuery: async () => {},
     decisionTuples: () => [],
     ankiStatusTuples: () => [],
@@ -101,7 +103,7 @@ function coreFor(store: AppStore, port = fakePort()): Harness {
       state.changesSinceExport += 1;
     },
   };
-  return { core, state, port, decisionSpy, coverageSpy, previewSpy };
+  return { core, state, port, decisionSpy, coverageSpy, previewSpy, runQuerySpy };
 }
 
 function serviceFor(harness: Harness): AnkiSyncService {
@@ -298,5 +300,140 @@ describe("AnkiSyncService", () => {
     expect(await store.ankiSync.loadSnapshot()).toEqual(snapshot);
     expect(harness.state.ankiPreview).toBeNull();
     expect(harness.state.anki.status).toBe("error");
+  });
+
+  it("applies one snapshot, removes only Anki-owned queue entries, and refreshes once", async () => {
+    const store = createMemoryAppStore();
+    await store.ankiSync.saveConfig(config);
+    const previous = {
+      syncedAt: "2026-09-09T10:00:00.000Z",
+      statuses: [["old", "known"]] as Array<[string, "known" | "mined"]>,
+    };
+    await store.ankiSync.replaceSnapshot(previous);
+    const harness = coreFor(store);
+    harness.state.dataset = dataset();
+    harness.state.queue = {
+      datasetId: "dataset-1",
+      normalizedWords: ["word", "manual-word"],
+      mode: "normal",
+    };
+    harness.state.wordDecisions.set("manual-word", {
+      normalizedWord: "manual-word",
+      status: "later",
+      updatedAt: "2026-09-10T09:00:00.000Z",
+    });
+    vi.mocked(harness.port.findCards).mockImplementation(async (search) =>
+      search.includes("is:new") ? [1] : [1, 2],
+    );
+    vi.mocked(harness.port.cardsInfo).mockResolvedValue([
+      { cardId: 1, fields: { [config.targetField]: "word" } },
+      { cardId: 2, fields: { [config.targetField]: "other" } },
+    ]);
+    const service = serviceFor(harness);
+    await service.initialize();
+    await service.previewSync();
+
+    await service.applySync();
+
+    expect(await store.ankiSync.loadSnapshot()).toEqual({
+      syncedAt: "2026-09-10T11:00:00.000Z",
+      statuses: [
+        ["word", "mined"],
+        ["other", "known"],
+      ],
+    });
+    expect(service.ankiStatusTuples()).toEqual([
+      ["word", "mined"],
+      ["other", "known"],
+    ]);
+    expect(harness.state.queue.normalizedWords).toEqual(["manual-word"]);
+    expect(harness.state.ankiPreview).toBeNull();
+    expect(harness.state.anki.status).toBe("idle");
+    expect(harness.runQuerySpy).toHaveBeenCalledTimes(1);
+    expect(harness.coverageSpy.request).toHaveBeenCalledTimes(1);
+    expect(harness.decisionSpy.clearUndo).toHaveBeenCalledTimes(1);
+    expect(harness.state.changesSinceExport).toBe(1);
+  });
+
+  it("refuses a stale preview after the user-state epoch changes", async () => {
+    const store = createMemoryAppStore();
+    await store.ankiSync.saveConfig(config);
+    const harness = coreFor(store);
+    harness.state.dataset = dataset();
+    const service = serviceFor(harness);
+    await service.initialize();
+    await service.previewSync();
+    harness.core.bumpUserStateEpoch();
+
+    await expect(service.applySync()).rejects.toMatchObject({ code: "stale-preview" });
+
+    expect(await store.ankiSync.loadSnapshot()).toBeNull();
+    expect(harness.state.ankiPreview).toBeNull();
+    expect(harness.state.anki.status).toBe("error");
+    expect(harness.runQuerySpy).not.toHaveBeenCalled();
+  });
+
+  it("preserves the prior snapshot and queue when storage replacement fails", async () => {
+    const store = createMemoryAppStore();
+    await store.ankiSync.saveConfig(config);
+    const previous = {
+      syncedAt: "2026-09-09T10:00:00.000Z",
+      statuses: [["old", "known"]] as Array<[string, "known" | "mined"]>,
+    };
+    await store.ankiSync.replaceSnapshot(previous);
+    const harness = coreFor(store);
+    harness.state.dataset = dataset();
+    harness.state.queue = { datasetId: "dataset-1", normalizedWords: ["word"], mode: "normal" };
+    vi.mocked(harness.port.findCards).mockResolvedValue([1]);
+    vi.mocked(harness.port.cardsInfo).mockResolvedValue([
+      { cardId: 1, fields: { [config.targetField]: "word" } },
+    ]);
+    const service = serviceFor(harness);
+    await service.initialize();
+    await service.previewSync();
+    store.ankiSync.replaceSnapshot = vi.fn().mockRejectedValue(new Error("storage failed"));
+
+    await expect(service.applySync()).rejects.toThrow("storage failed");
+
+    expect(service.ankiStatusTuples()).toEqual(previous.statuses);
+    expect(await store.ankiSync.loadSnapshot()).toEqual(previous);
+    expect(harness.state.queue.normalizedWords).toEqual(["word"]);
+    expect(harness.state.anki.status).toBe("error");
+    expect(harness.runQuerySpy).not.toHaveBeenCalled();
+  });
+
+  it("clears Anki config and snapshot as one refreshable state mutation", async () => {
+    const store = createMemoryAppStore();
+    await store.ankiSync.saveConfig(config);
+    await store.ankiSync.replaceSnapshot(snapshot);
+    const harness = coreFor(store);
+    const service = serviceFor(harness);
+    await service.initialize();
+
+    await service.clearSyncData();
+
+    expect(await store.ankiSync.loadConfig()).toBeNull();
+    expect(await store.ankiSync.loadSnapshot()).toBeNull();
+    expect(service.ankiStatusTuples()).toEqual([]);
+    expect(harness.state.anki).toMatchObject({ configured: false, wordCount: 0, status: "idle" });
+    expect(harness.state.changesSinceExport).toBe(1);
+    expect(harness.runQuerySpy).toHaveBeenCalledTimes(1);
+    expect(harness.coverageSpy.request).toHaveBeenCalledTimes(1);
+  });
+
+  it("hydrates service memory from restored backup state without counting another change", async () => {
+    const harness = coreFor(createMemoryAppStore());
+    const service = serviceFor(harness);
+
+    service.restoreFromBackup({ config, snapshot });
+
+    expect(service.ankiStatusTuples()).toEqual(snapshot.statuses);
+    expect(harness.state.anki).toMatchObject({
+      configured: true,
+      wordCount: 2,
+      knownCount: 1,
+      minedCount: 1,
+    });
+    expect(harness.state.changesSinceExport).toBe(0);
   });
 });

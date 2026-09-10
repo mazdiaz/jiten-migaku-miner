@@ -5,12 +5,14 @@ import {
   aggregateAnkiStatuses,
   ankiCardStatus,
 } from "../../domain/anki";
+import type { AnkiSyncBackupSection } from "../../domain/backup";
 import { canonicalWord } from "../../domain/text";
 import {
   AnkiConnectError,
   type AnkiConnectPort,
   buildAnkiBaseSearch,
 } from "../../platform/anki-connect";
+import { EMPTY_ANKI } from "../state";
 import { type ControllerCore, errorMessage } from "./context";
 import type { CoverageService } from "./coverage-service";
 import type { DecisionService } from "./decision-service";
@@ -88,6 +90,7 @@ interface PreviewCandidate {
   configRevision: number;
   userStateEpoch: number;
   datasetId: string | null;
+  previewGeneration: number;
 }
 
 function validConfig(config: AnkiSyncConfig): string | null {
@@ -119,6 +122,7 @@ export class AnkiSyncService {
   private port: AnkiConnectPort | null = null;
   private previewCandidate: PreviewCandidate | null = null;
   private configRevision = 0;
+  private previewGeneration = 0;
 
   constructor(
     private readonly core: ControllerCore,
@@ -236,6 +240,7 @@ export class AnkiSyncService {
     const configRevision = this.configRevision;
     const userStateEpoch = this.core.getUserStateEpoch();
     const datasetId = this.core.state.dataset?.id ?? null;
+    const previewGeneration = ++this.previewGeneration;
     this.setStatus("syncing", null);
     try {
       const port = this.getPort();
@@ -290,7 +295,8 @@ export class AnkiSyncService {
       if (
         configRevision !== this.configRevision ||
         userStateEpoch !== this.core.getUserStateEpoch() ||
-        datasetId !== (this.core.state.dataset?.id ?? null)
+        datasetId !== (this.core.state.dataset?.id ?? null) ||
+        previewGeneration !== this.previewGeneration
       ) {
         throw new AnkiSyncServiceError("stale-preview", "Anki sync preview is no longer current");
       }
@@ -303,6 +309,7 @@ export class AnkiSyncService {
         configRevision,
         userStateEpoch,
         datasetId,
+        previewGeneration,
       };
       this.previewCandidate = candidate;
       const queueRemovals = this.queueRemovalCount(statuses, datasetId);
@@ -320,9 +327,10 @@ export class AnkiSyncService {
       };
       this.publishSummary("preview", null);
     } catch (error) {
-      this.previewCandidate = null;
-      this.core.state.ankiPreview = null;
-      this.publishError(error);
+      if (previewGeneration === this.previewGeneration) {
+        this.dropPreview();
+        this.publishError(error);
+      }
       throw error;
     }
   }
@@ -332,9 +340,103 @@ export class AnkiSyncService {
       this.previewCandidate !== null ||
       this.core.state.ankiPreview !== null ||
       this.core.state.anki.status === "preview";
-    this.previewCandidate = null;
-    this.core.state.ankiPreview = null;
+    this.previewGeneration += 1;
+    this.dropPreview();
     if (hadPreview) this.publishSummary("idle", null);
+  }
+
+  async applySync(): Promise<void> {
+    const candidate = this.previewCandidate;
+    if (candidate === null) {
+      const error = new AnkiSyncServiceError(
+        "stale-preview",
+        "Anki sync preview is no longer current",
+      );
+      this.publishError(error);
+      throw error;
+    }
+    const epoch = this.core.getUserStateEpoch();
+    if (!this.isCurrentCandidate(candidate)) {
+      this.dropPreview();
+      const error = new AnkiSyncServiceError(
+        "stale-preview",
+        "Anki sync preview is no longer current",
+      );
+      this.publishError(error);
+      throw error;
+    }
+
+    try {
+      await this.core.withUserStateLock(async () => {
+        if (epoch !== this.core.getUserStateEpoch() || !this.isCurrentCandidate(candidate)) {
+          throw new AnkiSyncServiceError("stale-preview", "Anki sync preview is no longer current");
+        }
+
+        const nextSnapshot: AnkiSyncSnapshot = {
+          syncedAt: this.core.now(),
+          statuses: [...candidate.statuses],
+        };
+        await this.core.storageOperation((store) => store.ankiSync.replaceSnapshot(nextSnapshot));
+
+        this.snapshot = new Map(candidate.statuses);
+        this.snapshotSyncedAt = nextSnapshot.syncedAt;
+        this.removeAppliedQueueWords(candidate.statuses, candidate.datasetId);
+        this.decisions.clearUndo();
+        this.previewGeneration += 1;
+        this.dropPreview();
+        this.core.countChangeSinceExport();
+        this.publishSummary("idle", null);
+      });
+    } catch (error) {
+      if (error instanceof AnkiSyncServiceError && error.code === "stale-preview") {
+        this.dropPreview();
+      }
+      this.publishError(error);
+      throw error;
+    }
+
+    if (epoch !== this.core.getUserStateEpoch()) return;
+    await this.core.runQuery();
+    await this.coverage.request();
+  }
+
+  async clearSyncData(): Promise<void> {
+    try {
+      await this.core.withUserStateLock(async () => {
+        this.core.bumpUserStateEpoch();
+        await this.core.storageOperation(async (store) => {
+          await store.ankiSync.clear();
+        });
+        this.config = null;
+        this.snapshot = new Map();
+        this.snapshotSyncedAt = null;
+        this.invalidatePreview();
+        this.core.countChangeSinceExport();
+        this.publishSummary("idle", null);
+      });
+    } catch (error) {
+      this.publishError(error);
+      throw error;
+    }
+
+    await this.core.runQuery();
+    await this.coverage.request();
+  }
+
+  resetLocal(): void {
+    this.config = null;
+    this.snapshot = new Map();
+    this.snapshotSyncedAt = null;
+    this.invalidatePreview();
+    this.core.state.anki = { ...EMPTY_ANKI };
+  }
+
+  restoreFromBackup(section: AnkiSyncBackupSection | null): void {
+    this.config = cloneConfig(section?.config ?? null);
+    this.snapshot = snapshotMap(section?.snapshot ?? null);
+    this.snapshotSyncedAt = section?.snapshot?.syncedAt ?? null;
+    this.invalidatePreview();
+    this.updateSummary("idle", null);
   }
 
   private getPort(): AnkiConnectPort {
@@ -343,8 +445,39 @@ export class AnkiSyncService {
 
   private invalidatePreview(): void {
     this.configRevision = this.configRevision + 1;
+    this.previewGeneration += 1;
+    this.dropPreview();
+  }
+
+  private dropPreview(): void {
     this.previewCandidate = null;
     this.core.state.ankiPreview = null;
+  }
+
+  private isCurrentCandidate(candidate: PreviewCandidate): boolean {
+    return (
+      candidate.configRevision === this.configRevision &&
+      candidate.userStateEpoch === this.core.getUserStateEpoch() &&
+      candidate.datasetId === (this.core.state.dataset?.id ?? null) &&
+      candidate.previewGeneration === this.previewGeneration &&
+      this.previewCandidate === candidate
+    );
+  }
+
+  private removeAppliedQueueWords(
+    statuses: ReadonlyMap<string, AnkiWordStatus>,
+    datasetId: string | null,
+  ): void {
+    const queue = this.core.state.queue;
+    if (datasetId === null || queue.datasetId !== datasetId) return;
+    const manual = new Set(this.core.decisionTuples().map(([word]) => canonicalWord(word)));
+    const remaining = queue.normalizedWords.filter((queued) => {
+      const word = canonicalWord(queued);
+      return !statuses.has(word) || manual.has(word);
+    });
+    if (remaining.length === queue.normalizedWords.length) return;
+    this.core.state.queue = { ...queue, normalizedWords: remaining };
+    this.core.sessionQueue.save({ version: 1, datasetId, normalizedWords: remaining });
   }
 
   private queueRemovalCount(
@@ -377,6 +510,14 @@ export class AnkiSyncService {
     status: "idle" | "connecting" | "syncing" | "preview" | "error",
     errorMessage: string | null,
   ): void {
+    this.updateSummary(status, errorMessage);
+    this.core.publish();
+  }
+
+  private updateSummary(
+    status: "idle" | "connecting" | "syncing" | "preview" | "error",
+    errorMessage: string | null,
+  ): void {
     this.core.state.anki = {
       ...this.core.state.anki,
       ...snapshotCounts(this.snapshot),
@@ -388,7 +529,6 @@ export class AnkiSyncService {
       targetField: this.config?.targetField ?? null,
       errorMessage,
     };
-    this.core.publish();
   }
 
   private publishError(error: unknown): void {
