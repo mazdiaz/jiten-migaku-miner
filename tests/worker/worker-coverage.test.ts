@@ -286,6 +286,35 @@ describe("worker engine coverage", () => {
     });
   });
 
+  it("gives duplicate canonical Anki statuses Known precedence in coverage", async () => {
+    const statusOrders: CoverageRequest["ankiStatuses"][] = [
+      [
+        ["word", "known"],
+        ["WORD", "mined"],
+      ],
+      [
+        ["word", "mined"],
+        ["WORD", "known"],
+      ],
+    ];
+
+    for (const [index, ankiStatuses] of statusOrders.entries()) {
+      const engine = new WorkerEngine();
+      loadDataset(engine, "dataset-1", [entry(0, "word", 100)]);
+      const responses: WorkerResponse[] = [];
+
+      await engine.coverage(
+        coverageRequest({ requestId: `duplicate-coverage-${index}`, ankiStatuses }),
+        (response) => responses.push(response),
+      );
+
+      expect(responses[0]).toMatchObject({
+        type: "coverage-result",
+        result: { knownUniqueWords: 1, knownTrackedOccurrences: 100, coveragePercent: 100 },
+      });
+    }
+  });
+
   it("dispatches Anki preview requests to the engine", async () => {
     const engine = new WorkerEngine();
     loadDataset(engine, "dataset-1", [entry(0, "word")]);

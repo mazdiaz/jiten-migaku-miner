@@ -1,4 +1,9 @@
-import { type AnkiWordStatus, type DecisionSource, resolveEffectiveDecision } from "../domain/anki";
+import {
+  type AnkiWordStatus,
+  aggregateAnkiStatuses,
+  type DecisionSource,
+  resolveEffectiveDecision,
+} from "../domain/anki";
 import { buildEffectiveKnownIndex, computeCoverage } from "../domain/coverage";
 import { parseJitenCsv } from "../domain/import";
 import { paginateEntries } from "../domain/query";
@@ -121,8 +126,19 @@ function cacheSearchFields(entry: Entry): SearchFields {
 function canonicalAnkiStatuses(
   statuses: ReadonlyArray<[string, AnkiWordStatus]>,
 ): Map<string, AnkiWordStatus> {
+  const grouped = new Map<string, AnkiWordStatus[]>();
+  for (const [word, status] of statuses) {
+    const canonical = canonicalWord(word);
+    const values = grouped.get(canonical);
+    if (values === undefined) grouped.set(canonical, [status]);
+    else values.push(status);
+  }
+
   const canonical = new Map<string, AnkiWordStatus>();
-  for (const [word, status] of statuses) canonical.set(canonicalWord(word), status);
+  for (const [word, values] of grouped) {
+    const status = aggregateAnkiStatuses(values);
+    if (status !== null) canonical.set(word, status);
+  }
   return canonical;
 }
 
@@ -513,12 +529,13 @@ export class WorkerEngine {
       // responsive, cancellation is honoured before and after the heavy work,
       // and a swapped dataset generation never receives a published result.
       if (await this.chunkFinished(request.requestId)) return;
+      const ankiStatuses = canonicalAnkiStatuses(request.ankiStatuses);
       const stats = computeCoverage(
         dataset.entries,
         knownWords,
         decisions,
         request.targets,
-        new Map(request.ankiStatuses),
+        ankiStatuses,
       );
       if (await this.chunkFinished(request.requestId)) return;
       if (this.isCancelled(request.requestId)) return;

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { AnkiWordStatus } from "../../src/domain/anki";
 import { queryEntries } from "../../src/domain/query";
 import type { Entry, QueryState, WordDecisionStatus } from "../../src/domain/types";
 import type { QueryRequest, WorkerResponse } from "../../src/worker/protocol";
@@ -69,9 +70,10 @@ class ScanCountingEngine extends WorkerEngine {
     dataset: DatasetState,
     knownWords: ReadonlySet<string>,
     decisions: ReadonlyMap<string, WordDecisionStatus>,
+    ankiStatuses: ReadonlyMap<string, AnkiWordStatus> = new Map(),
   ) {
     this.scanCalls += 1;
-    return super.scanDataset(request, dataset, knownWords, decisions);
+    return super.scanDataset(request, dataset, knownWords, decisions, ankiStatuses);
   }
 }
 
@@ -581,6 +583,51 @@ describe("WorkerEngine", () => {
     });
   });
 
+  it("gives duplicate canonical Anki statuses Known precedence in query", async () => {
+    const statusOrders: QueryRequest["ankiStatuses"][] = [
+      [
+        ["word", "known"],
+        ["WORD", "mined"],
+      ],
+      [
+        ["word", "mined"],
+        ["WORD", "known"],
+      ],
+    ];
+
+    for (const [index, ankiStatuses] of statusOrders.entries()) {
+      const engine = new WorkerEngine();
+      engine.loadStart("dataset-1", "load-1");
+      engine.loadChunk("dataset-1", 0, [entry(0, "word")], "load-1");
+      engine.loadComplete("dataset-1", "load-1");
+      const responses: WorkerResponse[] = [];
+
+      await engine.query(
+        queryRequest({
+          requestId: `duplicate-query-${index}`,
+          ankiStatuses,
+          query: queryState({ pageSize: "all" }),
+        }),
+        (response) => responses.push(response),
+      );
+
+      expect(responses[0]).toMatchObject({
+        type: "query-result",
+        result: {
+          knownCount: 1,
+          items: [
+            {
+              known: true,
+              decision: "known",
+              decisionSource: "anki",
+              knownByAnki: true,
+            },
+          ],
+        },
+      });
+    }
+  });
+
   it("counts unique canonical preview matches and protects manual decisions", async () => {
     const engine = new WorkerEngine();
     engine.loadStart("dataset-1", "load-1");
@@ -605,6 +652,157 @@ describe("WorkerEngine", () => {
     expect(responses[0]).toMatchObject({
       type: "anki-preview-result",
       result: { matchedWords: 1, knownCount: 0, minedCount: 0, manualProtected: 1 },
+    });
+  });
+
+  it("gives duplicate canonical Anki statuses Known precedence in preview", async () => {
+    const statusOrders: QueryRequest["ankiStatuses"][] = [
+      [
+        ["word", "known"],
+        ["WORD", "mined"],
+      ],
+      [
+        ["word", "mined"],
+        ["WORD", "known"],
+      ],
+    ];
+
+    for (const [index, ankiStatuses] of statusOrders.entries()) {
+      const engine = new WorkerEngine();
+      engine.loadStart("dataset-1", "load-1");
+      engine.loadChunk("dataset-1", 0, [entry(0, "word")], "load-1");
+      engine.loadComplete("dataset-1", "load-1");
+      const responses: WorkerResponse[] = [];
+
+      await engine.previewAnkiMatch(
+        {
+          protocolVersion: 3,
+          type: "anki-preview-match",
+          requestId: `duplicate-preview-${index}`,
+          datasetId: "dataset-1",
+          knownWords: [],
+          decisions: [],
+          ankiStatuses,
+        },
+        (response) => responses.push(response),
+      );
+
+      expect(responses[0]).toMatchObject({
+        type: "anki-preview-result",
+        result: { matchedWords: 1, knownCount: 1, minedCount: 0, manualProtected: 0 },
+      });
+    }
+  });
+
+  it("invalidates the window cache when Anki statuses change", async () => {
+    const engine = new ScanCountingEngine();
+    loadDataset(engine, "dataset-1", [entry(0, "word")]);
+
+    const mined: WorkerResponse[] = [];
+    await engine.query(
+      queryRequest({
+        requestId: "anki-cache-mined",
+        ankiStatuses: [["word", "mined"]],
+        query: queryState({ hideKnown: true, pageSize: "all" }),
+        window: { start: 0, size: 10 },
+      }),
+      (response) => mined.push(response),
+    );
+    const known: WorkerResponse[] = [];
+    await engine.query(
+      queryRequest({
+        requestId: "anki-cache-known",
+        ankiStatuses: [["WORD", "known"]],
+        query: queryState({ hideKnown: true, pageSize: "all" }),
+        window: { start: 0, size: 10 },
+      }),
+      (response) => known.push(response),
+    );
+    const knownAgain: WorkerResponse[] = [];
+    await engine.query(
+      queryRequest({
+        requestId: "anki-cache-known-again",
+        ankiStatuses: [["word", "known"]],
+        query: queryState({ hideKnown: true, pageSize: "all" }),
+        window: { start: 0, size: 10 },
+      }),
+      (response) => knownAgain.push(response),
+    );
+
+    expect(mined[0]).toMatchObject({ result: { knownCount: 0, totalEntries: 1 } });
+    expect(known[0]).toMatchObject({ result: { knownCount: 1, totalEntries: 0 } });
+    expect(knownAgain[0]).toMatchObject({ result: { knownCount: 1, totalEntries: 0 } });
+    expect(engine.scanCalls).toBe(2);
+  });
+
+  it("does not emit a preview result when cancelled during chunked work", async () => {
+    const engine = new WorkerEngine();
+    const source = Array.from({ length: 4001 }, (_, index) => entry(index));
+    loadDataset(engine, "dataset-1", source);
+    const ankiStatuses = source.map(
+      (value) => [value.normalizedWord, "mined"] as [string, "mined"],
+    );
+    const responses: WorkerResponse[] = [];
+    setTimeout(() => engine.cancel("cancel-preview"), 0);
+
+    await engine.previewAnkiMatch(
+      {
+        protocolVersion: 3,
+        type: "anki-preview-match",
+        requestId: "cancel-preview",
+        datasetId: "dataset-1",
+        knownWords: [],
+        decisions: [],
+        ankiStatuses,
+      },
+      (response) => responses.push(response),
+    );
+
+    expect(responses.some((response) => response.type === "anki-preview-result")).toBe(false);
+  });
+
+  it("suppresses stale preview results after dataset replacement", async () => {
+    const engine = new WorkerEngine();
+    const oldSource = Array.from({ length: 4001 }, (_, index) => entry(index, `old-${index}`));
+    loadDataset(engine, "dataset-1", oldSource);
+    const oldStatuses = oldSource.map(
+      (value) => [value.normalizedWord, "known"] as [string, "known"],
+    );
+    const staleResponses: WorkerResponse[] = [];
+    const stalePreview = engine.previewAnkiMatch(
+      {
+        protocolVersion: 3,
+        type: "anki-preview-match",
+        requestId: "stale-preview",
+        datasetId: "dataset-1",
+        knownWords: [],
+        decisions: [],
+        ankiStatuses: oldStatuses,
+      },
+      (response) => staleResponses.push(response),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    loadDataset(engine, "dataset-1", [entry(9999, "new")]);
+    await stalePreview;
+
+    expect(staleResponses.some((response) => response.type === "anki-preview-result")).toBe(false);
+
+    const freshResponses: WorkerResponse[] = [];
+    await engine.previewAnkiMatch(
+      {
+        protocolVersion: 3,
+        type: "anki-preview-match",
+        requestId: "fresh-preview",
+        datasetId: "dataset-1",
+        knownWords: [],
+        decisions: [],
+        ankiStatuses: [["new", "known"]],
+      },
+      (response) => freshResponses.push(response),
+    );
+    expect(freshResponses[0]).toMatchObject({
+      type: "anki-preview-result",
+      result: { matchedWords: 1, knownCount: 1, minedCount: 0, manualProtected: 0 },
     });
   });
 
