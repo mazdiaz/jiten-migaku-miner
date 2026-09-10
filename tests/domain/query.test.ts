@@ -33,8 +33,10 @@ function entryWithKnown(overrides: Partial<Entry>, known = false): EntryWithKnow
     furiganaRuns: [],
     ...overrides,
     known,
+    decisionSource: null,
     knownByMigaku: false,
     knownByDecision: false,
+    knownByAnki: false,
     decision: "unreviewed",
   };
 }
@@ -204,8 +206,10 @@ describe("paginateEntries", () => {
   const source = entries.slice(0, 5).map((entry, index) => ({
     ...entry,
     known: index % 2 === 0,
+    decisionSource: null,
     knownByMigaku: false,
     knownByDecision: false,
+    knownByAnki: false,
     decision: "unreviewed" as const,
   }));
 

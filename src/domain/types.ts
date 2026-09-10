@@ -1,3 +1,5 @@
+import type { DecisionSource } from "./anki";
+
 export type FuriganaRun = { text: string; reading: string | null };
 export type HighlightSegment = { text: string; highlighted: boolean };
 
@@ -92,8 +94,10 @@ export interface QueryWindow {
 export type EntryWithKnown = Entry & {
   known: boolean;
   decision: WordDecisionStatus | "unreviewed";
+  decisionSource?: DecisionSource;
   knownByMigaku: boolean;
   knownByDecision: boolean;
+  knownByAnki?: boolean;
 };
 
 export interface QueryResult {
