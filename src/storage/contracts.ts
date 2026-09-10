@@ -1,3 +1,4 @@
+import type { AnkiSyncConfig, AnkiSyncSnapshot } from "../domain/anki";
 import type { Entry, QueryState, ViewState, WordDecision } from "../domain/types";
 
 export interface DatasetMetadata {
@@ -43,10 +44,19 @@ export interface WordDecisionStore {
   clear?(): Promise<void> | void;
 }
 
+export interface AnkiSyncStore {
+  loadConfig(): Promise<AnkiSyncConfig | null>;
+  saveConfig(config: AnkiSyncConfig): Promise<void>;
+  loadSnapshot(): Promise<AnkiSyncSnapshot | null>;
+  replaceSnapshot(snapshot: AnkiSyncSnapshot): Promise<void>;
+  clear(): Promise<void> | void;
+}
+
 export interface RestoreUserStateSnapshot {
   knownWords: { id: string; name: string; words: Iterable<string> } | null;
   decisions: readonly WordDecision[];
   preferences: { query: QueryState; view: ViewState; page: number };
+  ankiSync: { config: AnkiSyncConfig | null; snapshot: AnkiSyncSnapshot | null };
 }
 
 export interface AppStore {
@@ -54,6 +64,7 @@ export interface AppStore {
   knownWords: KnownWordStore;
   wordDecisions: WordDecisionStore;
   preferences: PreferencesStore;
+  ankiSync: AnkiSyncStore;
   clearAll(): Promise<void>;
   restoreUserState?(snapshot: RestoreUserStateSnapshot): Promise<void>;
 }

@@ -163,6 +163,15 @@ describe("MemoryAppStore", () => {
     await store.knownWords.save("known", "Known words", ["alpha"]);
     await store.preferences.save({ query, view, page: 1 });
     await store.wordDecisions.set(decision("透過", "known", "2026-09-05T00:00:00.000Z"));
+    await store.ankiSync.saveConfig({
+      deckScope: { kind: "all-decks" },
+      noteType: "Mine",
+      targetField: "Word",
+    });
+    await store.ankiSync.replaceSnapshot({
+      syncedAt: "2026-09-05T00:00:00.000Z",
+      statuses: [["透過", "known"]],
+    });
 
     await store.clearAll();
 
@@ -171,6 +180,8 @@ describe("MemoryAppStore", () => {
     expect(await store.knownWords.getActive()).toBeNull();
     expect(await store.preferences.load()).toBeNull();
     expect(await store.wordDecisions.list()).toEqual([]);
+    expect(await store.ankiSync.loadConfig()).toBeNull();
+    expect(await store.ankiSync.loadSnapshot()).toBeNull();
   });
 
   it("does not leave partial data or replace active data when staging fails", async () => {
@@ -207,6 +218,10 @@ describe("MemoryAppStore restoreUserState", () => {
       },
       decisions: [decision("新しい", "mined", "2026-09-05T00:00:00.000Z")],
       preferences: { query, view, page: 5 },
+      ankiSync: {
+        config: { deckScope: { kind: "all-decks" }, noteType: "Mine", targetField: "Word" },
+        snapshot: { syncedAt: "2026-09-05T00:00:00.000Z", statuses: [["新しい", "mined"]] },
+      },
     });
 
     expect(await store.knownWords.getActive()).toEqual({
@@ -218,16 +233,28 @@ describe("MemoryAppStore restoreUserState", () => {
       decision("新しい", "mined", "2026-09-05T00:00:00.000Z"),
     ]);
     expect(await store.preferences.load()).toEqual({ query, view, page: 5 });
+    expect(await store.ankiSync.loadConfig()).toEqual({
+      deckScope: { kind: "all-decks" },
+      noteType: "Mine",
+      targetField: "Word",
+    });
+    expect(await store.ankiSync.loadSnapshot()).toEqual({
+      syncedAt: "2026-09-05T00:00:00.000Z",
+      statuses: [["新しい", "mined"]],
+    });
 
     await store.restoreUserState?.({
       knownWords: null,
       decisions: [],
       preferences: { query, view, page: 1 },
+      ankiSync: { config: null, snapshot: null },
     });
 
     expect(await store.knownWords.getActive()).toBeNull();
     expect(await store.wordDecisions.list()).toEqual([]);
     expect(await store.preferences.load()).toEqual({ query, view, page: 1 });
+    expect(await store.ankiSync.loadConfig()).toBeNull();
+    expect(await store.ankiSync.loadSnapshot()).toBeNull();
   });
 
   it("rejects duplicate decisions without mutating any category", async () => {
@@ -245,6 +272,7 @@ describe("MemoryAppStore restoreUserState", () => {
           decision("新しい", "skip", "2026-09-05T01:00:00.000Z"),
         ],
         preferences: { query, view, page: 5 },
+        ankiSync: { config: null, snapshot: null },
       }),
     ).rejects.toThrow("Duplicate word decision");
 

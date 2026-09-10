@@ -1,5 +1,7 @@
+import type { AnkiSyncConfig, AnkiSyncSnapshot } from "../domain/anki";
 import type { Entry, FuriganaRun, QueryState, ViewState, WordDecision } from "../domain/types";
 import type {
+  AnkiSyncStore,
   AppStore,
   DatasetMetadata,
   DatasetStore,
@@ -26,6 +28,11 @@ interface StoredPreferences {
   page: number;
 }
 
+interface StoredAnkiSync {
+  config: AnkiSyncConfig | null;
+  snapshot: AnkiSyncSnapshot | null;
+}
+
 function cloneFuriganaRun(run: FuriganaRun): FuriganaRun {
   return { text: run.text, reading: run.reading };
 }
@@ -44,6 +51,21 @@ function cloneMetadata(value: DatasetMetadata): DatasetMetadata {
 
 function cloneDecision(value: WordDecision): WordDecision {
   return { ...value };
+}
+
+function cloneConfig(value: AnkiSyncConfig | null): AnkiSyncConfig | null {
+  return value === null ? null : { ...value, deckScope: { ...value.deckScope } };
+}
+
+function cloneSnapshot(value: AnkiSyncSnapshot | null): AnkiSyncSnapshot | null {
+  return value === null
+    ? null
+    : {
+        ...value,
+        statuses: value.statuses.map(
+          ([normalizedWord, status]) => [normalizedWord, status] as [string, typeof status],
+        ),
+      };
 }
 
 class MemoryDatasetStore implements DatasetStore {
@@ -235,26 +257,54 @@ class MemoryWordDecisionStore implements WordDecisionStore {
   }
 }
 
+class MemoryAnkiSyncStore implements AnkiSyncStore {
+  private value: StoredAnkiSync = { config: null, snapshot: null };
+
+  async loadConfig(): Promise<AnkiSyncConfig | null> {
+    return cloneConfig(this.value.config);
+  }
+
+  async saveConfig(config: AnkiSyncConfig): Promise<void> {
+    this.value.config = cloneConfig(config);
+  }
+
+  async loadSnapshot(): Promise<AnkiSyncSnapshot | null> {
+    return cloneSnapshot(this.value.snapshot);
+  }
+
+  async replaceSnapshot(snapshot: AnkiSyncSnapshot): Promise<void> {
+    this.value.snapshot = cloneSnapshot(snapshot);
+  }
+
+  clear(): void {
+    this.value = { config: null, snapshot: null };
+  }
+}
+
 export class MemoryAppStore implements AppStore {
   readonly datasets: DatasetStore;
   readonly knownWords: KnownWordStore;
   readonly wordDecisions: WordDecisionStore;
   readonly preferences: PreferencesStore;
+  readonly ankiSync: AnkiSyncStore;
 
   private readonly datasetStore: MemoryDatasetStore;
   private readonly knownWordStore: MemoryKnownWordStore;
   private readonly wordDecisionStore: MemoryWordDecisionStore;
   private readonly preferencesStore: MemoryPreferencesStore;
+  private readonly ankiSyncStore: MemoryAnkiSyncStore;
 
   constructor() {
     this.datasetStore = new MemoryDatasetStore();
     this.knownWordStore = new MemoryKnownWordStore();
     this.wordDecisionStore = new MemoryWordDecisionStore();
     this.preferencesStore = new MemoryPreferencesStore();
+    this.ankiSyncStore = new MemoryAnkiSyncStore();
     this.datasets = this.datasetStore;
     this.knownWords = this.knownWordStore;
     this.wordDecisions = this.wordDecisionStore;
     this.preferences = this.preferencesStore;
+    this.ankiSync = this.ankiSyncStore;
   }
 
   async restoreUserState(snapshot: RestoreUserStateSnapshot): Promise<void> {
@@ -278,6 +328,14 @@ export class MemoryAppStore implements AppStore {
     }
     await this.wordDecisionStore.replaceAll(snapshot.decisions);
     await this.preferencesStore.save(snapshot.preferences);
+    const ankiSync = snapshot.ankiSync ?? { config: null, snapshot: null };
+    this.ankiSyncStore.clear();
+    if (ankiSync.config !== null) {
+      await this.ankiSyncStore.saveConfig(ankiSync.config);
+    }
+    if (ankiSync.snapshot !== null) {
+      await this.ankiSyncStore.replaceSnapshot(ankiSync.snapshot);
+    }
   }
 
   async clearAll(): Promise<void> {
@@ -285,6 +343,7 @@ export class MemoryAppStore implements AppStore {
     this.knownWordStore.clear();
     this.wordDecisionStore.clear();
     this.preferencesStore.clear();
+    this.ankiSyncStore.clear();
   }
 }
 
