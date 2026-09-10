@@ -222,6 +222,10 @@ export class AnkiSyncService {
   }
 
   async previewSync(): Promise<void> {
+    if (this.applyInProgress) {
+      throw new AnkiSyncServiceError("stale-preview", "Anki sync apply is in progress");
+    }
+
     const config = this.config;
     if (config === null) {
       const error = new AnkiSyncServiceError(
@@ -393,8 +397,8 @@ export class AnkiSyncService {
     }
 
     this.applyInProgress = true;
-    this.setStatus("syncing", null);
     try {
+      this.setStatus("syncing", null);
       await this.core.withUserStateLock(async () => {
         if (epoch !== this.core.getUserStateEpoch() || !this.isCurrentCandidate(candidate)) {
           throw this.stalePreviewError();

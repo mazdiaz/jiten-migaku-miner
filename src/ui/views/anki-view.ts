@@ -121,7 +121,8 @@ export function renderAnkiSection(dom: AnkiDom, state: Readonly<AppState>): void
     anki.errorMessage === null ? "" : `Anki unavailable: ${anki.errorMessage}`;
 
   dom.ankiPreview.hidden = ankiPreview === null;
-  dom.ankiApply.disabled = ankiPreview === null || anki.status !== "preview";
+  dom.ankiApply.disabled =
+    ankiPreview === null || (anki.status !== "preview" && anki.status !== "error");
   dom.ankiCancelPreview.disabled = ankiPreview === null || anki.status === "syncing";
   if (ankiPreview === null) {
     dom.ankiPreviewCounts.textContent = "";

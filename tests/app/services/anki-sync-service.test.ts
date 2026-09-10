@@ -877,7 +877,49 @@ describe("AnkiSyncService", () => {
     expect(harness.coverageSpy.request).toHaveBeenCalledTimes(1);
   });
 
-  it("does not let an old Apply error overwrite a newer preview", async () => {
+  it("rejects preview while Apply is pending without replacing the current candidate", async () => {
+    const store = createMemoryAppStore();
+    await store.ankiSync.saveConfig(config);
+    const harness = coreFor(store);
+    vi.mocked(harness.port.findCards).mockResolvedValue([1]);
+    vi.mocked(harness.port.cardsInfo).mockResolvedValue([
+      { cardId: 1, fields: { [config.targetField]: "word" } },
+    ]);
+    const service = serviceFor(harness);
+    await service.initialize();
+    await service.previewSync();
+    const currentPreview = harness.state.ankiPreview;
+    expect(currentPreview).not.toBeNull();
+
+    const originalReplaceSnapshot = store.ankiSync.replaceSnapshot.bind(store.ankiSync);
+    const replacementStarted = deferred<void>();
+    const releaseReplacement = deferred<void>();
+    store.ankiSync.replaceSnapshot = vi.fn(async (nextSnapshot) => {
+      replacementStarted.resolve(undefined);
+      await releaseReplacement.promise;
+      await originalReplaceSnapshot(nextSnapshot);
+    });
+
+    const applying = service.applySync();
+    await replacementStarted.promise;
+    const previewing = service.previewSync();
+    await expect(previewing).rejects.toMatchObject({ code: "stale-preview" });
+    expect(harness.state.anki.status).toBe("syncing");
+    expect(harness.state.ankiPreview).toBe(currentPreview);
+    releaseReplacement.resolve(undefined);
+
+    await expect(applying).resolves.toBeUndefined();
+
+    expect(await store.ankiSync.loadSnapshot()).toEqual({
+      syncedAt: "2026-09-10T11:00:00.000Z",
+      statuses: [["word", "mined"]],
+    });
+    expect(harness.state.ankiPreview).toBeNull();
+
+    store.ankiSync.replaceSnapshot = originalReplaceSnapshot;
+  });
+
+  it("clears Apply guard when status publication throws", async () => {
     const store = createMemoryAppStore();
     await store.ankiSync.saveConfig(config);
     const harness = coreFor(store);
@@ -889,31 +931,20 @@ describe("AnkiSyncService", () => {
     await service.initialize();
     await service.previewSync();
 
-    const originalReplaceSnapshot = store.ankiSync.replaceSnapshot.bind(store.ankiSync);
-    const replacementStarted = deferred<void>();
-    const releaseReplacement = deferred<void>();
-    const storageError = new Error("storage failed");
-    store.ankiSync.replaceSnapshot = vi.fn(async () => {
-      replacementStarted.resolve(undefined);
-      await releaseReplacement.promise;
-      throw storageError;
+    const publishError = new Error("publish failed");
+    vi.mocked(harness.core.publish).mockImplementationOnce(() => {
+      throw publishError;
     });
 
-    const applying = service.applySync();
-    await replacementStarted.promise;
-    await service.previewSync();
-    expect(harness.state.anki.status).toBe("preview");
+    await expect(service.applySync()).rejects.toBe(publishError);
+
+    expect(harness.state.anki.status).toBe("error");
     expect(harness.state.ankiPreview).not.toBeNull();
-    releaseReplacement.resolve(undefined);
 
-    await expect(applying).rejects.toBe(storageError);
+    service.cancelPreview();
 
-    expect(harness.state.anki.status).toBe("preview");
-    expect(harness.state.anki.errorMessage).toBeNull();
-    expect(harness.state.ankiPreview).not.toBeNull();
-    expect(await store.ankiSync.loadSnapshot()).toBeNull();
-
-    store.ankiSync.replaceSnapshot = originalReplaceSnapshot;
+    expect(harness.state.anki.status).toBe("idle");
+    expect(harness.state.ankiPreview).toBeNull();
   });
 
   it("refreshes query and coverage after committed apply even if epoch changes after lock", async () => {
