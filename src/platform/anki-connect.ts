@@ -50,7 +50,11 @@ export interface AnkiBaseSearchInput {
 }
 
 export function quoteAnkiSearchValue(value: string): string {
-  return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+  return `"${value
+    .replaceAll("\\", "\\\\")
+    .replaceAll('"', '\\"')
+    .replaceAll("*", "\\*")
+    .replaceAll("_", "\\_")}"`;
 }
 
 export function buildAnkiBaseSearch({ noteType, deckScope }: AnkiBaseSearchInput): string {
@@ -60,7 +64,7 @@ export function buildAnkiBaseSearch({ noteType, deckScope }: AnkiBaseSearchInput
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function protocolError(message: string): never {
@@ -76,6 +80,10 @@ function errorText(value: unknown): string {
   }
 }
 
+function isApiKeyRequiredMessage(message: string): boolean {
+  return /api\s*key\s+(?:is\s+)?required|api\s*key\s+must\s+be\s+provided/i.test(message);
+}
+
 function parseEnvelope(value: unknown): unknown {
   if (!isRecord(value) || !Object.hasOwn(value, "result")) {
     return protocolError("AnkiConnect response must contain a result property");
@@ -84,7 +92,11 @@ function parseEnvelope(value: unknown): unknown {
     return protocolError("AnkiConnect response must contain an error property");
   }
   if (value.error !== null) {
-    throw new AnkiConnectError("anki-error", errorText(value.error));
+    const message = errorText(value.error);
+    if (isApiKeyRequiredMessage(message)) {
+      throw new AnkiConnectError("api-key-required", message);
+    }
+    throw new AnkiConnectError("anki-error", message);
   }
   return value.result;
 }
@@ -142,10 +154,14 @@ export function createAnkiConnectPort(options: AnkiConnectOptions = {}): AnkiCon
   async function request(action: string, params?: unknown): Promise<unknown> {
     const controller = new AbortController();
     let timedOut = false;
-    const timeout = setTimeout(() => {
-      timedOut = true;
-      controller.abort();
-    }, timeoutMs);
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<never>((_resolve, reject) => {
+      timeout = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+        reject(new AnkiConnectError("timeout", "AnkiConnect request timed out"));
+      }, timeoutMs);
+    });
 
     try {
       const body = JSON.stringify({
@@ -155,27 +171,43 @@ export function createAnkiConnectPort(options: AnkiConnectOptions = {}): AnkiCon
       });
       let httpResponse: Response;
       try {
-        httpResponse = await fetchFn(endpoint, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body,
-          signal: controller.signal,
-        });
+        httpResponse = await Promise.race([
+          fetchFn(endpoint, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body,
+            signal: controller.signal,
+          }),
+          timeoutPromise,
+        ]);
       } catch {
         if (timedOut) throw new AnkiConnectError("timeout", "AnkiConnect request timed out");
         throw new AnkiConnectError("connection-failed", "Unable to connect to AnkiConnect");
       }
 
-      let envelope: unknown;
+      if (httpResponse.status < 200 || httpResponse.status >= 300) {
+        throw new AnkiConnectError(
+          "connection-failed",
+          `AnkiConnect returned HTTP ${httpResponse.status}`,
+        );
+      }
+
+      let responseBody: string;
       try {
-        envelope = await httpResponse.json();
+        responseBody = await Promise.race([httpResponse.text(), timeoutPromise]);
       } catch {
         if (timedOut) throw new AnkiConnectError("timeout", "AnkiConnect request timed out");
+        throw new AnkiConnectError("connection-failed", "Unable to read AnkiConnect response");
+      }
+      let envelope: unknown;
+      try {
+        envelope = JSON.parse(responseBody);
+      } catch {
         return protocolError("AnkiConnect response was not valid JSON");
       }
       return parseEnvelope(envelope);
     } finally {
-      clearTimeout(timeout);
+      if (timeout !== undefined) clearTimeout(timeout);
     }
   }
 
@@ -185,10 +217,13 @@ export function createAnkiConnectPort(options: AnkiConnectOptions = {}): AnkiCon
       if (!isRecord(result) || typeof result.permission !== "string") {
         return protocolError("requestPermission result must contain a permission");
       }
-      if ("requireApiKey" in result && typeof result.requireApiKey !== "boolean") {
+      if (Object.hasOwn(result, "requireApiKey") && typeof result.requireApiKey !== "boolean") {
         return protocolError("requestPermission requireApiKey must be a boolean");
       }
-      if (result.requireApiKey === true) {
+      if (Object.hasOwn(result, "requireApikey") && typeof result.requireApikey !== "boolean") {
+        return protocolError("requestPermission requireApikey must be a boolean");
+      }
+      if (result.requireApiKey === true || result.requireApikey === true) {
         throw new AnkiConnectError("api-key-required", "AnkiConnect requires an API key");
       }
       if (result.permission === "granted") return;

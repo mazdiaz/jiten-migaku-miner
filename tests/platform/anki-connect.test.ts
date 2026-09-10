@@ -20,6 +20,13 @@ function response(body: unknown): Response {
   });
 }
 
+function textResponse(body: string, status = 200): Response {
+  return new Response(body, {
+    status,
+    headers: { "Content-Type": "text/plain" },
+  });
+}
+
 describe("AnkiConnect adapter", () => {
   it("quotes note and deck values without allowing search syntax injection", () => {
     expect(quoteAnkiSearchValue('Diaz "Mine"')).toBe('"Diaz \\"Mine\\""');
@@ -33,6 +40,16 @@ describe("AnkiConnect adapter", () => {
 
   it("escapes backslashes inside quoted search values", () => {
     expect(quoteAnkiSearchValue('folder\\name"value')).toBe('"folder\\\\name\\"value"');
+  });
+
+  it("escapes Anki wildcard characters inside quoted search values", () => {
+    expect(quoteAnkiSearchValue("Diaz_*")).toBe('"Diaz\\_\\*"');
+    expect(
+      buildAnkiBaseSearch({
+        noteType: "Mine*",
+        deckScope: { kind: "deck", name: "*" },
+      }),
+    ).toBe('note:"Mine\\*" deck:"\\*"');
   });
 
   it("uses API version 6 and the local default endpoint for every request", async () => {
@@ -109,6 +126,22 @@ describe("AnkiConnect adapter", () => {
     });
   });
 
+  it("maps actual Anki API-key spelling and error responses", async () => {
+    const protectedPermission = createAnkiConnectPort({
+      fetchFn: jsonFetch({ permission: "granted", requireApikey: true }),
+    });
+    await expect(protectedPermission.requestPermission()).rejects.toMatchObject({
+      code: "api-key-required",
+    });
+
+    const protectedRequest = createAnkiConnectPort({
+      fetchFn: async () => response({ result: null, error: "valid api key must be provided" }),
+    });
+    await expect(protectedRequest.deckNames()).rejects.toMatchObject({
+      code: "api-key-required",
+    });
+  });
+
   it("maps AnkiConnect errors to typed adapter errors", async () => {
     const port = createAnkiConnectPort({
       fetchFn: async () => response({ result: null, error: "unsupported action" }),
@@ -138,6 +171,60 @@ describe("AnkiConnect adapter", () => {
       fetchFn: jsonFetch({ result: "wrong", error: null }),
     });
     await expect(malformed.deckNames()).rejects.toMatchObject({ code: "protocol-error" });
+  });
+
+  it("rejects non-2xx responses and non-JSON bodies", async () => {
+    const httpFailure = createAnkiConnectPort({
+      fetchFn: async () => textResponse("AnkiConnect unavailable", 503),
+    });
+    await expect(httpFailure.deckNames()).rejects.toMatchObject({ code: "connection-failed" });
+
+    const malformedBody = createAnkiConnectPort({
+      fetchFn: async () => textResponse("not JSON"),
+    });
+    await expect(malformedBody.deckNames()).rejects.toMatchObject({ code: "protocol-error" });
+  });
+
+  it("maps response body read failures to connection-failed", async () => {
+    const bodyFailure = createAnkiConnectPort({
+      fetchFn: async () =>
+        ({
+          status: 200,
+          text: async () => {
+            throw new TypeError("body stream failed");
+          },
+        }) as Response,
+    });
+    await expect(bodyFailure.deckNames()).rejects.toMatchObject({ code: "connection-failed" });
+  });
+
+  it("rejects arrays in envelopes, cards, and fields", async () => {
+    const malformedEnvelope = createAnkiConnectPort({
+      fetchFn: async () => response([]),
+    });
+    await expect(malformedEnvelope.deckNames()).rejects.toMatchObject({ code: "protocol-error" });
+
+    const malformedCard = createAnkiConnectPort({
+      fetchFn: async () => response({ result: [[]], error: null }),
+    });
+    await expect(malformedCard.cardsInfo([1])).rejects.toMatchObject({ code: "protocol-error" });
+
+    const malformedFields = createAnkiConnectPort({
+      fetchFn: async () => response({ result: [{ cardId: 1, fields: [] }], error: null }),
+    });
+    await expect(malformedFields.cardsInfo([1])).rejects.toMatchObject({ code: "protocol-error" });
+  });
+
+  it("rejects envelopes missing result or error properties", async () => {
+    const missingResult = createAnkiConnectPort({
+      fetchFn: async () => response({ error: null }),
+    });
+    await expect(missingResult.deckNames()).rejects.toMatchObject({ code: "protocol-error" });
+
+    const missingError = createAnkiConnectPort({
+      fetchFn: async () => response({ result: [] }),
+    });
+    await expect(missingError.deckNames()).rejects.toMatchObject({ code: "protocol-error" });
   });
 
   it("rejects malformed results for each read operation", async () => {
@@ -185,9 +272,50 @@ describe("AnkiConnect adapter", () => {
     await expect(timeout.deckNames()).rejects.toMatchObject({ code: "timeout" });
   });
 
+  it("enforces timeout when fetch ignores abort and resolves late", async () => {
+    let resolveFetch: ((value: Response | PromiseLike<Response>) => void) | undefined;
+    let aborted = false;
+    const timeout = createAnkiConnectPort({
+      timeoutMs: 1,
+      fetchFn: (_input, init) => {
+        init?.signal?.addEventListener("abort", () => {
+          aborted = true;
+        });
+        return new Promise<Response>((resolve) => {
+          resolveFetch = resolve;
+        });
+      },
+    });
+
+    const pending = timeout.deckNames();
+    await expect(pending).rejects.toMatchObject({ code: "timeout" });
+    expect(aborted).toBe(true);
+    resolveFetch?.(response({ result: [], error: null }));
+  });
+
+  it("enforces timeout when response body ignores abort and resolves late", async () => {
+    let resolveBody: ((value: string) => void) | undefined;
+    const timeout = createAnkiConnectPort({
+      timeoutMs: 1,
+      fetchFn: async () =>
+        ({
+          status: 200,
+          text: () =>
+            new Promise<string>((resolve) => {
+              resolveBody = resolve;
+            }),
+        }) as Response,
+    });
+
+    const pending = timeout.deckNames();
+    await expect(pending).rejects.toMatchObject({ code: "timeout" });
+    resolveBody?.('{"result":[],"error":null}');
+  });
+
   it("has no Anki mutation methods", () => {
     const port = createAnkiConnectPort({ fetchFn: jsonFetch({ result: [], error: null }) });
     expect("addNote" in port).toBe(false);
+    expect("request" in port).toBe(false);
     expect("updateNoteFields" in port).toBe(false);
     expect("changeDeck" in port).toBe(false);
     expect("suspend" in port).toBe(false);
