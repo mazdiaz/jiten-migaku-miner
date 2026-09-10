@@ -56,7 +56,7 @@ export interface RestoreUserStateSnapshot {
   knownWords: { id: string; name: string; words: Iterable<string> } | null;
   decisions: readonly WordDecision[];
   preferences: { query: QueryState; view: ViewState; page: number };
-  ankiSync: { config: AnkiSyncConfig | null; snapshot: AnkiSyncSnapshot | null };
+  ankiSync?: { config: AnkiSyncConfig | null; snapshot: AnkiSyncSnapshot | null };
 }
 
 export interface AppStore {

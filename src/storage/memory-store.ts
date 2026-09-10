@@ -53,6 +53,26 @@ function cloneDecision(value: WordDecision): WordDecision {
   return { ...value };
 }
 
+function cloneKnownWords(value: StoredKnownWords | null): StoredKnownWords | null {
+  return value === null ? null : { ...value, words: new Set(value.words) };
+}
+
+function clonePreferences(value: StoredPreferences | null): StoredPreferences | null {
+  return value === null
+    ? null
+    : {
+        query: { ...value.query },
+        view: { ...value.view },
+        page: value.page,
+      };
+}
+
+function cloneDecisions(value: ReadonlyMap<string, WordDecision>): Map<string, WordDecision> {
+  const result = new Map<string, WordDecision>();
+  for (const [key, decision] of value) result.set(key, cloneDecision(decision));
+  return result;
+}
+
 function cloneConfig(value: AnkiSyncConfig | null): AnkiSyncConfig | null {
   return value === null ? null : { ...value, deckScope: { ...value.deckScope } };
 }
@@ -188,6 +208,14 @@ class MemoryKnownWordStore implements KnownWordStore {
   clear(): void {
     this.active = null;
   }
+
+  snapshot(): StoredKnownWords | null {
+    return cloneKnownWords(this.active);
+  }
+
+  restore(value: StoredKnownWords | null): void {
+    this.active = cloneKnownWords(value);
+  }
 }
 
 class MemoryPreferencesStore implements PreferencesStore {
@@ -215,6 +243,14 @@ class MemoryPreferencesStore implements PreferencesStore {
 
   clear(): void {
     this.value = null;
+  }
+
+  snapshot(): StoredPreferences | null {
+    return clonePreferences(this.value);
+  }
+
+  restore(value: StoredPreferences | null): void {
+    this.value = clonePreferences(value);
   }
 }
 
@@ -255,6 +291,15 @@ class MemoryWordDecisionStore implements WordDecisionStore {
   clear(): void {
     this.decisions.clear();
   }
+
+  snapshot(): Map<string, WordDecision> {
+    return cloneDecisions(this.decisions);
+  }
+
+  restore(value: ReadonlyMap<string, WordDecision>): void {
+    this.decisions.clear();
+    for (const [key, decision] of cloneDecisions(value)) this.decisions.set(key, decision);
+  }
 }
 
 class MemoryAnkiSyncStore implements AnkiSyncStore {
@@ -278,6 +323,20 @@ class MemoryAnkiSyncStore implements AnkiSyncStore {
 
   clear(): void {
     this.value = { config: null, snapshot: null };
+  }
+
+  snapshot(): StoredAnkiSync {
+    return {
+      config: cloneConfig(this.value.config),
+      snapshot: cloneSnapshot(this.value.snapshot),
+    };
+  }
+
+  restore(value: StoredAnkiSync): void {
+    this.value = {
+      config: cloneConfig(value.config),
+      snapshot: cloneSnapshot(value.snapshot),
+    };
   }
 }
 
@@ -308,33 +367,66 @@ export class MemoryAppStore implements AppStore {
   }
 
   async restoreUserState(snapshot: RestoreUserStateSnapshot): Promise<void> {
-    // Validate before mutating so a duplicate aborts without partial writes,
-    // mirroring the IndexedDB transaction-abort semantics.
+    // Stage and validate before mutating so failures can restore the prior state.
     const seen = new Set<string>();
+    const stagedDecisions: WordDecision[] = [];
     for (const decision of snapshot.decisions) {
       if (seen.has(decision.normalizedWord)) {
         throw new Error(`Duplicate word decision: ${decision.normalizedWord}`);
       }
       seen.add(decision.normalizedWord);
+      stagedDecisions.push(cloneDecision(decision));
     }
-    if (snapshot.knownWords === null) {
-      this.knownWordStore.clear();
-    } else {
-      await this.knownWordStore.save(
-        snapshot.knownWords.id,
-        snapshot.knownWords.name,
-        snapshot.knownWords.words,
-      );
-    }
-    await this.wordDecisionStore.replaceAll(snapshot.decisions);
-    await this.preferencesStore.save(snapshot.preferences);
-    const ankiSync = snapshot.ankiSync ?? { config: null, snapshot: null };
-    this.ankiSyncStore.clear();
-    if (ankiSync.config !== null) {
-      await this.ankiSyncStore.saveConfig(ankiSync.config);
-    }
-    if (ankiSync.snapshot !== null) {
-      await this.ankiSyncStore.replaceSnapshot(ankiSync.snapshot);
+    const stagedKnownWords =
+      snapshot.knownWords === null
+        ? null
+        : {
+            id: snapshot.knownWords.id,
+            name: snapshot.knownWords.name,
+            words: new Set(snapshot.knownWords.words),
+          };
+    const stagedPreferences: StoredPreferences = {
+      query: { ...snapshot.preferences.query },
+      view: { ...snapshot.preferences.view },
+      page: snapshot.preferences.page,
+    };
+    const requestedAnkiSync = snapshot.ankiSync ?? { config: null, snapshot: null };
+    const stagedAnkiSync: StoredAnkiSync = {
+      config: cloneConfig(requestedAnkiSync.config),
+      snapshot: cloneSnapshot(requestedAnkiSync.snapshot),
+    };
+    const previous = {
+      knownWords: this.knownWordStore.snapshot(),
+      decisions: this.wordDecisionStore.snapshot(),
+      preferences: this.preferencesStore.snapshot(),
+      ankiSync: this.ankiSyncStore.snapshot(),
+    };
+
+    try {
+      if (stagedKnownWords === null) {
+        this.knownWordStore.clear();
+      } else {
+        await this.knownWordStore.save(
+          stagedKnownWords.id,
+          stagedKnownWords.name,
+          stagedKnownWords.words,
+        );
+      }
+      await this.wordDecisionStore.replaceAll(stagedDecisions);
+      await this.preferencesStore.save(stagedPreferences);
+      this.ankiSyncStore.clear();
+      if (stagedAnkiSync.config !== null) {
+        await this.ankiSyncStore.saveConfig(stagedAnkiSync.config);
+      }
+      if (stagedAnkiSync.snapshot !== null) {
+        await this.ankiSyncStore.replaceSnapshot(stagedAnkiSync.snapshot);
+      }
+    } catch (error) {
+      this.knownWordStore.restore(previous.knownWords);
+      this.wordDecisionStore.restore(previous.decisions);
+      this.preferencesStore.restore(previous.preferences);
+      this.ankiSyncStore.restore(previous.ankiSync);
+      throw error;
     }
   }
 

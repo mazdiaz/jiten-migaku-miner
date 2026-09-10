@@ -263,6 +263,17 @@ describe("MemoryAppStore restoreUserState", () => {
     const priorDecision = decision("古い", "skip", "2026-09-01T00:00:00.000Z");
     await store.wordDecisions.set(priorDecision);
     await store.preferences.save({ query, view, page: 1 });
+    const priorAnkiConfig = {
+      deckScope: { kind: "deck" as const, name: "MAIN" },
+      noteType: "Mine",
+      targetField: "Word",
+    };
+    const priorAnkiSnapshot = {
+      syncedAt: "2026-09-01T00:00:00.000Z",
+      statuses: [["古い", "known"] as [string, "known"]],
+    };
+    await store.ankiSync.saveConfig(priorAnkiConfig);
+    await store.ankiSync.replaceSnapshot(priorAnkiSnapshot);
 
     await expect(
       store.restoreUserState?.({
@@ -283,6 +294,79 @@ describe("MemoryAppStore restoreUserState", () => {
     });
     expect(await store.wordDecisions.list()).toEqual([priorDecision]);
     expect(await store.preferences.load()).toEqual({ query, view, page: 1 });
+    expect(await store.ankiSync.loadConfig()).toEqual(priorAnkiConfig);
+    expect(await store.ankiSync.loadSnapshot()).toEqual(priorAnkiSnapshot);
+  });
+
+  it("rolls back every category when an Anki restore write fails", async () => {
+    const store = createMemoryAppStore();
+    await store.knownWords.save("old", "Old words", ["alpha"]);
+    const priorDecision = decision("古い", "skip", "2026-09-01T00:00:00.000Z");
+    await store.wordDecisions.set(priorDecision);
+    await store.preferences.save({ query, view, page: 1 });
+    const priorAnkiConfig = {
+      deckScope: { kind: "deck" as const, name: "MAIN" },
+      noteType: "Mine",
+      targetField: "Word",
+    };
+    const priorAnkiSnapshot = {
+      syncedAt: "2026-09-01T00:00:00.000Z",
+      statuses: [["古い", "known"] as [string, "known"]],
+    };
+    await store.ankiSync.saveConfig(priorAnkiConfig);
+    await store.ankiSync.replaceSnapshot(priorAnkiSnapshot);
+
+    const replaceSnapshot = store.ankiSync.replaceSnapshot;
+    store.ankiSync.replaceSnapshot = async () => {
+      throw new Error("Anki snapshot write failed");
+    };
+    try {
+      await expect(
+        store.restoreUserState?.({
+          knownWords: { id: "new", name: "New words", words: ["beta"] },
+          decisions: [decision("新しい", "mined", "2026-09-05T00:00:00.000Z")],
+          preferences: { query, view, page: 5 },
+          ankiSync: {
+            config: { deckScope: { kind: "all-decks" }, noteType: "New", targetField: "Word" },
+            snapshot: { syncedAt: "2026-09-05T00:00:00.000Z", statuses: [["新しい", "mined"]] },
+          },
+        }),
+      ).rejects.toThrow("Anki snapshot write failed");
+    } finally {
+      store.ankiSync.replaceSnapshot = replaceSnapshot;
+    }
+
+    expect(await store.knownWords.getActive()).toEqual({
+      id: "old",
+      name: "Old words",
+      words: new Set(["alpha"]),
+    });
+    expect(await store.wordDecisions.list()).toEqual([priorDecision]);
+    expect(await store.preferences.load()).toEqual({ query, view, page: 1 });
+    expect(await store.ankiSync.loadConfig()).toEqual(priorAnkiConfig);
+    expect(await store.ankiSync.loadSnapshot()).toEqual(priorAnkiSnapshot);
+  });
+
+  it("clears Anki state when legacy restore omits Anki data", async () => {
+    const store = createMemoryAppStore();
+    await store.ankiSync.saveConfig({
+      deckScope: { kind: "all-decks" },
+      noteType: "Mine",
+      targetField: "Word",
+    });
+    await store.ankiSync.replaceSnapshot({
+      syncedAt: "2026-09-05T00:00:00.000Z",
+      statuses: [["word", "mined"]],
+    });
+
+    await store.restoreUserState?.({
+      knownWords: null,
+      decisions: [],
+      preferences: { query, view, page: 1 },
+    });
+
+    expect(await store.ankiSync.loadConfig()).toBeNull();
+    expect(await store.ankiSync.loadSnapshot()).toBeNull();
   });
 });
 
