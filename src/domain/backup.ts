@@ -26,7 +26,7 @@ function isDecisionFilter(value: unknown): value is WordDecisionFilter {
 
 export interface MinerBackupV1 {
   format: typeof BACKUP_FORMAT;
-  version: typeof LEGACY_BACKUP_VERSION | typeof BACKUP_VERSION;
+  version: typeof LEGACY_BACKUP_VERSION;
   exportedAt: string;
   knownWords: null | {
     name: string;
@@ -50,10 +50,7 @@ export interface MinerBackupV2 extends Omit<MinerBackupV1, "version"> {
   ankiSync: AnkiSyncBackupSection;
 }
 
-export interface ParsedMinerBackup extends MinerBackupV1 {
-  version: typeof LEGACY_BACKUP_VERSION | typeof BACKUP_VERSION;
-  ankiSync: AnkiSyncBackupSection | null;
-}
+export type ParsedMinerBackup = (MinerBackupV1 & { ankiSync: null }) | MinerBackupV2;
 
 export type BackupErrorCode =
   | "invalid-json"
@@ -404,13 +401,27 @@ export function parseBackup(text: string): ParsedMinerBackup {
     ? validTimestamp(parsed.exportedAt, "exportedAt")
     : requiredString(parsed.exportedAt, "exportedAt");
 
+  const knownWords = validateKnownWords(parsed.knownWords);
+  const wordDecisions = validateDecisions(parsed.wordDecisions, isV2);
+  const preferences = validatePreferences(parsed.preferences);
+  if (isV2) {
+    return {
+      format: BACKUP_FORMAT,
+      version: BACKUP_VERSION,
+      exportedAt,
+      knownWords,
+      wordDecisions,
+      preferences,
+      ankiSync: validateAnkiSync(parsed.ankiSync),
+    };
+  }
   return {
     format: BACKUP_FORMAT,
-    version: parsed.version,
+    version: LEGACY_BACKUP_VERSION,
     exportedAt,
-    knownWords: validateKnownWords(parsed.knownWords),
-    wordDecisions: validateDecisions(parsed.wordDecisions, isV2),
-    preferences: validatePreferences(parsed.preferences),
-    ankiSync: isV2 ? validateAnkiSync(parsed.ankiSync) : null,
+    knownWords,
+    wordDecisions,
+    preferences,
+    ankiSync: null,
   };
 }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  type AnkiSyncBackupSection,
   BACKUP_FORMAT,
   BackupError,
   type MinerBackupV1,
@@ -96,6 +97,33 @@ function v2Fixture(ankiSync: Record<string, unknown> = {}): string {
       ...ankiSync,
     },
   });
+}
+
+function serializeAnkiSync(value: unknown): string {
+  return serializeBackup({
+    exportedAt: "2026-09-10T10:00:00.000Z",
+    knownWords: null,
+    wordDecisions: [],
+    preferences: null,
+    ankiSync: value as AnkiSyncBackupSection | null,
+  });
+}
+
+function expectInvalidAnki(ankiSync: Record<string, unknown>, fragment: RegExp): void {
+  const section = {
+    config: {
+      deckScope: { kind: "all-decks" },
+      noteType: "Mine",
+      targetField: "Word",
+    },
+    snapshot: {
+      syncedAt: "2026-09-10T09:00:00.000Z",
+      statuses: [["word", "known"]],
+    },
+    ...ankiSync,
+  };
+  expectBackupError("invalid-shape", fragment, () => serializeAnkiSync(section));
+  expectBackupError("invalid-shape", fragment, () => parseBackup(v2Fixture(ankiSync)));
 }
 
 function mutatedBackup(mutate: (backup: any) => void): string {
@@ -540,27 +568,20 @@ describe("parseBackup display preferences", () => {
 
 describe("MinerBackupV1 shape", () => {
   it("keeps the parsed type assignable to the documented interface", () => {
-    const backup: MinerBackupV1 = parseBackup(
+    const parsed = parseBackup(
       mutatedBackup((record) => {
         record.preferences = null;
       }),
     );
+    if (parsed.version !== 1) throw new Error("expected v1 backup");
+    const backup: MinerBackupV1 = parsed;
+    const version: 1 = backup.version;
+    expect(version).toBe(1);
     expect(backup.preferences).toBeNull();
   });
 });
 
 describe("backup format v2 Anki state", () => {
-  const malformedStatuses: Array<[unknown]> = [
-    [["", "known"]],
-    [["word", "bad"]],
-    [
-      [
-        ["word", "known"],
-        ["word", "mined"],
-      ],
-    ],
-  ];
-
   it("round-trips Anki config and snapshot in v2", () => {
     const text = serializeBackup({
       exportedAt: "2026-09-10T10:00:00.000Z",
@@ -581,7 +602,17 @@ describe("backup format v2 Anki state", () => {
     });
     const parsed = parseBackup(text);
     expect(parsed.version).toBe(2);
-    expect(parsed.ankiSync?.snapshot?.statuses).toEqual([["word", "known"]]);
+    expect(parsed.ankiSync).toEqual({
+      config: {
+        deckScope: { kind: "deck", name: "MAIN::Mining" },
+        noteType: "Mine",
+        targetField: "Word",
+      },
+      snapshot: {
+        syncedAt: "2026-09-10T09:00:00.000Z",
+        statuses: [["word", "known"]],
+      },
+    });
   });
 
   it("accepts v1 and normalizes missing Anki state to null", () => {
@@ -598,57 +629,67 @@ describe("backup format v2 Anki state", () => {
     expect(parsed.ankiSync).toBeNull();
   });
 
-  it.each<[unknown]>(malformedStatuses)("rejects malformed Anki statuses %j", (statuses) => {
-    expect(() =>
-      parseBackup(
-        v2Fixture({
-          snapshot: {
-            syncedAt: "2026-09-10T09:00:00.000Z",
-            statuses,
-          },
-        }),
-      ),
-    ).toThrow();
+  it.each<[unknown, RegExp]>([
+    [["", "known"], /ankiSync\.snapshot\.statuses\[0\]\[0\] must be a non-empty string/],
+    [["word", "bad"], /ankiSync\.snapshot\.statuses\[0\]\[1\] must be "known" or "mined"/],
+    [["word"], /ankiSync\.snapshot\.statuses\[0\] must be a \[key, status\] pair/],
+    [
+      [
+        ["word", "known"],
+        ["word", "mined"],
+      ],
+      /ankiSync\.snapshot\.statuses contains a duplicate key/,
+    ],
+  ])("rejects malformed Anki statuses %j", (statuses, fragment) => {
+    expectInvalidAnki(
+      {
+        snapshot: {
+          syncedAt: "2026-09-10T09:00:00.000Z",
+          statuses:
+            Array.isArray(statuses) && statuses.length === 2 && typeof statuses[0] === "string"
+              ? [statuses]
+              : statuses,
+        },
+      },
+      fragment,
+    );
   });
 
-  it.each([{ kind: "unknown" }, { kind: "deck", name: "" }, { kind: "deck", name: "   " }])(
-    "rejects invalid Anki deck scope %j",
-    (deckScope) => {
-      expect(() =>
-        parseBackup(
-          v2Fixture({
-            config: { deckScope, noteType: "Mine", targetField: "Word" },
-          }),
-        ),
-      ).toThrow();
-    },
-  );
-
-  it.each([
-    { noteType: "", targetField: "Word" },
-    { noteType: "Mine", targetField: "" },
-  ])("rejects empty Anki config strings %j", (config) => {
-    expect(() =>
-      parseBackup(v2Fixture({ config: { deckScope: { kind: "all-decks" }, ...config } })),
-    ).toThrow();
+  it.each<[unknown, RegExp]>([
+    [{ kind: "unknown" }, /ankiSync\.config\.deckScope\.kind must be/],
+    [{ kind: "deck", name: "" }, /ankiSync\.config\.deckScope\.name must be a non-empty string/],
+    [{ kind: "deck", name: "   " }, /ankiSync\.config\.deckScope\.name must be a non-empty string/],
+  ])("rejects invalid Anki deck scope %j", (deckScope, fragment) => {
+    expectInvalidAnki({ config: { deckScope, noteType: "Mine", targetField: "Word" } }, fragment);
   });
 
-  it.each(["not-a-timestamp", ""])("rejects invalid Anki timestamps %j", (syncedAt) => {
-    expect(() =>
-      parseBackup(v2Fixture({ snapshot: { syncedAt, statuses: [["word", "known"]] } })),
-    ).toThrow();
+  it.each<[Record<string, unknown>, RegExp]>([
+    [
+      { noteType: "", targetField: "Word" },
+      /ankiSync\.config\.noteType must be a non-empty string/,
+    ],
+    [
+      { noteType: "Mine", targetField: "" },
+      /ankiSync\.config\.targetField must be a non-empty string/,
+    ],
+  ])("rejects empty Anki config strings %j", (config, fragment) => {
+    expectInvalidAnki({ config: { deckScope: { kind: "all-decks" }, ...config } }, fragment);
   });
 
-  it.each(["", " word "])("rejects empty or non-canonical Anki keys %j", (key) => {
-    expect(() =>
-      parseBackup(
-        v2Fixture({
-          snapshot: {
-            syncedAt: "2026-09-10T09:00:00.000Z",
-            statuses: [[key, "known"]],
-          },
-        }),
-      ),
-    ).toThrow();
+  it.each<[string, RegExp]>([
+    ["not-a-timestamp", /ankiSync\.snapshot\.syncedAt must be a valid timestamp/],
+    ["", /ankiSync\.snapshot\.syncedAt must be a non-empty string/],
+  ])("rejects invalid Anki timestamps %j", (syncedAt, fragment) => {
+    expectInvalidAnki({ snapshot: { syncedAt, statuses: [["word", "known"]] } }, fragment);
+  });
+
+  it.each<[string, RegExp]>([
+    ["", /ankiSync\.snapshot\.statuses\[0\]\[0\] must be a non-empty string/],
+    [" word ", /ankiSync\.snapshot\.statuses\[0\]\[0\] must be canonical/],
+  ])("rejects empty or non-canonical Anki keys %j", (key, fragment) => {
+    expectInvalidAnki(
+      { snapshot: { syncedAt: "2026-09-10T09:00:00.000Z", statuses: [[key, "known"]] } },
+      fragment,
+    );
   });
 });
