@@ -157,6 +157,15 @@ function isValidLoadCompleteResponse(
   );
 }
 
+function isValidAnkiPreviewMatchStats(value: unknown): value is AnkiPreviewMatchStats {
+  if (!isRecord(value)) return false;
+
+  return ["matchedWords", "knownCount", "minedCount", "manualProtected"].every((field) => {
+    const count = value[field];
+    return typeof count === "number" && Number.isSafeInteger(count) && count >= 0;
+  });
+}
+
 function createBrowserWorker(): WorkerLike {
   return new Worker(new URL("../worker/miner.worker.ts", import.meta.url), {
     type: "module",
@@ -277,6 +286,16 @@ class BrowserWorkerClient implements WorkerClient {
 
     if (response.type === "anki-preview-result") {
       if (pending.kind !== "anki-preview") return;
+      if (!isValidAnkiPreviewMatchStats(response.result)) {
+        this.pending.delete(response.requestId);
+        pending.reject(
+          new WorkerClientError(
+            "malformed-anki-preview-result",
+            "Worker returned an invalid Anki preview result.",
+          ),
+        );
+        return;
+      }
       this.pending.delete(response.requestId);
       pending.resolve(response.result);
       return;
@@ -538,15 +557,19 @@ class BrowserWorkerClient implements WorkerClient {
   async previewAnkiMatch(input: WorkerAnkiPreviewInput): Promise<AnkiPreviewMatchStats> {
     const requestId = this.requestId("anki-preview");
     const result = this.register<AnkiPreviewMatchStats>(requestId, "anki-preview");
-    this.post({
-      protocolVersion: WORKER_PROTOCOL_VERSION,
-      type: "anki-preview-match",
-      requestId,
-      datasetId: input.datasetId,
-      knownWords: [...input.knownWords],
-      decisions: input.decisions ?? [],
-      ankiStatuses: [...input.ankiStatuses],
-    });
+    try {
+      this.post({
+        protocolVersion: WORKER_PROTOCOL_VERSION,
+        type: "anki-preview-match",
+        requestId,
+        datasetId: input.datasetId,
+        knownWords: [...input.knownWords],
+        decisions: input.decisions ?? [],
+        ankiStatuses: [...input.ankiStatuses],
+      });
+    } catch (error) {
+      this.rejectPending(requestId, error);
+    }
     return result;
   }
 

@@ -119,6 +119,10 @@ function coverageResponse(requestId: string, result: CoverageStats): WorkerRespo
   };
 }
 
+function pendingOperationCount(client: ReturnType<typeof createWorkerClient>): number {
+  return (client as unknown as { pending: Map<string, unknown> }).pending.size;
+}
+
 describe("worker client", () => {
   it("rejects older query promises and ignores their late responses", async () => {
     const worker = new FakeWorker();
@@ -600,6 +604,35 @@ describe("worker client", () => {
     await expect(candidate).resolves.toMatchObject({ page: 2 });
   });
 
+  it("forwards Anki statuses in query requests and defaults them", async () => {
+    const worker = new FakeWorker();
+    const client = createWorkerClient(() => worker);
+
+    const withoutAnki = client.query({
+      datasetId: "dataset-1",
+      knownWords: [],
+      query: queryState(),
+    });
+    const defaultRequest = worker.messages.find((message) => message.type === "query");
+    expect(defaultRequest).toMatchObject({ ankiStatuses: [] });
+    if (defaultRequest?.type !== "query") throw new Error("missing default query request");
+    worker.emit(queryResponse(defaultRequest.requestId, 1));
+    await expect(withoutAnki).resolves.toMatchObject({ page: 1 });
+
+    const withAnki = client.query({
+      datasetId: "dataset-1",
+      knownWords: [],
+      ankiStatuses: [["word", "known"]],
+      query: queryState(),
+    });
+    const queryRequests = worker.messages.filter((message) => message.type === "query");
+    const ankiRequest = queryRequests.at(-1);
+    expect(ankiRequest).toMatchObject({ ankiStatuses: [["word", "known"]] });
+    if (ankiRequest?.type !== "query") throw new Error("missing Anki query request");
+    worker.emit(queryResponse(ankiRequest.requestId, 1));
+    await expect(withAnki).resolves.toMatchObject({ page: 1 });
+  });
+
   it("rejects active operations, terminates failed worker, and recreates it next time", async () => {
     const workers: FakeWorker[] = [];
     const client = createWorkerClient(() => {
@@ -677,6 +710,7 @@ describe("worker client", () => {
       datasetId: "dataset-1",
       knownWords: [],
       decisions: [],
+      ankiStatuses: [],
     });
     if (request?.type !== "coverage") throw new Error("missing coverage request");
     expect("targets" in request).toBe(false);
@@ -705,6 +739,23 @@ describe("worker client", () => {
       name: "WorkerClientError",
       code: "dataset-not-found",
     });
+  });
+
+  it("forwards Anki statuses in coverage requests", async () => {
+    const worker = new FakeWorker();
+    const client = createWorkerClient(() => worker);
+
+    const pending = client.coverage({
+      datasetId: "dataset-1",
+      knownWords: [],
+      ankiStatuses: [["word", "mined"]],
+    });
+    const request = worker.messages.find((message) => message.type === "coverage");
+    expect(request).toMatchObject({ ankiStatuses: [["word", "mined"]] });
+    if (request?.type !== "coverage") throw new Error("missing coverage request");
+
+    worker.emit(coverageResponse(request.requestId, coverageStats()));
+    await expect(pending).resolves.toMatchObject({ coveragePercent: 50 });
   });
 
   it("keeps coverage requests independent without superseding pending queries or each other", async () => {
@@ -743,6 +794,137 @@ describe("worker client", () => {
     await expect(query).resolves.toMatchObject({ page: 1 });
     await expect(first).resolves.toMatchObject({ coveragePercent: 50 });
     await expect(second).resolves.toMatchObject({ coveragePercent: 75 });
+  });
+
+  it("keeps preview operations independent from every query channel", async () => {
+    const worker = new FakeWorker();
+    const client = createWorkerClient(() => worker);
+    const normal = client.query({
+      datasetId: "dataset-1",
+      knownWords: [],
+      query: queryState(),
+    });
+    const candidate = client.query({
+      datasetId: "dataset-1",
+      knownWords: [],
+      query: queryState(),
+      queryChannel: "candidate",
+    });
+    const review = client.query({
+      datasetId: "dataset-1",
+      knownWords: [],
+      query: queryState(),
+      queryChannel: "review",
+    });
+    const queue = client.query({
+      datasetId: "dataset-1",
+      knownWords: [],
+      query: queryState(),
+      queryChannel: "queue",
+    });
+    const preview = client.previewAnkiMatch({
+      datasetId: "dataset-1",
+      knownWords: [],
+      decisions: [],
+      ankiStatuses: [["word", "mined"]],
+    });
+    const queryRequests = worker.messages.filter((message) => message.type === "query");
+    const previewRequest = worker.messages.find((message) => message.type === "anki-preview-match");
+
+    expect(worker.messages.filter((message) => message.type === "cancel")).toHaveLength(0);
+    if (queryRequests.length !== 4 || previewRequest?.type !== "anki-preview-match")
+      throw new Error("missing independent operation requests");
+
+    for (const [index, request] of queryRequests.entries())
+      worker.emit(queryResponse(request.requestId, index + 1));
+    worker.emit({
+      protocolVersion: 3,
+      type: "anki-preview-result",
+      requestId: previewRequest.requestId,
+      datasetId: "dataset-1",
+      result: { matchedWords: 1, knownCount: 0, minedCount: 1, manualProtected: 0 },
+    });
+
+    await expect(normal).resolves.toMatchObject({ page: 1 });
+    await expect(candidate).resolves.toMatchObject({ page: 2 });
+    await expect(review).resolves.toMatchObject({ page: 3 });
+    await expect(queue).resolves.toMatchObject({ page: 4 });
+    await expect(preview).resolves.toEqual({
+      matchedWords: 1,
+      knownCount: 0,
+      minedCount: 1,
+      manualProtected: 0,
+    });
+  });
+
+  it("routes preview worker errors as typed client errors", async () => {
+    const worker = new FakeWorker();
+    const client = createWorkerClient(() => worker);
+    const pending = client.previewAnkiMatch({
+      datasetId: "dataset-1",
+      knownWords: [],
+      decisions: [],
+      ankiStatuses: [],
+    });
+    const request = worker.messages.find((message) => message.type === "anki-preview-match");
+    if (request?.type !== "anki-preview-match") throw new Error("missing preview request");
+
+    worker.emit({
+      protocolVersion: 3,
+      type: "error",
+      requestId: request.requestId,
+      code: "preview-failed",
+      message: "Preview failed",
+    });
+
+    await expect(pending).rejects.toMatchObject({
+      name: "WorkerClientError",
+      code: "preview-failed",
+      message: "Preview failed",
+    });
+    expect(pendingOperationCount(client)).toBe(0);
+  });
+
+  it("rejects malformed preview results and clears pending state", async () => {
+    const worker = new FakeWorker();
+    const client = createWorkerClient(() => worker);
+    const pending = client.previewAnkiMatch({
+      datasetId: "dataset-1",
+      knownWords: [],
+      decisions: [],
+      ankiStatuses: [],
+    });
+    const request = worker.messages.find((message) => message.type === "anki-preview-match");
+    if (request?.type !== "anki-preview-match") throw new Error("missing preview request");
+
+    worker.emit({
+      protocolVersion: 3,
+      type: "anki-preview-result",
+      requestId: request.requestId,
+      datasetId: "dataset-1",
+      result: { matchedWords: 1, knownCount: 0, minedCount: -1, manualProtected: 0 },
+    });
+
+    await expect(pending).rejects.toMatchObject({
+      name: "WorkerClientError",
+      code: "malformed-anki-preview-result",
+    });
+    expect(pendingOperationCount(client)).toBe(0);
+  });
+
+  it("cleans preview pending state when worker creation fails", async () => {
+    const client = createWorkerClient(() => {
+      throw new Error("worker creation failed");
+    });
+    const pending = client.previewAnkiMatch({
+      datasetId: "dataset-1",
+      knownWords: [],
+      decisions: [],
+      ankiStatuses: [],
+    });
+
+    await expect(pending).rejects.toThrow("worker creation failed");
+    expect(pendingOperationCount(client)).toBe(0);
   });
 
   it("sends Anki tuples and resolves preview results", async () => {
