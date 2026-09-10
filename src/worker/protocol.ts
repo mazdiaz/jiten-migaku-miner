@@ -1,3 +1,4 @@
+import { type AnkiPreviewMatchStats, type AnkiWordStatus, isAnkiWordStatus } from "../domain/anki";
 import type {
   CoverageStats,
   Entry,
@@ -16,34 +17,34 @@ import type {
  * materially - the schema now covers word decisions, queue include lists,
  * and coverage request/response beyond the original import/query surface.
  */
-export const WORKER_PROTOCOL_VERSION = 2 as const;
+export const WORKER_PROTOCOL_VERSION = 3 as const;
 export const WORKER_IMPORT_CHUNK_SIZE = 2_000 as const;
 
 const DECISION_STATUSES: readonly WordDecisionStatus[] = ["known", "mined", "skip", "later"];
 
 export type WorkerRequest =
   | {
-      protocolVersion: 2;
+      protocolVersion: 3;
       type: "import-jiten";
       requestId: string;
       name: string;
       text: string;
     }
   | {
-      protocolVersion: 2;
+      protocolVersion: 3;
       type: "import-known";
       requestId: string;
       name: string;
       text: string;
     }
   | {
-      protocolVersion: 2;
+      protocolVersion: 3;
       type: "load-start";
       requestId: string;
       datasetId: string;
     }
   | {
-      protocolVersion: 2;
+      protocolVersion: 3;
       type: "load-chunk";
       requestId: string;
       datasetId: string;
@@ -51,40 +52,53 @@ export type WorkerRequest =
       entries: Entry[];
     }
   | {
-      protocolVersion: 2;
+      protocolVersion: 3;
       type: "load-complete";
       requestId: string;
       datasetId: string;
     }
   | {
-      protocolVersion: 2;
+      protocolVersion: 3;
       type: "query";
       requestId: string;
       datasetId: string;
       knownWords: string[];
       decisions: Array<[string, WordDecisionStatus]>;
+      ankiStatuses: Array<[string, AnkiWordStatus]>;
       query: QueryState;
       includeNormalizedWords?: string[];
       window?: QueryWindow;
     }
   | {
-      protocolVersion: 2;
+      protocolVersion: 3;
       type: "coverage";
       requestId: string;
       datasetId: string;
       knownWords: string[];
       decisions: Array<[string, WordDecisionStatus]>;
+      ankiStatuses: Array<[string, AnkiWordStatus]>;
       targets?: number[];
     }
-  | { protocolVersion: 2; type: "cancel"; requestId: string }
-  | { protocolVersion: 2; type: "dispose"; requestId: string };
+  | AnkiPreviewMatchRequest
+  | { protocolVersion: 3; type: "cancel"; requestId: string }
+  | { protocolVersion: 3; type: "dispose"; requestId: string };
+
+export type AnkiPreviewMatchRequest = {
+  protocolVersion: 3;
+  type: "anki-preview-match";
+  requestId: string;
+  datasetId: string;
+  knownWords: string[];
+  decisions: Array<[string, WordDecisionStatus]>;
+  ankiStatuses: Array<[string, AnkiWordStatus]>;
+};
 
 export type QueryRequest = Extract<WorkerRequest, { type: "query" }>;
 export type CoverageRequest = Extract<WorkerRequest, { type: "coverage" }>;
 
 export type ImportChunkResponse =
   | {
-      protocolVersion: 2;
+      protocolVersion: 3;
       type: "import-chunk";
       requestId: string;
       kind: "jiten";
@@ -93,7 +107,7 @@ export type ImportChunkResponse =
       entries: Entry[];
     }
   | {
-      protocolVersion: 2;
+      protocolVersion: 3;
       type: "import-chunk";
       requestId: string;
       kind: "known";
@@ -104,7 +118,7 @@ export type ImportChunkResponse =
 
 export type ImportCompleteResponse =
   | {
-      protocolVersion: 2;
+      protocolVersion: 3;
       type: "import-complete";
       requestId: string;
       kind: "jiten";
@@ -114,7 +128,7 @@ export type ImportCompleteResponse =
       skippedRows: number;
     }
   | {
-      protocolVersion: 2;
+      protocolVersion: 3;
       type: "import-complete";
       requestId: string;
       kind: "known";
@@ -123,33 +137,42 @@ export type ImportCompleteResponse =
     };
 
 export type LoadCompleteResponse = {
-  protocolVersion: 2;
+  protocolVersion: 3;
   type: "load-complete";
   requestId: string;
   datasetId: string;
   entryCount: number;
 };
 
+export type AnkiPreviewMatchResponse = {
+  protocolVersion: 3;
+  type: "anki-preview-result";
+  requestId: string;
+  datasetId: string;
+  result: AnkiPreviewMatchStats;
+};
+
 export type WorkerResponse =
   | ImportChunkResponse
   | ImportCompleteResponse
   | LoadCompleteResponse
+  | AnkiPreviewMatchResponse
   | {
-      protocolVersion: 2;
+      protocolVersion: 3;
       type: "query-result";
       requestId: string;
       datasetId: string;
       result: QueryResult;
     }
   | {
-      protocolVersion: 2;
+      protocolVersion: 3;
       type: "coverage-result";
       requestId: string;
       datasetId: string;
       result: CoverageStats;
     }
   | {
-      protocolVersion: 2;
+      protocolVersion: 3;
       type: "error";
       requestId: string;
       code: string;
@@ -336,6 +359,22 @@ function validateDecisions(value: unknown): Array<[string, WordDecisionStatus]> 
   });
 }
 
+function validateAnkiStatuses(value: unknown): Array<[string, AnkiWordStatus]> {
+  if (!Array.isArray(value)) throw invalidMessage("ankiStatuses must be an array");
+  return value.map((item, index) => {
+    if (!Array.isArray(item) || item.length !== 2) {
+      throw invalidMessage(`ankiStatuses[${index}] must be a [normalizedWord, status] pair`);
+    }
+    if (typeof item[0] !== "string" || item[0].length === 0) {
+      throw invalidMessage(`ankiStatuses[${index}][0] must be a non-empty string`);
+    }
+    if (!isAnkiWordStatus(item[1])) {
+      throw invalidMessage(`ankiStatuses[${index}][1] must be "known" or "mined"`);
+    }
+    return [item[0], item[1]];
+  });
+}
+
 function validateWindow(value: unknown): QueryWindow {
   if (!isRecord(value)) throw invalidMessage("window must be an object");
   return {
@@ -394,6 +433,7 @@ export function parseWorkerRequest(value: unknown): WorkerRequest {
     type !== "load-complete" &&
     type !== "query" &&
     type !== "coverage" &&
+    type !== "anki-preview-match" &&
     type !== "cancel" &&
     type !== "dispose"
   ) {
@@ -445,6 +485,7 @@ export function parseWorkerRequest(value: unknown): WorkerRequest {
       datasetId: requiredString(value, "datasetId"),
       knownWords: validateKnownWords(value.knownWords),
       decisions: validateDecisions(value.decisions),
+      ankiStatuses: validateAnkiStatuses(value.ankiStatuses),
       query: validateQuery(value.query),
     };
     if (value.includeNormalizedWords !== undefined) {
@@ -462,9 +503,22 @@ export function parseWorkerRequest(value: unknown): WorkerRequest {
       datasetId: requiredString(value, "datasetId"),
       knownWords: validateKnownWords(value.knownWords),
       decisions: validateDecisions(value.decisions),
+      ankiStatuses: validateAnkiStatuses(value.ankiStatuses),
     };
     if (value.targets !== undefined) request.targets = validateTargets(value.targets);
     return request;
+  }
+
+  if (type === "anki-preview-match") {
+    return {
+      protocolVersion: WORKER_PROTOCOL_VERSION,
+      type,
+      requestId,
+      datasetId: requiredString(value, "datasetId"),
+      knownWords: validateKnownWords(value.knownWords),
+      decisions: validateDecisions(value.decisions),
+      ankiStatuses: validateAnkiStatuses(value.ankiStatuses),
+    };
   }
 
   return { protocolVersion: WORKER_PROTOCOL_VERSION, type, requestId };

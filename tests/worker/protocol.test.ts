@@ -11,12 +11,13 @@ import {
 import { WorkerEngine } from "../../src/worker/worker-engine";
 
 const validQueryRequest: WorkerRequest = {
-  protocolVersion: 2,
+  protocolVersion: 3,
   type: "query",
   requestId: "query-1",
   datasetId: "dataset-1",
   knownWords: [],
   decisions: [],
+  ankiStatuses: [],
   query: {
     search: "",
     hideKnown: false,
@@ -56,6 +57,43 @@ describe("worker protocol", () => {
     expect(parseWorkerRequest(validQueryRequest)).toEqual(validQueryRequest);
     expect(isWorkerRequest(validQueryRequest)).toBe(true);
   });
+
+  it("accepts valid Anki tuples in query and preview requests", () => {
+    const request = parseWorkerRequest({
+      protocolVersion: 3,
+      type: "anki-preview-match",
+      requestId: "preview-1",
+      datasetId: "dataset-1",
+      knownWords: [],
+      decisions: [],
+      ankiStatuses: [["word", "known"]],
+    });
+    expect(request.type).toBe("anki-preview-match");
+
+    const query = parseWorkerRequest({
+      ...validQueryRequest,
+      protocolVersion: 3,
+      ankiStatuses: [["word", "mined"]],
+    });
+    expect(query.type).toBe("query");
+  });
+
+  it.each([[["", "known"]], [["word", "unknown"]], [["word"]], [[42, "known"]]])(
+    "rejects malformed Anki tuple %j",
+    (ankiStatuses) => {
+      expect(() =>
+        parseWorkerRequest({
+          protocolVersion: 3,
+          type: "anki-preview-match",
+          requestId: "preview-1",
+          datasetId: "dataset-1",
+          knownWords: [],
+          decisions: [],
+          ankiStatuses,
+        }),
+      ).toThrow();
+    },
+  );
 
   it("round-trips decisions through query requests", () => {
     const request: WorkerRequest = {
@@ -192,7 +230,7 @@ describe("worker protocol", () => {
       message: "bad source",
     });
     expect(createErrorResponse("request-7", error)).toEqual({
-      protocolVersion: 2,
+      protocolVersion: 3,
       type: "error",
       requestId: "request-7",
       code: "source-failed",
@@ -205,7 +243,7 @@ describe("worker protocol", () => {
 
     await dispatchWorkerRequest(
       {
-        protocolVersion: 2,
+        protocolVersion: 3,
         type: "load-complete",
         requestId: "load-7",
         datasetId: "missing",
@@ -216,7 +254,7 @@ describe("worker protocol", () => {
 
     expect(responses).toEqual([
       {
-        protocolVersion: 2,
+        protocolVersion: 3,
         type: "error",
         requestId: "load-7",
         code: "dataset-not-ready",
@@ -242,7 +280,7 @@ describe("worker protocol", () => {
 
     await dispatchWorkerRequest(
       {
-        protocolVersion: 2,
+        protocolVersion: 3,
         type: "load-start",
         requestId: "load-1",
         datasetId: "dataset-1",
@@ -252,7 +290,7 @@ describe("worker protocol", () => {
     );
     await dispatchWorkerRequest(
       {
-        protocolVersion: 2,
+        protocolVersion: 3,
         type: "load-chunk",
         requestId: "load-1",
         datasetId: "dataset-1",
@@ -264,7 +302,7 @@ describe("worker protocol", () => {
     );
     await dispatchWorkerRequest(
       {
-        protocolVersion: 2,
+        protocolVersion: 3,
         type: "load-complete",
         requestId: "load-1",
         datasetId: "dataset-1",
@@ -275,7 +313,7 @@ describe("worker protocol", () => {
 
     expect(responses).toEqual([
       {
-        protocolVersion: 2,
+        protocolVersion: 3,
         type: "load-complete",
         requestId: "load-1",
         datasetId: "dataset-1",
@@ -290,7 +328,7 @@ describe("worker protocol", () => {
 
     await dispatchWorkerRequest(
       {
-        protocolVersion: 2,
+        protocolVersion: 3,
         type: "load-start",
         requestId: "load-1",
         datasetId: "dataset-1",
@@ -300,7 +338,7 @@ describe("worker protocol", () => {
     );
     await dispatchWorkerRequest(
       {
-        protocolVersion: 2,
+        protocolVersion: 3,
         type: "load-chunk",
         requestId: "load-1",
         datasetId: "dataset-1",
@@ -311,13 +349,13 @@ describe("worker protocol", () => {
       (response) => responses.push(response),
     );
     await dispatchWorkerRequest(
-      { protocolVersion: 2, type: "cancel", requestId: "load-1" },
+      { protocolVersion: 3, type: "cancel", requestId: "load-1" },
       engine,
       (response) => responses.push(response),
     );
     await dispatchWorkerRequest(
       {
-        protocolVersion: 2,
+        protocolVersion: 3,
         type: "load-complete",
         requestId: "load-1",
         datasetId: "dataset-1",
@@ -328,7 +366,7 @@ describe("worker protocol", () => {
 
     expect(responses).toEqual([
       {
-        protocolVersion: 2,
+        protocolVersion: 3,
         type: "error",
         requestId: "load-1",
         code: "dataset-not-ready",
@@ -352,7 +390,7 @@ describe("worker protocol", () => {
 
     await dispatchWorkerRequest(
       {
-        protocolVersion: 2,
+        protocolVersion: 3,
         type: "load-start",
         requestId: "load-2",
         datasetId: "dataset-2",
@@ -362,7 +400,7 @@ describe("worker protocol", () => {
     );
     await dispatchWorkerRequest(
       {
-        protocolVersion: 2,
+        protocolVersion: 3,
         type: "load-chunk",
         requestId: "load-2",
         datasetId: "dataset-2",
@@ -374,7 +412,7 @@ describe("worker protocol", () => {
     );
     await dispatchWorkerRequest(
       {
-        protocolVersion: 2,
+        protocolVersion: 3,
         type: "load-complete",
         requestId: "load-2",
         datasetId: "dataset-2",
@@ -385,14 +423,14 @@ describe("worker protocol", () => {
 
     expect(responses).toEqual([
       {
-        protocolVersion: 2,
+        protocolVersion: 3,
         type: "error",
         requestId: "load-2",
         code: "invalid-chunk",
         message: "Unexpected dataset chunk index: 1",
       },
       {
-        protocolVersion: 2,
+        protocolVersion: 3,
         type: "error",
         requestId: "load-2",
         code: "dataset-not-ready",
