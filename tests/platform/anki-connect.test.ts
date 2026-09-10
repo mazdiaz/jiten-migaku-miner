@@ -193,7 +193,7 @@ describe("AnkiConnect adapter", () => {
           text: async () => {
             throw new TypeError("body stream failed");
           },
-        }) as Response,
+        }) as unknown as Response,
     });
     await expect(bodyFailure.deckNames()).rejects.toMatchObject({ code: "connection-failed" });
   });
