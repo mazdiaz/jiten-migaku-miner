@@ -148,6 +148,30 @@ function openRawDatabase(name: string): Promise<IDBDatabase> {
   });
 }
 
+function readAnkiSyncRecord(name: string): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(name);
+    request.onsuccess = () => {
+      const database = request.result;
+      const transaction = database.transaction(["ankiSync"], "readonly");
+      const record = transaction.objectStore("ankiSync").get("current");
+      transaction.oncomplete = () => {
+        database.close();
+        resolve(record.result);
+      };
+      transaction.onerror = () => {
+        database.close();
+        reject(transaction.error);
+      };
+      transaction.onabort = () => {
+        database.close();
+        reject(transaction.error);
+      };
+    };
+    request.onerror = () => reject(request.error ?? new Error("Could not open test database"));
+  });
+}
+
 function readRestoreDiagnostics(name: string): Promise<{
   knownSets: Array<{ id: string }>;
   activeKnown: string | null;
@@ -226,6 +250,9 @@ describe("IndexedDbAppStore", () => {
         ]),
       );
       expect(database.objectStoreNames.length).toBe(7);
+      expect(database.transaction(["ankiSync"], "readonly").objectStore("ankiSync").keyPath).toBe(
+        "id",
+      );
     } finally {
       database.close();
     }
@@ -389,8 +416,48 @@ describe("IndexedDbAppStore", () => {
       statuses: [],
     });
 
+    expect(await readAnkiSyncRecord(databaseName)).toEqual({
+      id: "current",
+      config: {
+        deckScope: { kind: "all-decks" },
+        noteType: "Updated",
+        targetField: "Expression",
+      },
+      snapshot: {
+        syncedAt: "2026-09-10T11:00:00.000Z",
+        statuses: [],
+      },
+    });
     await store.ankiSync.clear();
     expect(await store.ankiSync.loadConfig()).toBeNull();
+    expect(await store.ankiSync.loadSnapshot()).toBeNull();
+    expect(await readAnkiSyncRecord(databaseName)).toBeUndefined();
+  });
+
+  it("defaults config to null when replacing a snapshot in a fresh store", async () => {
+    const store = createIndexedDbAppStore(databaseName);
+    const snapshot: AnkiSyncSnapshot = {
+      syncedAt: "2026-09-10T10:00:00.000Z",
+      statuses: [["word", "mined"]],
+    };
+
+    await store.ankiSync.replaceSnapshot(snapshot);
+
+    expect(await store.ankiSync.loadConfig()).toBeNull();
+    expect(await store.ankiSync.loadSnapshot()).toEqual(snapshot);
+  });
+
+  it("defaults snapshot to null when saving config in a fresh store", async () => {
+    const store = createIndexedDbAppStore(databaseName);
+    const config: AnkiSyncConfig = {
+      deckScope: { kind: "all-decks" },
+      noteType: "Mine",
+      targetField: "Word",
+    };
+
+    await store.ankiSync.saveConfig(config);
+
+    expect(await store.ankiSync.loadConfig()).toEqual(config);
     expect(await store.ankiSync.loadSnapshot()).toBeNull();
   });
 
