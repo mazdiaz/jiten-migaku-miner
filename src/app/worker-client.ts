@@ -64,6 +64,7 @@ export interface WorkerAnkiPreviewInput {
   knownWords: Iterable<string>;
   decisions?: Array<[string, WordDecisionStatus]>;
   ankiStatuses: Array<[string, AnkiWordStatus]>;
+  signal?: AbortSignal;
 }
 
 export interface WorkerClient {
@@ -117,6 +118,7 @@ interface PendingOperation {
   datasetId: string | null;
   queryChannel: WorkerQueryChannel | null;
   onChunk?: (chunk: ImportChunkResponse) => void;
+  cleanup?: () => void;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -195,7 +197,7 @@ class BrowserWorkerClient implements WorkerClient {
       return;
 
     if (response.type === "error") {
-      this.pending.delete(response.requestId);
+      this.removePending(response.requestId);
       if (
         pending.kind === "query" &&
         pending.queryChannel !== null &&
@@ -211,7 +213,7 @@ class BrowserWorkerClient implements WorkerClient {
     if (response.type === "load-complete") {
       if (pending.kind !== "load") return;
       if (!isValidLoadCompleteResponse(response)) {
-        this.pending.delete(response.requestId);
+        this.removePending(response.requestId);
         pending.reject(
           new WorkerClientError(
             "malformed-load-complete",
@@ -222,7 +224,7 @@ class BrowserWorkerClient implements WorkerClient {
         return;
       }
       if (response.datasetId !== pending.datasetId) {
-        this.pending.delete(response.requestId);
+        this.removePending(response.requestId);
         pending.reject(
           new WorkerClientError(
             "load-dataset-mismatch",
@@ -233,7 +235,7 @@ class BrowserWorkerClient implements WorkerClient {
         return;
       }
       if (pending.expectedEntryCount !== response.entryCount) {
-        this.pending.delete(response.requestId);
+        this.removePending(response.requestId);
         pending.reject(
           new WorkerClientError(
             "load-count-mismatch",
@@ -243,7 +245,7 @@ class BrowserWorkerClient implements WorkerClient {
         this.postCancel(response.requestId);
         return;
       }
-      this.pending.delete(response.requestId);
+      this.removePending(response.requestId);
       pending.resolve(undefined);
       return;
     }
@@ -258,7 +260,7 @@ class BrowserWorkerClient implements WorkerClient {
         try {
           pending.onChunk?.(response);
         } catch (error) {
-          this.pending.delete(response.requestId);
+          this.removePending(response.requestId);
           pending.reject(error);
           this.postCancel(response.requestId);
         }
@@ -272,14 +274,14 @@ class BrowserWorkerClient implements WorkerClient {
         (pending.kind === "import-known" && response.kind !== "known")
       )
         return;
-      this.pending.delete(response.requestId);
+      this.removePending(response.requestId);
       pending.resolve(response);
       return;
     }
 
     if (response.type === "coverage-result") {
       if (pending.kind !== "coverage") return;
-      this.pending.delete(response.requestId);
+      this.removePending(response.requestId);
       pending.resolve(response.result);
       return;
     }
@@ -287,7 +289,7 @@ class BrowserWorkerClient implements WorkerClient {
     if (response.type === "anki-preview-result") {
       if (pending.kind !== "anki-preview") return;
       if (!isValidAnkiPreviewMatchStats(response.result)) {
-        this.pending.delete(response.requestId);
+        this.removePending(response.requestId);
         pending.reject(
           new WorkerClientError(
             "malformed-anki-preview-result",
@@ -296,13 +298,13 @@ class BrowserWorkerClient implements WorkerClient {
         );
         return;
       }
-      this.pending.delete(response.requestId);
+      this.removePending(response.requestId);
       pending.resolve(response.result);
       return;
     }
 
     if (pending.kind !== "query") return;
-    this.pending.delete(response.requestId);
+    this.removePending(response.requestId);
     if (
       pending.queryChannel !== null &&
       this.latestQueryIds.get(pending.queryChannel) === response.requestId
@@ -318,7 +320,7 @@ class BrowserWorkerClient implements WorkerClient {
     const pending = this.pending.get(value.requestId);
     if (pending === undefined || pending.kind !== "load") return;
 
-    this.pending.delete(value.requestId);
+    this.removePending(value.requestId);
     pending.reject(
       new WorkerClientError(
         "malformed-load-complete",
@@ -490,7 +492,7 @@ class BrowserWorkerClient implements WorkerClient {
     if (previousQueryId !== null) {
       const previous = this.pending.get(previousQueryId);
       if (previous?.kind === "query" && previous.queryChannel === queryChannel) {
-        this.pending.delete(previousQueryId);
+        this.removePending(previousQueryId);
         previous.reject(
           new WorkerClientError("stale-query", "Query was superseded by a newer request."),
         );
@@ -557,6 +559,21 @@ class BrowserWorkerClient implements WorkerClient {
   async previewAnkiMatch(input: WorkerAnkiPreviewInput): Promise<AnkiPreviewMatchStats> {
     const requestId = this.requestId("anki-preview");
     const result = this.register<AnkiPreviewMatchStats>(requestId, "anki-preview");
+    if (input.signal !== undefined) {
+      const cancel = (): void => {
+        const pending = this.removePending(requestId);
+        if (pending === undefined) return;
+        pending.reject(new WorkerClientError("cancelled", "Worker operation was cancelled."));
+        this.postCancel(requestId);
+      };
+      const pending = this.pending.get(requestId);
+      if (pending !== undefined) {
+        pending.cleanup = () => input.signal!.removeEventListener("abort", cancel);
+        if (input.signal.aborted) cancel();
+        else input.signal.addEventListener("abort", cancel, { once: true });
+      }
+    }
+    if (!this.pending.has(requestId)) return result;
     try {
       this.post({
         protocolVersion: WORKER_PROTOCOL_VERSION,
@@ -578,7 +595,10 @@ class BrowserWorkerClient implements WorkerClient {
     this.worker = null;
     this.latestQueryIds.clear();
     const error = new WorkerClientError("disposed", "Worker client was disposed.");
-    for (const pending of this.pending.values()) pending.reject(error);
+    for (const pending of this.pending.values()) {
+      pending.cleanup?.();
+      pending.reject(error);
+    }
     this.pending.clear();
 
     if (worker !== null) {
@@ -663,10 +683,17 @@ class BrowserWorkerClient implements WorkerClient {
   }
 
   private rejectPending(requestId: string, reason: unknown): void {
-    const pending = this.pending.get(requestId);
+    const pending = this.removePending(requestId);
     if (!pending) return;
-    this.pending.delete(requestId);
     pending.reject(reason);
+  }
+
+  private removePending(requestId: string): PendingOperation | undefined {
+    const pending = this.pending.get(requestId);
+    if (pending === undefined) return undefined;
+    this.pending.delete(requestId);
+    pending.cleanup?.();
+    return pending;
   }
 
   private failWorker(reason: unknown): void {
@@ -674,7 +701,10 @@ class BrowserWorkerClient implements WorkerClient {
     this.worker = null;
     this.latestQueryIds.clear();
     const failure = new WorkerClientError("worker-failed", messageFromError(reason));
-    for (const pending of this.pending.values()) pending.reject(failure);
+    for (const pending of this.pending.values()) {
+      pending.cleanup?.();
+      pending.reject(failure);
+    }
     this.pending.clear();
 
     if (worker !== null) {

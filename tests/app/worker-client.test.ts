@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   createWorkerClient,
+  type WorkerAnkiPreviewInput,
   type WorkerClientEvent,
   type WorkerLike,
   type WorkerQueryInput,
@@ -883,6 +884,50 @@ describe("worker client", () => {
       message: "Preview failed",
     });
     expect(pendingOperationCount(client)).toBe(0);
+  });
+
+  it("rejects and cancels an aborted preview without leaving pending state", async () => {
+    const worker = new FakeWorker();
+    const client = createWorkerClient(() => worker);
+    const abortController = new AbortController();
+    const pending = client.previewAnkiMatch({
+      datasetId: "dataset-1",
+      knownWords: [],
+      decisions: [],
+      ankiStatuses: [],
+      signal: abortController.signal,
+    } as WorkerAnkiPreviewInput);
+    const request = worker.messages.find((message) => message.type === "anki-preview-match");
+    if (request?.type !== "anki-preview-match") throw new Error("missing preview request");
+
+    abortController.abort();
+    const outcome = await Promise.race([
+      pending.then(
+        () => ({ kind: "resolved" as const }),
+        (error) => ({ kind: "rejected" as const, error }),
+      ),
+      new Promise<{ kind: "timeout" }>((resolve) =>
+        setTimeout(() => resolve({ kind: "timeout" }), 50),
+      ),
+    ]);
+
+    expect(outcome.kind).toBe("rejected");
+    if (outcome.kind === "rejected")
+      expect(outcome.error).toMatchObject({ name: "WorkerClientError", code: "cancelled" });
+    expect(worker.messages).toContainEqual({
+      protocolVersion: 3,
+      type: "cancel",
+      requestId: request.requestId,
+    });
+    expect(pendingOperationCount(client)).toBe(0);
+    worker.emit({
+      protocolVersion: 3,
+      type: "anki-preview-result",
+      requestId: request.requestId,
+      datasetId: "dataset-1",
+      result: { matchedWords: 1, knownCount: 0, minedCount: 1, manualProtected: 0 },
+    });
+    client.dispose();
   });
 
   it("rejects malformed preview results and clears pending state", async () => {

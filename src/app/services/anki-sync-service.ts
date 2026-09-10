@@ -82,6 +82,13 @@ function snapshotCounts(snapshot: ReadonlyMap<string, AnkiWordStatus>): {
   return { wordCount: snapshot.size, knownCount, minedCount };
 }
 
+function snapshotRecord(
+  syncedAt: string | null,
+  statuses: ReadonlyMap<string, AnkiWordStatus>,
+): AnkiSyncSnapshot | null {
+  return syncedAt === null ? null : { syncedAt, statuses: [...statuses] };
+}
+
 interface PreviewCandidate {
   statuses: Map<string, AnkiWordStatus>;
   scannedCards: number;
@@ -123,6 +130,7 @@ export class AnkiSyncService {
   private previewCandidate: PreviewCandidate | null = null;
   private configRevision = 0;
   private previewGeneration = 0;
+  private previewAbortController: AbortController | null = null;
 
   constructor(
     private readonly core: ControllerCore,
@@ -136,9 +144,12 @@ export class AnkiSyncService {
       const [config, snapshot] = await this.core.storageOperation((store) =>
         Promise.all([store.ankiSync.loadConfig(), store.ankiSync.loadSnapshot()]),
       );
-      this.config = cloneConfig(config);
-      this.snapshot = snapshotMap(snapshot);
-      this.snapshotSyncedAt = snapshot?.syncedAt ?? null;
+      const nextConfig = cloneConfig(config);
+      const nextSnapshot = snapshotMap(snapshot);
+      const nextSnapshotSyncedAt = snapshot?.syncedAt ?? null;
+      this.config = nextConfig;
+      this.snapshot = nextSnapshot;
+      this.snapshotSyncedAt = nextSnapshotSyncedAt;
       this.invalidatePreview();
       this.publishSummary("idle", null);
     } catch (error) {
@@ -184,36 +195,16 @@ export class AnkiSyncService {
     try {
       const port = this.getPort();
       await port.requestPermission();
-      const [decks, models] = await Promise.all([port.deckNames(), port.modelNames()]);
-      if (config.deckScope.kind === "deck" && !decks.includes(config.deckScope.name)) {
-        throw new AnkiSyncServiceError(
-          "invalid-config",
-          `Anki deck was not found: ${config.deckScope.name}`,
-        );
-      }
-      if (!models.includes(config.noteType)) {
-        throw new AnkiSyncServiceError(
-          "invalid-config",
-          `Anki note type was not found: ${config.noteType}`,
-        );
-      }
-      const fields = await port.modelFieldNames(config.noteType);
-      if (!fields.includes(config.targetField)) {
-        throw new AnkiSyncServiceError(
-          "invalid-config",
-          `Anki target field was not found: ${config.targetField}`,
-        );
-      }
+      await this.validateConfigAgainstAnki(port, config);
 
-      const changed = !sameConfig(this.config, config);
       await this.core.withUserStateLock(async () => {
+        const changed = !sameConfig(this.config, config);
         if (changed) {
           await this.core.storageOperation((store) => store.ankiSync.saveConfig(config));
           this.config = cloneConfig(config);
-          this.invalidatePreview();
           this.core.countChangeSinceExport();
         }
-        if (!changed) this.core.state.ankiPreview = null;
+        this.invalidatePreview();
         this.publishSummary("idle", null);
       });
     } catch (error) {
@@ -224,6 +215,16 @@ export class AnkiSyncService {
 
   ankiStatusTuples(): Array<[string, AnkiWordStatus]> {
     return [...this.snapshot].map(([word, status]) => [word, status]);
+  }
+
+  storageState(): AnkiSyncBackupSection {
+    return {
+      config: cloneConfig(this.config),
+      snapshot:
+        this.snapshotSyncedAt === null
+          ? null
+          : { syncedAt: this.snapshotSyncedAt, statuses: this.ankiStatusTuples() },
+    };
   }
 
   async previewSync(): Promise<void> {
@@ -241,17 +242,33 @@ export class AnkiSyncService {
     const userStateEpoch = this.core.getUserStateEpoch();
     const datasetId = this.core.state.dataset?.id ?? null;
     const previewGeneration = ++this.previewGeneration;
+    this.abortPreview();
+    const abortController = new AbortController();
+    this.previewAbortController = abortController;
+    this.dropPreview();
     this.setStatus("syncing", null);
     try {
       const port = this.getPort();
-      await port.requestPermission();
+      await this.awaitPreview(port.requestPermission(), abortController.signal);
+      await this.awaitPreview(this.validateConfigAgainstAnki(port, config), abortController.signal);
       const baseSearch = buildAnkiBaseSearch(config);
-      const selectedCardIds = [...new Set(await port.findCards(baseSearch))];
-      const minedCardIds = new Set(await port.findCards(`${baseSearch} is:new -is:suspended`));
+      const selectedCardIds = [
+        ...new Set(await this.awaitPreview(port.findCards(baseSearch), abortController.signal)),
+      ];
+      const minedCardIds = new Set(
+        await this.awaitPreview(
+          port.findCards(`${baseSearch} is:new -is:suspended`),
+          abortController.signal,
+        ),
+      );
       const selectedCardIdSet = new Set(selectedCardIds);
       const statuses = new Map<string, AnkiWordStatus>();
       let emptyTargetFields = 0;
-      const cards = await port.cardsInfo(selectedCardIds);
+      const cards = await this.awaitPreview(
+        port.cardsInfo(selectedCardIds),
+        abortController.signal,
+      );
+      const returnedCardIds = new Set<number>();
       for (const card of cards) {
         if (!selectedCardIdSet.has(card.cardId)) {
           throw new AnkiConnectError(
@@ -259,6 +276,13 @@ export class AnkiSyncService {
             `cardsInfo returned an unexpected card ID: ${card.cardId}`,
           );
         }
+        if (returnedCardIds.has(card.cardId)) {
+          throw new AnkiConnectError(
+            "protocol-error",
+            `cardsInfo returned duplicate card ID: ${card.cardId}`,
+          );
+        }
+        returnedCardIds.add(card.cardId);
         const rawValue = card.fields[config.targetField];
         if (rawValue === undefined) {
           throw new AnkiConnectError(
@@ -276,6 +300,13 @@ export class AnkiSyncService {
         if (existing === undefined) statuses.set(word, status);
         else statuses.set(word, aggregateAnkiStatuses([existing, status])!);
       }
+      if (returnedCardIds.size !== selectedCardIds.length) {
+        const missingCardId = selectedCardIds.find((cardId) => !returnedCardIds.has(cardId));
+        throw new AnkiConnectError(
+          "protocol-error",
+          `cardsInfo did not return selected card ID: ${String(missingCardId)}`,
+        );
+      }
 
       let match: {
         matchedWords: number;
@@ -284,12 +315,16 @@ export class AnkiSyncService {
         manualProtected: number;
       } | null = null;
       if (datasetId !== null) {
-        match = await this.core.worker.previewAnkiMatch({
-          datasetId,
-          knownWords: [...this.core.state.knownWords],
-          decisions: this.core.decisionTuples(),
-          ankiStatuses: [...statuses],
-        });
+        match = await this.awaitPreview(
+          this.core.worker.previewAnkiMatch({
+            datasetId,
+            knownWords: [...this.core.state.knownWords],
+            decisions: this.core.decisionTuples(),
+            ankiStatuses: [...statuses],
+            signal: abortController.signal,
+          }),
+          abortController.signal,
+        );
       }
 
       if (
@@ -327,11 +362,12 @@ export class AnkiSyncService {
       };
       this.publishSummary("preview", null);
     } catch (error) {
-      if (previewGeneration === this.previewGeneration) {
-        this.dropPreview();
-        this.publishError(error);
-      }
+      if (previewGeneration !== this.previewGeneration) throw this.stalePreviewError();
+      this.dropPreview();
+      this.publishError(error);
       throw error;
+    } finally {
+      if (this.previewAbortController === abortController) this.previewAbortController = null;
     }
   }
 
@@ -339,8 +375,10 @@ export class AnkiSyncService {
     const hadPreview =
       this.previewCandidate !== null ||
       this.core.state.ankiPreview !== null ||
-      this.core.state.anki.status === "preview";
+      this.core.state.anki.status === "preview" ||
+      this.core.state.anki.status === "syncing";
     this.previewGeneration += 1;
+    this.abortPreview();
     this.dropPreview();
     if (hadPreview) this.publishSummary("idle", null);
   }
@@ -348,35 +386,35 @@ export class AnkiSyncService {
   async applySync(): Promise<void> {
     const candidate = this.previewCandidate;
     if (candidate === null) {
-      const error = new AnkiSyncServiceError(
-        "stale-preview",
-        "Anki sync preview is no longer current",
-      );
+      const error = this.stalePreviewError();
       this.publishError(error);
       throw error;
     }
     const epoch = this.core.getUserStateEpoch();
     if (!this.isCurrentCandidate(candidate)) {
-      this.dropPreview();
-      const error = new AnkiSyncServiceError(
-        "stale-preview",
-        "Anki sync preview is no longer current",
-      );
-      this.publishError(error);
+      const error = this.stalePreviewError();
+      this.reportApplyError(candidate, error);
       throw error;
     }
 
     try {
       await this.core.withUserStateLock(async () => {
         if (epoch !== this.core.getUserStateEpoch() || !this.isCurrentCandidate(candidate)) {
-          throw new AnkiSyncServiceError("stale-preview", "Anki sync preview is no longer current");
+          throw this.stalePreviewError();
         }
 
+        const previousSnapshot = snapshotRecord(this.snapshotSyncedAt, this.snapshot);
+        const previousConfig = cloneConfig(this.config);
         const nextSnapshot: AnkiSyncSnapshot = {
           syncedAt: this.core.now(),
           statuses: [...candidate.statuses],
         };
         await this.core.storageOperation((store) => store.ankiSync.replaceSnapshot(nextSnapshot));
+
+        if (!this.isCurrentCandidate(candidate)) {
+          await this.restoreStoredSnapshot(previousSnapshot, previousConfig);
+          throw this.stalePreviewError();
+        }
 
         this.snapshot = new Map(candidate.statuses);
         this.snapshotSyncedAt = nextSnapshot.syncedAt;
@@ -388,14 +426,10 @@ export class AnkiSyncService {
         this.publishSummary("idle", null);
       });
     } catch (error) {
-      if (error instanceof AnkiSyncServiceError && error.code === "stale-preview") {
-        this.dropPreview();
-      }
-      this.publishError(error);
+      this.reportApplyError(candidate, error);
       throw error;
     }
 
-    if (epoch !== this.core.getUserStateEpoch()) return;
     await this.core.runQuery();
     await this.coverage.request();
   }
@@ -432,9 +466,12 @@ export class AnkiSyncService {
   }
 
   restoreFromBackup(section: AnkiSyncBackupSection | null): void {
-    this.config = cloneConfig(section?.config ?? null);
-    this.snapshot = snapshotMap(section?.snapshot ?? null);
-    this.snapshotSyncedAt = section?.snapshot?.syncedAt ?? null;
+    const nextConfig = cloneConfig(section?.config ?? null);
+    const nextSnapshot = snapshotMap(section?.snapshot ?? null);
+    const nextSnapshotSyncedAt = section?.snapshot?.syncedAt ?? null;
+    this.config = nextConfig;
+    this.snapshot = nextSnapshot;
+    this.snapshotSyncedAt = nextSnapshotSyncedAt;
     this.invalidatePreview();
     this.updateSummary("idle", null);
   }
@@ -443,9 +480,74 @@ export class AnkiSyncService {
     return (this.port ??= this.portFactory());
   }
 
+  private stalePreviewError(): AnkiSyncServiceError {
+    return new AnkiSyncServiceError("stale-preview", "Anki sync preview is no longer current");
+  }
+
+  private async awaitPreview<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
+    let onAbort = (): void => {};
+    const cancelled = new Promise<never>((_, reject) => {
+      onAbort = () => reject(this.stalePreviewError());
+      if (signal.aborted) onAbort();
+      else signal.addEventListener("abort", onAbort, { once: true });
+    });
+    try {
+      return await Promise.race([operation, cancelled]);
+    } finally {
+      signal.removeEventListener("abort", onAbort);
+    }
+  }
+
+  private abortPreview(): void {
+    const controller = this.previewAbortController;
+    this.previewAbortController = null;
+    controller?.abort();
+  }
+
+  private async restoreStoredSnapshot(
+    snapshot: AnkiSyncSnapshot | null,
+    config: AnkiSyncConfig | null,
+  ): Promise<void> {
+    if (snapshot !== null) {
+      await this.core.storageOperation((store) => store.ankiSync.replaceSnapshot(snapshot));
+      return;
+    }
+    await this.core.storageOperation(async (store) => {
+      await store.ankiSync.clear();
+      if (config !== null) await store.ankiSync.saveConfig(config);
+    });
+  }
+
+  private async validateConfigAgainstAnki(
+    port: AnkiConnectPort,
+    config: AnkiSyncConfig,
+  ): Promise<void> {
+    const [decks, models] = await Promise.all([port.deckNames(), port.modelNames()]);
+    if (config.deckScope.kind === "deck" && !decks.includes(config.deckScope.name)) {
+      throw new AnkiSyncServiceError(
+        "invalid-config",
+        `Anki configuration is invalid. Open Settings and choose an existing deck: ${config.deckScope.name}`,
+      );
+    }
+    if (!models.includes(config.noteType)) {
+      throw new AnkiSyncServiceError(
+        "invalid-config",
+        `Anki configuration is invalid. Open Settings and choose an existing note type: ${config.noteType}`,
+      );
+    }
+    const fields = await port.modelFieldNames(config.noteType);
+    if (!fields.includes(config.targetField)) {
+      throw new AnkiSyncServiceError(
+        "invalid-config",
+        `Anki configuration is invalid. Open Settings and choose an existing target field: ${config.targetField}`,
+      );
+    }
+  }
+
   private invalidatePreview(): void {
     this.configRevision = this.configRevision + 1;
     this.previewGeneration += 1;
+    this.abortPreview();
     this.dropPreview();
   }
 
@@ -462,6 +564,20 @@ export class AnkiSyncService {
       candidate.previewGeneration === this.previewGeneration &&
       this.previewCandidate === candidate
     );
+  }
+
+  private ownsCandidate(candidate: PreviewCandidate): boolean {
+    return (
+      candidate.previewGeneration === this.previewGeneration && this.previewCandidate === candidate
+    );
+  }
+
+  private reportApplyError(candidate: PreviewCandidate, error: unknown): void {
+    if (!this.ownsCandidate(candidate)) return;
+    if (error instanceof AnkiSyncServiceError && error.code === "stale-preview") {
+      this.dropPreview();
+    }
+    this.publishError(error);
   }
 
   private removeAppliedQueueWords(
@@ -524,6 +640,7 @@ export class AnkiSyncService {
       configured: this.config !== null,
       status,
       lastSyncedAt: this.lastSyncedAt(),
+      deckScopeKind: this.config?.deckScope.kind ?? null,
       deckScopeLabel: configLabel(this.config),
       noteType: this.config?.noteType ?? null,
       targetField: this.config?.targetField ?? null,
