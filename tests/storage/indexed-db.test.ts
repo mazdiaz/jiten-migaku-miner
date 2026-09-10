@@ -428,6 +428,13 @@ describe("IndexedDbAppStore", () => {
         statuses: [],
       },
     });
+    await store.ankiSync.replaceSnapshot(null);
+    expect(await store.ankiSync.loadConfig()).toEqual({
+      deckScope: { kind: "all-decks" },
+      noteType: "Updated",
+      targetField: "Expression",
+    });
+    expect(await store.ankiSync.loadSnapshot()).toBeNull();
     await store.ankiSync.clear();
     expect(await store.ankiSync.loadConfig()).toBeNull();
     expect(await store.ankiSync.loadSnapshot()).toBeNull();

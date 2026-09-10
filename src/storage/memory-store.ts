@@ -317,7 +317,7 @@ class MemoryAnkiSyncStore implements AnkiSyncStore {
     return cloneSnapshot(this.value.snapshot);
   }
 
-  async replaceSnapshot(snapshot: AnkiSyncSnapshot): Promise<void> {
+  async replaceSnapshot(snapshot: AnkiSyncSnapshot | null): Promise<void> {
     this.value.snapshot = cloneSnapshot(snapshot);
   }
 

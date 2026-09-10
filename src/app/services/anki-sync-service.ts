@@ -404,7 +404,6 @@ export class AnkiSyncService {
         }
 
         const previousSnapshot = snapshotRecord(this.snapshotSyncedAt, this.snapshot);
-        const previousConfig = cloneConfig(this.config);
         const nextSnapshot: AnkiSyncSnapshot = {
           syncedAt: this.core.now(),
           statuses: [...candidate.statuses],
@@ -412,7 +411,7 @@ export class AnkiSyncService {
         await this.core.storageOperation((store) => store.ankiSync.replaceSnapshot(nextSnapshot));
 
         if (!this.isCurrentCandidate(candidate)) {
-          await this.restoreStoredSnapshot(previousSnapshot, previousConfig);
+          await this.restoreStoredSnapshot(previousSnapshot);
           throw this.stalePreviewError();
         }
 
@@ -504,18 +503,8 @@ export class AnkiSyncService {
     controller?.abort();
   }
 
-  private async restoreStoredSnapshot(
-    snapshot: AnkiSyncSnapshot | null,
-    config: AnkiSyncConfig | null,
-  ): Promise<void> {
-    if (snapshot !== null) {
-      await this.core.storageOperation((store) => store.ankiSync.replaceSnapshot(snapshot));
-      return;
-    }
-    await this.core.storageOperation(async (store) => {
-      await store.ankiSync.clear();
-      if (config !== null) await store.ankiSync.saveConfig(config);
-    });
+  private async restoreStoredSnapshot(snapshot: AnkiSyncSnapshot | null): Promise<void> {
+    await this.core.storageOperation((store) => store.ankiSync.replaceSnapshot(snapshot));
   }
 
   private async validateConfigAgainstAnki(
@@ -573,8 +562,8 @@ export class AnkiSyncService {
   }
 
   private reportApplyError(candidate: PreviewCandidate, error: unknown): void {
-    if (!this.ownsCandidate(candidate)) return;
     if (error instanceof AnkiSyncServiceError && error.code === "stale-preview") {
+      if (!this.ownsCandidate(candidate)) return;
       this.dropPreview();
     }
     this.publishError(error);

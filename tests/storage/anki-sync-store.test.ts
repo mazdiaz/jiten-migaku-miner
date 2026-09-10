@@ -21,6 +21,9 @@ describe("MemoryAppStore Anki sync", () => {
     await store.ankiSync.replaceSnapshot({ syncedAt: "2026-09-10T11:00:00.000Z", statuses: [] });
     expect((await store.ankiSync.loadSnapshot())?.statuses).toEqual([]);
     expect(await store.ankiSync.loadConfig()).toEqual(config);
+    await store.ankiSync.replaceSnapshot(null);
+    expect(await store.ankiSync.loadSnapshot()).toBeNull();
+    expect(await store.ankiSync.loadConfig()).toEqual(config);
     await store.ankiSync.clear();
     expect(await store.ankiSync.loadConfig()).toBeNull();
     expect(await store.ankiSync.loadSnapshot()).toBeNull();

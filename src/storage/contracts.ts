@@ -48,7 +48,7 @@ export interface AnkiSyncStore {
   loadConfig(): Promise<AnkiSyncConfig | null>;
   saveConfig(config: AnkiSyncConfig): Promise<void>;
   loadSnapshot(): Promise<AnkiSyncSnapshot | null>;
-  replaceSnapshot(snapshot: AnkiSyncSnapshot): Promise<void>;
+  replaceSnapshot(snapshot: AnkiSyncSnapshot | null): Promise<void>;
   clear(): Promise<void> | void;
 }
 

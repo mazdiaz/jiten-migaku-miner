@@ -898,7 +898,7 @@ class IndexedDbAnkiSyncStore implements AnkiSyncStore {
     });
   }
 
-  async replaceSnapshot(snapshot: AnkiSyncSnapshot): Promise<void> {
+  async replaceSnapshot(snapshot: AnkiSyncSnapshot | null): Promise<void> {
     const nextSnapshot = cloneSnapshot(snapshot);
     await withDatabase(this.databaseName, async (database) => {
       await runTransaction<void>(

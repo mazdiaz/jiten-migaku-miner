@@ -809,6 +809,98 @@ describe("AnkiSyncService", () => {
     expect(harness.coverageSpy.request).not.toHaveBeenCalled();
   });
 
+  it("rolls a null snapshot back without clearing the saved config", async () => {
+    const store = createMemoryAppStore();
+    await store.ankiSync.saveConfig(config);
+    const harness = coreFor(store);
+    harness.state.dataset = dataset();
+    vi.mocked(harness.port.findCards).mockResolvedValue([1]);
+    vi.mocked(harness.port.cardsInfo).mockResolvedValue([
+      { cardId: 1, fields: { [config.targetField]: "word" } },
+    ]);
+    const service = serviceFor(harness);
+    await service.initialize();
+    await service.previewSync();
+
+    const originalReplaceSnapshot = store.ankiSync.replaceSnapshot.bind(store.ankiSync);
+    const replacementStarted = deferred<void>();
+    const releaseReplacement = deferred<void>();
+    let replacementCalls = 0;
+    store.ankiSync.replaceSnapshot = vi.fn(async (nextSnapshot) => {
+      replacementCalls += 1;
+      if (replacementCalls === 1) {
+        replacementStarted.resolve(undefined);
+        await releaseReplacement.promise;
+      }
+      await originalReplaceSnapshot(nextSnapshot);
+    });
+    store.ankiSync.clear = vi.fn().mockRejectedValue(new Error("legacy rollback clear failed"));
+
+    const applying = service.applySync();
+    await replacementStarted.promise;
+    service.cancelPreview();
+    releaseReplacement.resolve(undefined);
+
+    await expect(applying).rejects.toMatchObject({ code: "stale-preview" });
+
+    expect(replacementCalls).toBe(2);
+    expect(store.ankiSync.clear).not.toHaveBeenCalled();
+    expect(await store.ankiSync.loadConfig()).toEqual(config);
+    expect(await store.ankiSync.loadSnapshot()).toBeNull();
+    expect(harness.state.anki.status).toBe("idle");
+  });
+
+  it("surfaces rollback failure after cancellation", async () => {
+    const store = createMemoryAppStore();
+    await store.ankiSync.saveConfig(config);
+    const previous = {
+      syncedAt: "2026-09-09T10:00:00.000Z",
+      statuses: [["old", "known"]] as Array<[string, "known" | "mined"]>,
+    };
+    await store.ankiSync.replaceSnapshot(previous);
+    const harness = coreFor(store);
+    harness.state.dataset = dataset();
+    vi.mocked(harness.port.findCards).mockResolvedValue([1]);
+    vi.mocked(harness.port.cardsInfo).mockResolvedValue([
+      { cardId: 1, fields: { [config.targetField]: "word" } },
+    ]);
+    const service = serviceFor(harness);
+    await service.initialize();
+    await service.previewSync();
+
+    const originalReplaceSnapshot = store.ankiSync.replaceSnapshot.bind(store.ankiSync);
+    const replacementStarted = deferred<void>();
+    const releaseReplacement = deferred<void>();
+    const rollbackError = new Error("rollback failed");
+    let replacementCalls = 0;
+    store.ankiSync.replaceSnapshot = vi.fn(async (nextSnapshot) => {
+      replacementCalls += 1;
+      if (replacementCalls === 1) {
+        replacementStarted.resolve(undefined);
+        await releaseReplacement.promise;
+        await originalReplaceSnapshot(nextSnapshot);
+        return;
+      }
+      throw rollbackError;
+    });
+
+    const applying = service.applySync();
+    await replacementStarted.promise;
+    service.cancelPreview();
+    releaseReplacement.resolve(undefined);
+
+    await expect(applying).rejects.toBe(rollbackError);
+
+    expect(await store.ankiSync.loadSnapshot()).toEqual({
+      syncedAt: "2026-09-10T11:00:00.000Z",
+      statuses: [["word", "mined"]],
+    });
+    expect(harness.state.anki.status).toBe("error");
+    expect(harness.state.anki.errorMessage).toBe("rollback failed");
+    expect(harness.state.ankiPreview).toBeNull();
+    expect(harness.state.changesSinceExport).toBe(0);
+  });
+
   it("refreshes query and coverage after committed apply even if epoch changes after lock", async () => {
     const store = createMemoryAppStore();
     await store.ankiSync.saveConfig(config);
