@@ -192,6 +192,7 @@ class MinerControllerImpl implements MinerController {
       this.coverageService,
       this.decisionService,
       this.queueService,
+      this.ankiSyncService,
     );
   }
 

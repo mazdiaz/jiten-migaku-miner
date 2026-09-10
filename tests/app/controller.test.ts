@@ -542,13 +542,12 @@ describe("MinerController", () => {
     const port = ankiPort();
     vi.mocked(port.requestPermission).mockRejectedValue(new Error("Anki is not running"));
     const controller = createMinerController(controllerOptions(store, worker, undefined, port));
-    let latest: Readonly<AppState> | null = null;
-    controller.subscribe((state) => {
-      latest = state;
-    });
+    const states: Readonly<AppState>[] = [];
+    controller.subscribe((state) => states.push(state));
 
     await controller.init();
 
+    const latest = states.at(-1);
     expect(latest?.anki.wordCount).toBe(1);
     expect(latest?.result?.items[0]?.decisionSource).toBe("anki");
     expect(worker.queryCalls[0]?.ankiStatuses).toEqual(ankiSnapshot.statuses);
@@ -2534,7 +2533,8 @@ describe("MinerController backup and restore", () => {
     const parsed = JSON.parse(json) as Record<string, unknown>;
 
     expect(parsed.format).toBe("jiten-migaku-miner-backup");
-    expect(parsed.version).toBe(1);
+    expect(parsed.version).toBe(2);
+    expect(parsed.ankiSync).toEqual({ config: null, snapshot: null });
     expect(parsed.exportedAt).toBe(FIXED_NOW);
     expect(parsed.knownWords).toEqual({ name: "old.txt", words: ["古い"] });
     expect(parsed.wordDecisions).toEqual([
@@ -2548,6 +2548,90 @@ describe("MinerController backup and restore", () => {
     expect(json).not.toContain("entryCount");
     expect(json).not.toContain("normalizedWords");
     expect(json).not.toContain("old-entry");
+  });
+
+  it("exports and restores Anki state as one user-state unit", async () => {
+    const store = createMemoryAppStore();
+    await seedActive(store);
+    const worker = new FakeWorkerClient();
+    const controller = createMinerController(
+      controllerOptions(store, worker, undefined, ankiPort()),
+    );
+    await controller.init();
+    await controller.validateAndSaveAnkiConfig(ankiConfig);
+    await controller.previewAnkiSync();
+    await controller.applyAnkiSync();
+
+    const exported = JSON.parse(await controller.exportBackup()) as {
+      version: number;
+      ankiSync: { config: AnkiSyncConfig | null; snapshot: AnkiSyncSnapshot | null };
+    };
+    expect(exported.version).toBe(2);
+    expect(exported.ankiSync.config).toEqual(ankiConfig);
+    expect(exported.ankiSync.snapshot?.statuses).toEqual([["古い", "known"]]);
+
+    const restoredStore = createMemoryAppStore();
+    const restored = createMinerController({
+      store: restoredStore,
+      worker: new FakeWorkerClient(),
+      legacyStorage: null,
+    });
+    await restored.init();
+    await restored.restoreBackup(JSON.stringify(exported));
+
+    const states: Readonly<AppState>[] = [];
+    restored.subscribe((state) => states.push(state));
+    expect(states.at(-1)?.anki.wordCount).toBe(1);
+    expect(await restoredStore.ankiSync.loadConfig()).toEqual(ankiConfig);
+    expect((await restoredStore.ankiSync.loadSnapshot())?.statuses).toEqual([["古い", "known"]]);
+  });
+
+  it("restoring v1 clears newer Anki state", async () => {
+    const store = createMemoryAppStore();
+    await seedForRestore(store);
+    await store.ankiSync.saveConfig(ankiConfig);
+    await store.ankiSync.replaceSnapshot(ankiSnapshot);
+    const { controller, states } = restoreSetup(store);
+    await controller.init();
+
+    await controller.restoreBackup(backupText());
+
+    expect(states.at(-1)?.anki.configured).toBe(false);
+    expect(states.at(-1)?.anki.wordCount).toBe(0);
+    expect(await store.ankiSync.loadConfig()).toBeNull();
+    expect(await store.ankiSync.loadSnapshot()).toBeNull();
+  });
+
+  it("does not leave partially restored Anki state after failed atomic restore", async () => {
+    const inner = createMemoryAppStore();
+    await seedForRestore(inner);
+    await inner.ankiSync.saveConfig(ankiConfig);
+    await inner.ankiSync.replaceSnapshot(ankiSnapshot);
+    const store: AppStore = {
+      ...withoutRestoreUserState(inner),
+      restoreUserState: vi.fn().mockRejectedValue(new Error("restore failed")),
+    };
+    const controller = createMinerController({
+      store,
+      worker: new FakeWorkerClient(),
+      legacyStorage: null,
+    });
+    await controller.init();
+    const differentAnki: AnkiSyncSnapshot = {
+      syncedAt: "2026-09-11T00:00:00.000Z",
+      statuses: [["new", "mined"]],
+    };
+    const backup = serializeBackup({
+      exportedAt: "2026-09-11T00:00:00.000Z",
+      knownWords: null,
+      wordDecisions: [],
+      preferences: null,
+      ankiSync: { config: ankiConfig, snapshot: differentAnki },
+    });
+
+    await expect(controller.restoreBackup(backup)).rejects.toThrow("restore failed");
+    expect(await store.ankiSync.loadSnapshot()).toEqual(ankiSnapshot);
+    expect(await store.ankiSync.loadConfig()).toEqual(ankiConfig);
   });
 
   it("exports an empty backup when nothing is stored", async () => {
@@ -2785,6 +2869,7 @@ describe("MinerController backup and restore", () => {
           ? { clear: inner.preferences.clear.bind(inner.preferences) }
           : {}),
       },
+      ankiSync: inner.ankiSync,
       clearAll: inner.clearAll.bind(inner),
       restoreUserState,
     };
@@ -2820,6 +2905,7 @@ describe("MinerController backup and restore", () => {
         },
       ],
       preferences: { query: restoredQuery, view: restoredView, page: 2 },
+      ankiSync: { config: null, snapshot: null },
     });
     expect(knownSave).not.toHaveBeenCalled();
     expect(replaceAll).not.toHaveBeenCalled();
@@ -3085,6 +3171,7 @@ describe("MinerController backup and restore", () => {
       knownWords: inner.knownWords,
       wordDecisions: inner.wordDecisions,
       preferences: inner.preferences,
+      ankiSync: inner.ankiSync,
       clearAll: inner.clearAll.bind(inner),
       restoreUserState: async (snapshot) => {
         atomicFailures += 1;

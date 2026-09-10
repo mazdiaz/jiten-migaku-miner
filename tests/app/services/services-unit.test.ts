@@ -13,6 +13,7 @@ import {
   EMPTY_REVIEW,
 } from "../../../src/app/state";
 import type {
+  WorkerAnkiPreviewInput,
   WorkerClient,
   WorkerCoverageInput,
   WorkerQueryInput,
@@ -109,6 +110,10 @@ class FakeWorker implements WorkerClient {
     return next;
   }
 
+  async previewAnkiMatch(_request: WorkerAnkiPreviewInput) {
+    return { matchedWords: 0, knownCount: 0, minedCount: 0, manualProtected: 0 };
+  }
+
   dispose(): void {}
 }
 
@@ -184,6 +189,13 @@ function setup(): Harness {
         preferences: {
           load: async () => null,
           save: async () => {},
+          clear: async () => {},
+        },
+        ankiSync: {
+          loadConfig: async () => null,
+          saveConfig: async () => {},
+          loadSnapshot: async () => null,
+          replaceSnapshot: async () => {},
           clear: async () => {},
         },
         clearAll: async () => {},
@@ -434,7 +446,9 @@ describe("BackupService", () => {
     const coverage = new CoverageService(env.core);
     const decisions = new DecisionService(env.core, queue, coverage);
     const review = new ReviewSession(env.core, decisions);
-    const backup = new BackupService(env.core, review, coverage, decisions, queue);
+    const backup = new BackupService(env.core, review, coverage, decisions, queue, {
+      restoreFromBackup: () => {},
+    });
 
     env.state.wordDecisions.set("ねこ", {
       normalizedWord: "ねこ",
@@ -455,7 +469,9 @@ describe("BackupService", () => {
     const coverage = new CoverageService(env.core);
     const decisions = new DecisionService(env.core, queue, coverage);
     const review = new ReviewSession(env.core, decisions);
-    const backup = new BackupService(env.core, review, coverage, decisions, queue);
+    const backup = new BackupService(env.core, review, coverage, decisions, queue, {
+      restoreFromBackup: () => {},
+    });
 
     await expect(backup.restoreBackup("not-json")).rejects.toThrow();
     expect(env.state.errorMessage).toContain("Backup could not be restored");
@@ -467,12 +483,15 @@ describe("BackupService", () => {
     const coverage = new CoverageService(env.core);
     const decisions = new DecisionService(env.core, queue, coverage);
     const review = new ReviewSession(env.core, decisions);
-    const backup = new BackupService(env.core, review, coverage, decisions, queue);
+    const backup = new BackupService(env.core, review, coverage, decisions, queue, {
+      restoreFromBackup: () => {},
+    });
 
     env.state.changesSinceExport = 5;
     const json = await backup.exportBackup();
 
-    expect(JSON.parse(json).version).toBe(1);
+    expect(JSON.parse(json).version).toBe(2);
+    expect(JSON.parse(json).ankiSync).toEqual({ config: null, snapshot: null });
     expect(env.state.changesSinceExport).toBe(0);
     expect(env.state.lastExportAt).toBe("2026-09-08T00:00:00.000Z");
   });

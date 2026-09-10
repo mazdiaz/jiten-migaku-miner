@@ -1,6 +1,13 @@
-import { type MinerBackupV1, parseBackup, serializeBackup } from "../../domain/backup";
+import {
+  type AnkiSyncBackupSection,
+  type ParsedMinerBackup,
+  parseBackup,
+  serializeBackup,
+} from "../../domain/backup";
 import type { QueryState, ViewState, WordDecision } from "../../domain/types";
+import type { AppStore } from "../../storage/contracts";
 import { DEFAULT_QUERY, DEFAULT_VIEW } from "../state";
+import type { AnkiSyncService } from "./anki-sync-service";
 import { type ControllerCore, errorMessage } from "./context";
 import type { CoverageService } from "./coverage-service";
 import type { DecisionService } from "./decision-service";
@@ -13,6 +20,7 @@ interface UserStateSnapshot {
   known: { id: string; name: string; words: Set<string> } | null;
   decisions: WordDecision[];
   preferences: { query: QueryState; view: ViewState; page: number } | null;
+  ankiSync: AnkiSyncBackupSection;
 }
 
 /**
@@ -27,12 +35,17 @@ export class BackupService {
     private readonly coverage: CoverageService,
     private readonly decisions: DecisionService,
     private readonly queue: MiningQueueService,
+    private readonly ankiSync: Pick<AnkiSyncService, "restoreFromBackup">,
   ) {}
 
   async exportBackup(): Promise<string> {
     return this.core.withUserStateLock(async () => {
       const state = this.core.state;
       const known = await this.core.storageOperation((store) => store.knownWords.getActive());
+      const ankiSync = await this.core.storageOperation(async (store) => ({
+        config: await store.ankiSync.loadConfig(),
+        snapshot: await store.ankiSync.loadSnapshot(),
+      }));
       const knownWords = known === null ? null : { name: known.name, words: [...known.words] };
       const exportedAt = this.core.now();
       const json = serializeBackup({
@@ -44,6 +57,7 @@ export class BackupService {
           view: { ...state.view },
           page: state.query.page,
         },
+        ankiSync,
       });
       // A completed export resets the freshness signal. Publish inside the
       // existing lock so the Data area line updates immediately.
@@ -60,13 +74,14 @@ export class BackupService {
       this.invalidateAndReport(`Backup could not be restored: ${message}`);
       throw new Error(message);
     }
-    let backup: MinerBackupV1;
+    let backup: ParsedMinerBackup;
     try {
       backup = parseBackup(text);
     } catch (error) {
       this.invalidateAndReport(`Backup could not be restored: ${errorMessage(error)}`);
       throw error;
     }
+    const ankiSync = backup.ankiSync ?? { config: null, snapshot: null };
 
     await this.core.withUserStateLock(async () => {
       this.core.bumpUserStateEpoch();
@@ -74,6 +89,10 @@ export class BackupService {
         known: await store.knownWords.getActive(),
         decisions: await store.wordDecisions.list(),
         preferences: await store.preferences.load(),
+        ankiSync: {
+          config: await store.ankiSync.loadConfig(),
+          snapshot: await store.ankiSync.loadSnapshot(),
+        },
       }));
 
       const knownId = this.core.createId("known");
@@ -102,6 +121,7 @@ export class BackupService {
                   },
             decisions: backup.wordDecisions,
             preferences,
+            ankiSync,
           });
           return true;
         })
@@ -115,6 +135,7 @@ export class BackupService {
       if (!restoredAtomically) {
         let decisionsWritten = false;
         let preferencesWritten = false;
+        let ankiWritten = false;
         try {
           await this.writeRestoredKnownWords(knownId, backup);
           await this.core.storageOperation((store) =>
@@ -123,11 +144,14 @@ export class BackupService {
           decisionsWritten = true;
           await this.core.storageOperation((store) => store.preferences.save(preferences));
           preferencesWritten = true;
+          ankiWritten = true;
+          await this.writeRestoredAnkiSync(ankiSync);
         } catch (error) {
           const rollbackWarning = await this.rollbackUserState(snapshot, {
             knownWritten: true,
             decisionsWritten,
             preferencesWritten,
+            ankiWritten,
           });
           const message =
             rollbackWarning === null
@@ -139,6 +163,7 @@ export class BackupService {
       }
 
       this.applyRestoredState(backup);
+      this.ankiSync.restoreFromBackup(ankiSync);
       // Queue contents and review session are transient; restore never injects
       // them, and mining/review mode cannot continue over replaced decisions.
       this.queue.exitWithoutRequery();
@@ -169,7 +194,7 @@ export class BackupService {
     this.core.setState({ errorMessage: message });
   }
 
-  private async writeRestoredKnownWords(knownId: string, backup: MinerBackupV1): Promise<void> {
+  private async writeRestoredKnownWords(knownId: string, backup: ParsedMinerBackup): Promise<void> {
     if (backup.knownWords === null) {
       const active = await this.core.storageOperation((store) => store.knownWords.getActive());
       if (active === null) return;
@@ -186,11 +211,32 @@ export class BackupService {
     );
   }
 
+  private async writeRestoredAnkiSync(section: AnkiSyncBackupSection | null): Promise<void> {
+    const restored = section ?? { config: null, snapshot: null };
+    await this.core.storageOperation(async (store) => {
+      await store.ankiSync.clear();
+      if (restored.config !== null) await store.ankiSync.saveConfig(restored.config);
+      if (restored.snapshot !== null) await store.ankiSync.replaceSnapshot(restored.snapshot);
+    });
+  }
+
   private async rollbackUserState(
     snapshot: UserStateSnapshot,
-    written: { knownWritten: boolean; decisionsWritten: boolean; preferencesWritten: boolean },
+    written: {
+      knownWritten: boolean;
+      decisionsWritten: boolean;
+      preferencesWritten: boolean;
+      ankiWritten: boolean;
+    },
   ): Promise<string | null> {
     const failures: string[] = [];
+    if (written.ankiWritten) {
+      try {
+        await this.core.storageOperation((store) => this.restoreAnkiSync(store, snapshot.ankiSync));
+      } catch (error) {
+        failures.push(`Anki sync rollback failed: ${errorMessage(error)}`);
+      }
+    }
     if (written.preferencesWritten) {
       try {
         if (snapshot.preferences !== null) {
@@ -240,7 +286,13 @@ export class BackupService {
     return failures.length === 0 ? null : failures.join(" ");
   }
 
-  private applyRestoredState(backup: MinerBackupV1): void {
+  private async restoreAnkiSync(store: AppStore, section: AnkiSyncBackupSection): Promise<void> {
+    await store.ankiSync.clear();
+    if (section.config !== null) await store.ankiSync.saveConfig(section.config);
+    if (section.snapshot !== null) await store.ankiSync.replaceSnapshot(section.snapshot);
+  }
+
+  private applyRestoredState(backup: ParsedMinerBackup): void {
     const state = this.core.state;
     if (backup.knownWords === null) {
       state.knownWords = new Set<string>();
