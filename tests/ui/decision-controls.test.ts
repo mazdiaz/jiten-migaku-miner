@@ -622,7 +622,8 @@ describe("post-action focus restoration", () => {
     }
   });
 
-  it("does not re-apply a stale focus intent on a later unrelated render", () => {
+  it("restores focus across no-rebuild publishes and spends the intent after the rebuild", () => {
+    (globalThis as any).__focusLog = [];
     const decidedResult = () =>
       listResult([makeEntry({ decision: "known", known: true, knownByDecision: true })]);
     const harness = setup({ ...datasetReady(), ...listResult([makeEntry()]) });
@@ -641,18 +642,35 @@ describe("post-action focus restoration", () => {
       expect(document.activeElement).toBe(decisionButton(harness.dom.resultsList, "known"));
 
       // An identical-content publish (e.g. a coverage refresh) skips the list
-      // rebuild entirely, so the focused button survives untouched.
+      // rebuild entirely. Focus still sits on the node the intent focused, so
+      // the intent must SURVIVE this publish: dropping it here (as an earlier
+      // revision did) lost the restore whenever a coverage refresh landed
+      // between the action and the async query rebuild.
       harness.controller.publishState({ ...decidedResult() });
       expect(document.activeElement).toBe(decisionButton(harness.dom.resultsList, "known"));
 
-      // A later render that genuinely rebuilds the list (content changed)
-      // must not steal focus back to the entry: the one-shot intent is spent,
-      // so focus falls back to <body>.
+      // The rebuild destroys the focused node: the restore re-applies to the
+      // replacement node and that success spends the one-shot intent.
       harness.controller.publishState({
         ...listResult([
           makeEntry({
             id: "entry-9",
             originalIndex: 9,
+            decision: "known",
+            known: true,
+            knownByDecision: true,
+          }),
+        ]),
+      });
+      expect(document.activeElement).toBe(decisionButton(harness.dom.resultsList, "known"));
+
+      // A later rebuild after the spent restore must not steal focus back:
+      // focus falls back to <body>.
+      harness.controller.publishState({
+        ...listResult([
+          makeEntry({
+            id: "entry-10",
+            originalIndex: 10,
             decision: "known",
             known: true,
             knownByDecision: true,

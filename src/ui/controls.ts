@@ -90,6 +90,11 @@ export function bindControls(
   let reviewWasActive = false;
   let pendingFocus: PendingFocus | null = null;
   let focusIntent: PendingFocus | null = null;
+  // The node the intent's first application focused. Distinguishes "focus is
+  // on our own restored node" (intent must survive: the rebuild that destroys
+  // it has not happened yet) from "the user focused something else" (intent
+  // is stale and must be dropped).
+  let intentNode: HTMLElement | null = null;
 
   const captureFollowingWords = (clicked: HTMLButtonElement): string[] => {
     const article = clicked.closest("article");
@@ -126,8 +131,13 @@ export function bindControls(
       activeElement === document.body || activeElement === null || !activeElement.isConnected;
     // Focus is somewhere the user chose (not <body>): any remembered intent
     // is stale — drop it instead of keeping it for a later body-fallback.
+    // EXCEPTION: focus sitting on the very node the first application focused
+    // is OUR doing (the node is still attached because the rebuild has not
+    // happened yet). Dropping the intent there would lose the restore when
+    // an intermediate no-rebuild publish (e.g. a coverage refresh) lands
+    // between the action and the rebuild.
     if (!focusLost && pendingFocus === null) {
-      focusIntent = null;
+      if (focusIntent === null || activeElement !== intentNode) focusIntent = null;
       return;
     }
     const pending = pendingFocus ?? (focusLost ? focusIntent : null);
@@ -146,7 +156,25 @@ export function bindControls(
       normalizeWord(button.dataset.word ?? "") === wanted;
     const focusTarget = (target: HTMLElement): void => {
       target.focus();
-      if (restoring) focusIntent = null;
+      if (!restoring) {
+        if (document.activeElement === target) intentNode = target;
+        return;
+      }
+      // Restoring: spend the intent once the node the first application
+      // focused was destroyed by the rebuild — that rebuild is the restore's
+      // purpose, so one attempt is final even if focus() was dropped mid-
+      // attachment. Before that destruction (or when focus() has not landed
+      // yet), keep the intent so the next publish retries instead of losing
+      // focus to <body> permanently.
+      if (intentNode !== null && !intentNode.isConnected) {
+        intentNode = null;
+        focusIntent = null;
+        return;
+      }
+      if (document.activeElement === target) {
+        intentNode = null;
+        focusIntent = null;
+      }
     };
 
     for (const button of buttons) {
