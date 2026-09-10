@@ -1,4 +1,5 @@
-import { isKanaOnly, normalizeText, sentencePlain } from "./text";
+import { resolveEffectiveDecision, type AnkiWordStatus } from "./anki";
+import { canonicalWord, isKanaOnly, normalizeText, sentencePlain } from "./text";
 import type {
   Entry,
   EntryWithKnown,
@@ -25,17 +26,35 @@ export function applyKnownWords(
   entries: readonly Entry[],
   knownWords: ReadonlySet<string>,
   decisions: ReadonlyMap<string, WordDecision> = new Map(),
+  ankiStatuses: ReadonlyMap<string, AnkiWordStatus> = new Map(),
 ): EntryWithKnown[] {
+  const knownCanonical = new Set<string>();
+  for (const word of knownWords) knownCanonical.add(canonicalWord(word));
+  const decisionsCanonical = new Map<string, WordDecision>();
+  for (const [word, decision] of decisions) {
+    decisionsCanonical.set(canonicalWord(word), decision);
+  }
+  const ankiStatusesCanonical = new Map<string, AnkiWordStatus>();
+  for (const [word, status] of ankiStatuses) {
+    ankiStatusesCanonical.set(canonicalWord(word), status);
+  }
+
   return entries.map((entry) => {
-    const knownByMigaku = knownWords.has(entry.normalizedWord);
-    const local = decisions.get(entry.normalizedWord);
-    const knownByDecision = local?.status === "known";
+    const canonical = canonicalWord(entry.normalizedWord);
+    const knownByMigaku = knownCanonical.has(canonical);
+    const manualStatus = decisionsCanonical.get(canonical)?.status ?? null;
+    const ankiStatus = ankiStatusesCanonical.get(canonical) ?? null;
+    const effective = resolveEffectiveDecision(manualStatus, ankiStatus);
+    const knownByDecision = effective.source === "manual" && effective.decision === "known";
+    const knownByAnki = effective.source === "anki" && effective.decision === "known";
     return {
       ...entry,
-      known: knownByMigaku || knownByDecision,
+      known: knownByMigaku || knownByDecision || knownByAnki,
+      decision: effective.decision,
+      decisionSource: effective.source,
       knownByMigaku,
       knownByDecision,
-      decision: local?.status ?? "unreviewed",
+      knownByAnki,
     };
   });
 }
@@ -195,8 +214,9 @@ export function queryEntries(
   query: QueryState,
   window?: QueryWindow,
   decisions: ReadonlyMap<string, WordDecision> = new Map(),
+  ankiStatuses: ReadonlyMap<string, AnkiWordStatus> = new Map(),
 ): QueryResult {
-  const withKnown = applyKnownWords(entries, knownWords, decisions);
+  const withKnown = applyKnownWords(entries, knownWords, decisions, ankiStatuses);
   const knownCount = withKnown.reduce((count, entry) => count + (entry.known ? 1 : 0), 0);
   const filtered = filterEntries(withKnown, query);
   const sorted = sortEntries(filtered, query.sort);

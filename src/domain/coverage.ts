@@ -1,3 +1,4 @@
+import { resolveEffectiveDecision, type AnkiWordStatus } from "./anki";
 import { canonicalWord } from "./text";
 import type {
   CoverageStats,
@@ -20,6 +21,7 @@ export type DecisionMapSource =
 export function buildEffectiveKnownIndex(
   knownWords: ReadonlySet<string>,
   decisions: DecisionMapSource,
+  ankiStatuses: ReadonlyMap<string, AnkiWordStatus> = new Map(),
 ): EffectiveKnownLookup {
   const knownCanonical = new Set<string>();
   for (const word of knownWords) knownCanonical.add(canonicalWord(word));
@@ -28,9 +30,21 @@ export function buildEffectiveKnownIndex(
     const status = typeof value === "string" ? value : value.status;
     decisionsCanonical.set(canonicalWord(word), status);
   }
+  const ankiStatusesCanonical = new Map<string, AnkiWordStatus>();
+  for (const [word, status] of ankiStatuses) {
+    ankiStatusesCanonical.set(canonicalWord(word), status);
+  }
   return (normalizedWord: string): boolean => {
     const canonical = canonicalWord(normalizedWord);
-    return knownCanonical.has(canonical) || decisionsCanonical.get(canonical) === "known";
+    const effective = resolveEffectiveDecision(
+      decisionsCanonical.get(canonical) ?? null,
+      ankiStatusesCanonical.get(canonical) ?? null,
+    );
+    return (
+      knownCanonical.has(canonical) ||
+      (effective.source === "manual" && effective.decision === "known") ||
+      (effective.source === "anki" && effective.decision === "known")
+    );
   };
 }
 
@@ -44,8 +58,9 @@ export function computeCoverage(
   knownWords: ReadonlySet<string>,
   decisions: DecisionMapSource,
   targets: readonly number[] = DEFAULT_COVERAGE_TARGETS,
+  ankiStatuses: ReadonlyMap<string, AnkiWordStatus> = new Map(),
 ): CoverageStats {
-  const isEffectivelyKnown = buildEffectiveKnownIndex(knownWords, decisions);
+  const isEffectivelyKnown = buildEffectiveKnownIndex(knownWords, decisions, ankiStatuses);
 
   let totalUniqueWords = 0;
   let knownUniqueWords = 0;

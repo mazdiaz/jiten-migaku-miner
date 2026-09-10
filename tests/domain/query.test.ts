@@ -6,6 +6,7 @@ import {
   queryEntries,
   sortEntries,
 } from "../../src/domain/query";
+import { computeCoverage } from "../../src/domain/coverage";
 import type { Entry, EntryWithKnown, QueryState, WordDecision } from "../../src/domain/types";
 
 const entries: Entry[] = Array.from({ length: 150 }, (_, originalIndex) => ({
@@ -68,6 +69,32 @@ describe("applyKnownWords", () => {
       expect.objectContaining({ id: "new", known: false }),
     ]);
     expect(source[0]).not.toHaveProperty("known");
+  });
+
+  it("uses Anki status only when no manual decision exists", () => {
+    const [entry] = applyKnownWords(
+      [entries[0]!],
+      new Set(),
+      new Map(),
+      new Map([[entries[0]!.normalizedWord, "known"]]),
+    );
+    expect(entry).toMatchObject({
+      known: true,
+      decision: "known",
+      decisionSource: "anki",
+      knownByDecision: false,
+      knownByAnki: true,
+    });
+  });
+
+  it("does not leak Anki Known through manual Mined", () => {
+    const [entry] = applyKnownWords(
+      [entries[0]!],
+      new Set(),
+      new Map([[entries[0]!.normalizedWord, { normalizedWord: entries[0]!.normalizedWord, status: "mined", updatedAt: "now" }]]),
+      new Map([[entries[0]!.normalizedWord, "known"]]),
+    );
+    expect(entry).toMatchObject({ known: false, decision: "mined", decisionSource: "manual" });
   });
 });
 
@@ -327,6 +354,14 @@ describe("queryEntries", () => {
     expect(result.items).toHaveLength(25);
     expect(result.totalEntries).toBe(entries.length);
     expect(result.startIndex).toBe(101);
+  });
+
+  it("keeps query and coverage knownness identical", () => {
+    const anki = new Map([[entries[0]!.normalizedWord, "known" as const]]);
+    const query = queryState();
+    const result = queryEntries(entries.slice(0, 1), new Set(), { ...query, pageSize: "all" }, undefined, new Map(), anki);
+    const coverage = computeCoverage(entries.slice(0, 1), new Set(), new Map(), undefined, anki);
+    expect(result.knownCount).toBe(coverage.knownUniqueWords);
   });
 });
 
