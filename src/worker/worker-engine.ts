@@ -1,3 +1,4 @@
+import { type AnkiWordStatus, type DecisionSource, resolveEffectiveDecision } from "../domain/anki";
 import { buildEffectiveKnownIndex, computeCoverage } from "../domain/coverage";
 import { parseJitenCsv } from "../domain/import";
 import { paginateEntries } from "../domain/query";
@@ -10,6 +11,7 @@ import {
 } from "../domain/text";
 import type { Entry, EntryWithKnown, QueryState, WordDecisionStatus } from "../domain/types";
 import {
+  type AnkiPreviewMatchRequest,
   type CoverageRequest,
   type QueryRequest,
   type SendResponse,
@@ -45,6 +47,7 @@ interface WindowCache {
   orderedIndexes: number[];
   knownByMigakuByIndex: Map<number, boolean>;
   decisionByIndex: Map<number, WordDecisionStatus | "unreviewed">;
+  sourceByIndex: Map<number, DecisionSource>;
   knownCount: number;
 }
 
@@ -115,6 +118,14 @@ function cacheSearchFields(entry: Entry): SearchFields {
   };
 }
 
+function canonicalAnkiStatuses(
+  statuses: ReadonlyArray<[string, AnkiWordStatus]>,
+): Map<string, AnkiWordStatus> {
+  const canonical = new Map<string, AnkiWordStatus>();
+  for (const [word, status] of statuses) canonical.set(canonicalWord(word), status);
+  return canonical;
+}
+
 function yieldsToWorker(): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, 0);
@@ -125,11 +136,15 @@ function windowCacheSignature(
   request: QueryRequest,
   knownWords: ReadonlySet<string>,
   decisions: ReadonlyMap<string, WordDecisionStatus>,
+  ankiStatuses: ReadonlyMap<string, AnkiWordStatus>,
 ): string {
   return JSON.stringify({
     datasetId: request.datasetId,
     knownWords: [...knownWords].sort(),
     decisions: [...decisions].sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0)),
+    ankiStatuses: [...ankiStatuses].sort(([left], [right]) =>
+      left < right ? -1 : left > right ? 1 : 0,
+    ),
     decision: request.query.decision,
     search: request.query.search,
     hideKnown: request.query.hideKnown,
@@ -343,25 +358,29 @@ export class WorkerEngine {
 
       const knownWords = new Set(request.knownWords);
       const decisions = new Map(request.decisions);
-      const signature = windowCacheSignature(request, knownWords, decisions);
+      const ankiStatuses = canonicalAnkiStatuses(request.ankiStatuses);
+      const signature = windowCacheSignature(request, knownWords, decisions, ankiStatuses);
       const cache = this.windowCache;
 
       let orderedIndexes: number[];
       let knownByMigakuByIndex: Map<number, boolean>;
       let decisionByIndex: Map<number, WordDecisionStatus | "unreviewed">;
+      let sourceByIndex: Map<number, DecisionSource>;
       let knownCount: number;
 
       if (cache !== null && cache.signature === signature) {
         orderedIndexes = cache.orderedIndexes;
         knownByMigakuByIndex = cache.knownByMigakuByIndex;
         decisionByIndex = cache.decisionByIndex;
+        sourceByIndex = cache.sourceByIndex;
         knownCount = cache.knownCount;
       } else {
-        const scan = await this.scanDataset(request, dataset, knownWords, decisions);
+        const scan = await this.scanDataset(request, dataset, knownWords, decisions, ankiStatuses);
         if (scan === null || this.isCancelled(request.requestId)) return;
         orderedIndexes = scan.orderedIndexes;
         knownByMigakuByIndex = scan.knownByMigakuByIndex;
         decisionByIndex = scan.decisionByIndex;
+        sourceByIndex = scan.sourceByIndex;
         knownCount = scan.knownCount;
         if (generation !== this.datasetGeneration) return;
         this.windowCache = {
@@ -369,6 +388,7 @@ export class WorkerEngine {
           orderedIndexes,
           knownByMigakuByIndex,
           decisionByIndex,
+          sourceByIndex,
           knownCount,
         };
       }
@@ -376,13 +396,17 @@ export class WorkerEngine {
       const entryWithMetadata = (entryIndex: number, value: Entry): EntryWithKnown => {
         const knownByMigaku = knownByMigakuByIndex.get(entryIndex) === true;
         const decision = decisionByIndex.get(entryIndex) ?? "unreviewed";
-        const knownByDecision = decision === "known";
+        const source = sourceByIndex.get(entryIndex) ?? null;
+        const knownByDecision = source === "manual" && decision === "known";
+        const knownByAnki = source === "anki" && decision === "known";
         return {
           ...value,
-          known: knownByMigaku || knownByDecision,
+          known: knownByMigaku || knownByDecision || knownByAnki,
           knownByMigaku,
           knownByDecision,
+          knownByAnki,
           decision,
+          decisionSource: source,
         };
       };
 
@@ -489,7 +513,13 @@ export class WorkerEngine {
       // responsive, cancellation is honoured before and after the heavy work,
       // and a swapped dataset generation never receives a published result.
       if (await this.chunkFinished(request.requestId)) return;
-      const stats = computeCoverage(dataset.entries, knownWords, decisions, request.targets);
+      const stats = computeCoverage(
+        dataset.entries,
+        knownWords,
+        decisions,
+        request.targets,
+        new Map(request.ankiStatuses),
+      );
       if (await this.chunkFinished(request.requestId)) return;
       if (this.isCancelled(request.requestId)) return;
       if (generation !== this.datasetGeneration) return;
@@ -507,19 +537,83 @@ export class WorkerEngine {
     }
   }
 
+  async previewAnkiMatch(request: AnkiPreviewMatchRequest, send: SendResponse): Promise<void> {
+    this.ensureUsable();
+    this.activeOperations.add(request.requestId);
+    try {
+      if (this.isCancelled(request.requestId)) return;
+      const generation = this.datasetGeneration;
+      const dataset = this.datasets.get(request.datasetId);
+      if (dataset === undefined) {
+        throw new WorkerEngineError("dataset-not-found", `Dataset not found: ${request.datasetId}`);
+      }
+      if (!dataset.complete) {
+        throw new WorkerEngineError(
+          "dataset-not-ready",
+          `Dataset is not complete: ${request.datasetId}`,
+        );
+      }
+      this.refreshDatasetRecency(request.datasetId, dataset);
+
+      const datasetWords = new Set<string>();
+      for (const entry of dataset.entries) datasetWords.add(canonicalWord(entry.normalizedWord));
+      const decisions = new Map<string, WordDecisionStatus>();
+      for (const [word, status] of request.decisions) decisions.set(canonicalWord(word), status);
+      const ankiStatuses = canonicalAnkiStatuses(request.ankiStatuses);
+
+      let matchedWords = 0;
+      let knownCount = 0;
+      let minedCount = 0;
+      let manualProtected = 0;
+      let processed = 0;
+      for (const [word, status] of ankiStatuses) {
+        processed += 1;
+        if (datasetWords.has(word)) {
+          matchedWords += 1;
+          const effective = resolveEffectiveDecision(decisions.get(word) ?? null, status);
+          if (effective.source === "manual") manualProtected += 1;
+          else if (effective.decision === "known") knownCount += 1;
+          else if (effective.decision === "mined") minedCount += 1;
+        }
+        if (
+          processed % WORKER_IMPORT_CHUNK_SIZE === 0 &&
+          (await this.chunkFinished(request.requestId))
+        )
+          return;
+      }
+      if (await this.chunkFinished(request.requestId)) return;
+      if (this.isCancelled(request.requestId)) return;
+      if (generation !== this.datasetGeneration) return;
+
+      send({
+        protocolVersion: WORKER_PROTOCOL_VERSION,
+        type: "anki-preview-result",
+        requestId: request.requestId,
+        datasetId: request.datasetId,
+        result: { matchedWords, knownCount, minedCount, manualProtected },
+      });
+    } finally {
+      this.activeOperations.delete(request.requestId);
+      this.cancelledRequests.delete(request.requestId);
+    }
+  }
+
   protected async scanDataset(
     request: QueryRequest,
     dataset: DatasetState,
     knownWords: ReadonlySet<string>,
     decisions: ReadonlyMap<string, WordDecisionStatus>,
+    ankiStatuses: ReadonlyMap<string, AnkiWordStatus> = new Map(),
   ): Promise<{
     orderedIndexes: number[];
     knownByMigakuByIndex: Map<number, boolean>;
     decisionByIndex: Map<number, WordDecisionStatus | "unreviewed">;
+    sourceByIndex: Map<number, DecisionSource>;
     knownCount: number;
   } | null> {
     const knownByMigakuByIndex = new Map<number, boolean>();
     const decisionByIndex = new Map<number, WordDecisionStatus | "unreviewed">();
+    const sourceByIndex = new Map<number, DecisionSource>();
     const matching = new Set<number>();
     // Canonical match key: lowercase(normalizeText(word)). Cache fields already
     // store entries in this form, so lookups below compare canonical to canonical.
@@ -530,7 +624,7 @@ export class WorkerEngine {
     for (const word of knownWords) knownLower.add(canonicalWord(word));
     const decisionsLower = new Map<string, WordDecisionStatus>();
     for (const [word, status] of decisions) decisionsLower.set(canonicalWord(word), status);
-    const isEffectivelyKnown = buildEffectiveKnownIndex(knownWords, decisions);
+    const isEffectivelyKnown = buildEffectiveKnownIndex(knownWords, decisions, ankiStatuses);
     const includeLower =
       request.includeNormalizedWords === undefined
         ? null
@@ -547,10 +641,15 @@ export class WorkerEngine {
       if (value === undefined || fields === undefined) continue;
 
       const knownByMigaku = knownLower.has(fields.normalizedWord);
-      const decision = decisionsLower.get(fields.normalizedWord) ?? "unreviewed";
+      const effective = resolveEffectiveDecision(
+        decisionsLower.get(fields.normalizedWord) ?? null,
+        ankiStatuses.get(fields.normalizedWord) ?? null,
+      );
+      const decision = effective.decision;
       const known = isEffectivelyKnown(fields.normalizedWord);
       knownByMigakuByIndex.set(index, knownByMigaku);
       decisionByIndex.set(index, decision);
+      sourceByIndex.set(index, effective.source);
       if (known) knownCount += 1;
 
       const searchMatches =
@@ -594,6 +693,7 @@ export class WorkerEngine {
       orderedIndexes,
       knownByMigakuByIndex,
       decisionByIndex,
+      sourceByIndex,
       knownCount,
     };
   }

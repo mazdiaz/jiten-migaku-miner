@@ -35,12 +35,13 @@ function queryState(overrides: Partial<QueryState> = {}): QueryState {
 
 function queryRequest(overrides: Partial<QueryRequest> = {}): QueryRequest {
   return {
-    protocolVersion: 2,
+    protocolVersion: 3,
     type: "query",
     requestId: "query-1",
     datasetId: "dataset-1",
     knownWords: [],
     decisions: [],
+    ankiStatuses: [],
     query: queryState(),
     ...overrides,
   };
@@ -89,7 +90,7 @@ describe("WorkerEngine", () => {
     );
     expect(chunks).toHaveLength(2);
     expect(chunks[0]).toMatchObject({
-      protocolVersion: 2,
+      protocolVersion: 3,
       requestId: "import-1",
       type: "import-chunk",
       kind: "jiten",
@@ -100,7 +101,7 @@ describe("WorkerEngine", () => {
     expect(chunks[0]?.entries[0]?.id).toBe("entry-0");
     expect(chunks[1]?.entries[0]?.id).toBe("entry-2000");
     expect(responses.at(-1)).toMatchObject({
-      protocolVersion: 2,
+      protocolVersion: 3,
       type: "import-complete",
       requestId: "import-1",
       kind: "jiten",
@@ -156,7 +157,7 @@ describe("WorkerEngine", () => {
         : [],
     ).toEqual(["entry-2", "entry-3"]);
     expect(pageResponses[0]).toMatchObject({
-      protocolVersion: 2,
+      protocolVersion: 3,
       requestId: "page-1",
       type: "query-result",
     });
@@ -176,7 +177,7 @@ describe("WorkerEngine", () => {
         : [],
     ).toEqual(["entry-2", "entry-3"]);
     expect(windowResponses[0]).toMatchObject({
-      protocolVersion: 2,
+      protocolVersion: 3,
       requestId: "window-1",
       type: "query-result",
       result: { totalEntries: 5, windowed: true },
@@ -553,6 +554,58 @@ describe("WorkerEngine", () => {
       ["entry-5", false, false, false, "unreviewed"],
     ]);
     expect(result?.knownCount).toBe(3);
+  });
+
+  it("filters and decorates Anki Known without leaking manual overrides", async () => {
+    const engine = new WorkerEngine();
+    engine.loadStart("dataset-1", "load-1");
+    engine.loadChunk("dataset-1", 0, [entry(0, "word")], "load-1");
+    engine.loadComplete("dataset-1", "load-1");
+    const responses: WorkerResponse[] = [];
+    await engine.query(
+      {
+        protocolVersion: 3,
+        type: "query",
+        requestId: "query-1",
+        datasetId: "dataset-1",
+        knownWords: [],
+        decisions: [],
+        ankiStatuses: [["word", "known"]],
+        query: queryState(),
+      },
+      (response) => responses.push(response),
+    );
+    expect(responses[0]).toMatchObject({ type: "query-result", result: { knownCount: 1 } });
+    expect(responses[0]).toMatchObject({
+      result: { items: [{ decision: "known", decisionSource: "anki", knownByAnki: true }] },
+    });
+  });
+
+  it("counts unique canonical preview matches and protects manual decisions", async () => {
+    const engine = new WorkerEngine();
+    engine.loadStart("dataset-1", "load-1");
+    engine.loadChunk("dataset-1", 0, [entry(0, "word")], "load-1");
+    engine.loadComplete("dataset-1", "load-1");
+    const responses: WorkerResponse[] = [];
+    await engine.previewAnkiMatch(
+      {
+        protocolVersion: 3,
+        type: "anki-preview-match",
+        requestId: "preview-1",
+        datasetId: "dataset-1",
+        knownWords: [],
+        decisions: [["word", "mined"]],
+        ankiStatuses: [
+          ["WORD", "known"],
+          ["word", "mined"],
+        ],
+      },
+      (response) => responses.push(response),
+    );
+    expect(responses[0]).toMatchObject({
+      type: "anki-preview-result",
+      result: { matchedWords: 1, knownCount: 0, minedCount: 0, manualProtected: 1 },
+    });
   });
 
   it("invalidates the window cache when decisions change", async () => {

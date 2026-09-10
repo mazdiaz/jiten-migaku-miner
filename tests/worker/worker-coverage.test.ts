@@ -28,12 +28,13 @@ function entry(index: number, word = `word-${index}`, occurrences = index): Entr
 
 function coverageRequest(overrides: Partial<CoverageRequest> = {}): CoverageRequest {
   return {
-    protocolVersion: 2,
+    protocolVersion: 3,
     type: "coverage",
     requestId: "coverage-1",
     datasetId: "dataset-1",
     knownWords: [],
     decisions: [],
+    ankiStatuses: [],
     ...overrides,
   };
 }
@@ -55,12 +56,13 @@ function queryState(overrides: Partial<QueryState> = {}): QueryState {
 
 function queryRequest(overrides: Partial<QueryRequest> = {}): QueryRequest {
   return {
-    protocolVersion: 2,
+    protocolVersion: 3,
     type: "query",
     requestId: "query-1",
     datasetId: "dataset-1",
     knownWords: [],
     decisions: [],
+    ankiStatuses: [],
     query: queryState(),
     ...overrides,
   };
@@ -77,12 +79,13 @@ function loadDataset(engine: WorkerEngine, datasetId: string, entries: Entry[]):
 
 describe("worker coverage protocol", () => {
   const validCoverageRequest: WorkerRequest = {
-    protocolVersion: 2,
+    protocolVersion: 3,
     type: "coverage",
     requestId: "coverage-1",
     datasetId: "dataset-1",
     knownWords: ["猫"],
     decisions: [["犬", "known"]],
+    ankiStatuses: [],
     targets: [98, 99],
   };
 
@@ -124,12 +127,13 @@ describe("worker coverage protocol", () => {
     const responses: WorkerResponse[] = [];
     await dispatchWorkerRequest(
       {
-        protocolVersion: 2,
+        protocolVersion: 3,
         type: "coverage",
         requestId: "cov-dispatch",
         datasetId: "dataset-1",
         knownWords: ["alpha"],
         decisions: [],
+        ankiStatuses: [],
       },
       engine,
       (response) => responses.push(response),
@@ -142,7 +146,7 @@ describe("worker coverage protocol", () => {
     );
     expect(responses).toEqual([
       {
-        protocolVersion: 2,
+        protocolVersion: 3,
         type: "coverage-result",
         requestId: "cov-dispatch",
         datasetId: "dataset-1",
@@ -156,12 +160,13 @@ describe("worker coverage protocol", () => {
 
     await dispatchWorkerRequest(
       {
-        protocolVersion: 2,
+        protocolVersion: 3,
         type: "coverage",
         requestId: "cov-missing",
         datasetId: "missing",
         knownWords: [],
         decisions: [],
+        ankiStatuses: [],
       },
       new WorkerEngine(),
       (response) => responses.push(response),
@@ -169,7 +174,7 @@ describe("worker coverage protocol", () => {
 
     expect(responses).toEqual([
       {
-        protocolVersion: 2,
+        protocolVersion: 3,
         type: "error",
         requestId: "cov-missing",
         code: "dataset-not-found",
@@ -201,7 +206,7 @@ describe("worker engine coverage", () => {
     const expected = computeCoverage(source, new Set(knownWords), new Map(decisions), targets);
     expect(responses).toHaveLength(1);
     expect(responses[0]).toMatchObject({
-      protocolVersion: 2,
+      protocolVersion: 3,
       type: "coverage-result",
       requestId: "cov-1",
       datasetId: "dataset-1",
@@ -260,6 +265,55 @@ describe("worker engine coverage", () => {
     expect(before?.coveragePercent).toBe(0);
     expect(after?.knownUniqueWords).toBe(2);
     expect(after?.coveragePercent).toBe(80);
+  });
+
+  it("passes request Anki statuses into coverage computation", async () => {
+    const engine = new WorkerEngine();
+    const source = [entry(0, "alpha", 50), entry(1, "beta", 30)];
+    loadDataset(engine, "dataset-1", source);
+
+    const responses: WorkerResponse[] = [];
+    await engine.coverage(
+      coverageRequest({ requestId: "anki-cov", ankiStatuses: [["BETA", "known"]] }),
+      (response) => responses.push(response),
+    );
+
+    const result = responses[0]?.type === "coverage-result" ? responses[0].result : null;
+    expect(result).toMatchObject({
+      knownUniqueWords: 1,
+      knownTrackedOccurrences: 30,
+      coveragePercent: 37.5,
+    });
+  });
+
+  it("dispatches Anki preview requests to the engine", async () => {
+    const engine = new WorkerEngine();
+    loadDataset(engine, "dataset-1", [entry(0, "word")]);
+    const responses: WorkerResponse[] = [];
+
+    await dispatchWorkerRequest(
+      {
+        protocolVersion: 3,
+        type: "anki-preview-match",
+        requestId: "preview-dispatch",
+        datasetId: "dataset-1",
+        knownWords: [],
+        decisions: [],
+        ankiStatuses: [["word", "known"]],
+      },
+      engine,
+      (response) => responses.push(response),
+    );
+
+    expect(responses).toEqual([
+      {
+        protocolVersion: 3,
+        type: "anki-preview-result",
+        requestId: "preview-dispatch",
+        datasetId: "dataset-1",
+        result: { matchedWords: 1, knownCount: 1, minedCount: 0, manualProtected: 0 },
+      },
+    ]);
   });
 
   it("changes results when decisions change", async () => {

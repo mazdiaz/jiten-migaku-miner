@@ -57,6 +57,9 @@ export async function dispatchWorkerRequest(
       case "coverage":
         await engine.coverage(request, send);
         return;
+      case "anki-preview-match":
+        await engine.previewAnkiMatch(request, send);
+        return;
       case "cancel":
         engine.cancel(request.requestId);
         return;
