@@ -17,17 +17,22 @@ async function waitForStoredView(
           const db = open.result;
           const tx = db.transaction("preferences", "readonly");
           const get = tx.objectStore("preferences").get("current");
+          let matches = false;
           get.onsuccess = () => {
             const record = get.result as
               | { view?: { sentenceSize?: string; density?: string } }
               | undefined;
-            resolve(
+            matches =
               record?.view?.sentenceSize === want.sentenceSize &&
-                record?.view?.density === want.density,
-            );
+              record?.view?.density === want.density;
           };
-          get.onerror = () => resolve(false);
-          tx.oncomplete = () => db.close();
+          get.onerror = () => {
+            matches = false;
+          };
+          tx.oncomplete = () => {
+            db.close();
+            resolve(matches);
+          };
         };
         open.onerror = () => resolve(false);
       });
