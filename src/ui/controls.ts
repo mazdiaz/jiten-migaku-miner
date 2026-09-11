@@ -1,5 +1,6 @@
 import type { AppState, MinerController } from "../app/state";
 import { DEFAULT_QUERY } from "../app/state";
+import type { AnkiSyncConfig } from "../domain/anki";
 import { canonicalWord } from "../domain/text";
 import type { QueryState, ViewState, WordDecisionStatus } from "../domain/types";
 import { createFileSource } from "../platform/file-source";
@@ -15,6 +16,7 @@ export interface ControlsOptions {
   confirmClear?: (message: string) => boolean;
   confirmQueueClear?: (message: string) => boolean;
   confirmRestore?: (message: string) => boolean;
+  confirmAnkiClear?: (message: string) => boolean;
   downloadBackup?: (filename: string, contents: string) => void;
   onSearch?: (value: string) => void;
   onToggleImports?: () => void;
@@ -47,6 +49,35 @@ function parseMinOccurrences(value: string): number {
 
 function parsePageSize(value: string): Partial<QueryState> {
   return { pageSize: value === "all" ? "all" : Number(value) };
+}
+
+const ALL_ANKI_DECKS_VALUE = "__all-decks__";
+
+function savedAnkiDeckValue(saved: Readonly<AppState["anki"]>): string | null {
+  if (
+    saved.deckScopeKind === "all-decks" ||
+    (saved.deckScopeKind === null && saved.deckScopeLabel === "All decks")
+  )
+    return ALL_ANKI_DECKS_VALUE;
+  return saved.deckScopeLabel;
+}
+
+function populateSelect(
+  select: HTMLSelectElement,
+  options: readonly string[],
+  allDecks = false,
+): void {
+  const previous = select.value;
+  select.replaceChildren();
+  const values = allDecks ? [ALL_ANKI_DECKS_VALUE, ...options] : [...options];
+  for (const value of values) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = allDecks && value === ALL_ANKI_DECKS_VALUE ? "All decks" : value;
+    select.appendChild(option);
+  }
+  if (values.includes(previous)) select.value = previous;
+  else if (values[0] !== undefined) select.value = values[0];
 }
 
 function isTypingTarget(target: EventTarget | null): boolean {
@@ -82,6 +113,8 @@ export function bindControls(
   const confirmClear = options.confirmClear ?? ((message: string) => globalThis.confirm(message));
   const confirmQueueClear =
     options.confirmQueueClear ?? ((message: string) => globalThis.confirm(message));
+  const confirmAnkiClear =
+    options.confirmAnkiClear ?? ((message: string) => globalThis.confirm(message));
   const onSearch = options.onSearch;
   const onToggleImports = options.onToggleImports;
   const onToggleAdvanced = options.onToggleAdvanced;
@@ -90,6 +123,7 @@ export function bindControls(
   let reviewWasActive = false;
   let pendingFocus: PendingFocus | null = null;
   let focusIntent: PendingFocus | null = null;
+  let ankiFieldsRequest = 0;
   // The node the intent's first application focused. Distinguishes "focus is
   // on our own restored node" (intent must survive: the rebuild that destroys
   // it has not happened yet) from "the user focused something else" (intent
@@ -298,6 +332,78 @@ export function bindControls(
     });
   };
 
+  const loadAnkiFields = (noteType: string, preferredField: string | null = null): void => {
+    const request = ++ankiFieldsRequest;
+    if (noteType === "") {
+      populateSelect(dom.ankiTargetField, []);
+      return;
+    }
+    void controller
+      .loadAnkiModelFields(noteType)
+      .then((fields) => {
+        if (request !== ankiFieldsRequest) return;
+        populateSelect(dom.ankiTargetField, [...new Set(fields)]);
+        if (preferredField !== null && fields.includes(preferredField)) {
+          dom.ankiTargetField.value = preferredField;
+        }
+      })
+      .catch(() => {
+        // Controller publishes typed errors; retain last usable field list.
+      });
+  };
+
+  const seedAnkiSetup = (saved: Readonly<AppState["anki"]> | null): void => {
+    if (saved === null) return;
+    const savedDeck = savedAnkiDeckValue(saved);
+    if (savedDeck !== null) {
+      populateSelect(
+        dom.ankiDeckScope,
+        savedDeck === ALL_ANKI_DECKS_VALUE ? [] : [savedDeck],
+        true,
+      );
+      dom.ankiDeckScope.value = savedDeck;
+    }
+    if (saved.noteType !== null) {
+      populateSelect(dom.ankiNoteType, [saved.noteType]);
+      dom.ankiNoteType.value = saved.noteType;
+    }
+    if (saved.targetField !== null) {
+      populateSelect(dom.ankiTargetField, [saved.targetField]);
+      dom.ankiTargetField.value = saved.targetField;
+    }
+  };
+
+  const connectAndPopulateAnkiSetup = (saved: Readonly<AppState["anki"]> | null): void => {
+    dom.ankiSetup.dataset.editing = "true";
+    void controller
+      .connectAnki()
+      .then(({ decks, models }) => {
+        populateSelect(dom.ankiDeckScope, [...new Set(decks)], true);
+        populateSelect(dom.ankiNoteType, [...new Set(models)]);
+        const savedDeck = saved === null ? null : savedAnkiDeckValue(saved);
+        if (savedDeck !== null) {
+          if ([...dom.ankiDeckScope.options].some((option) => option.value === savedDeck)) {
+            dom.ankiDeckScope.value = savedDeck;
+          }
+        }
+        if (
+          saved?.noteType !== null &&
+          saved?.noteType !== undefined &&
+          models.includes(saved.noteType)
+        ) {
+          dom.ankiNoteType.value = saved.noteType;
+        }
+        dom.ankiSetup.hidden = false;
+        const preferredField =
+          saved?.noteType === dom.ankiNoteType.value ? (saved.targetField ?? null) : null;
+        loadAnkiFields(dom.ankiNoteType.value, preferredField);
+      })
+      .catch(() => {
+        // Controller publishes typed errors; controls only prevent an unhandled
+        // rejection and preserve existing setup values.
+      });
+  };
+
   // Moving focus to the results heading after a page change gives keyboard
   // users a stable anchor just above the refreshed list. scroll-margin-top on
   // the heading clears the sticky toolbar; focus uses preventScroll so it does
@@ -335,6 +441,59 @@ export function bindControls(
   // deliberately never touched so Mined/Later/Skip stay visible.
   recorder.add(dom.coverageFocus, "click", () => {
     controller.updateQuery({ hideKnown: true, sort: "occ-desc", page: 1 });
+  });
+
+  recorder.add(dom.ankiConnect, "click", () => {
+    connectAndPopulateAnkiSetup(null);
+  });
+
+  recorder.add(dom.ankiNoteType, "change", () => {
+    loadAnkiFields(dom.ankiNoteType.value);
+  });
+
+  recorder.add(dom.ankiCheckConfig, "click", () => {
+    const deckScope: AnkiSyncConfig["deckScope"] =
+      dom.ankiDeckScope.value === ALL_ANKI_DECKS_VALUE
+        ? { kind: "all-decks" }
+        : { kind: "deck", name: dom.ankiDeckScope.value };
+    void controller
+      .validateAndSaveAnkiConfig({
+        deckScope,
+        noteType: dom.ankiNoteType.value,
+        targetField: dom.ankiTargetField.value,
+      })
+      .then(() => {
+        delete dom.ankiSetup.dataset.editing;
+        dom.ankiSetup.hidden = true;
+      })
+      .catch(() => {});
+  });
+
+  recorder.add(dom.ankiSyncNow, "click", () => {
+    void controller.previewAnkiSync().catch(() => {});
+  });
+  recorder.add(dom.ankiApply, "click", () => {
+    void controller.applyAnkiSync().catch(() => {});
+  });
+  recorder.add(dom.ankiCancelPreview, "click", () => controller.cancelAnkiSyncPreview());
+  recorder.add(dom.ankiSettings, "click", () => {
+    const saved = latest?.anki.configured === true ? latest.anki : null;
+    seedAnkiSetup(saved);
+    dom.ankiSetup.dataset.editing = "true";
+    dom.ankiSetup.hidden = false;
+    dom.ankiDeckScope.focus();
+    connectAndPopulateAnkiSetup(saved);
+  });
+  recorder.add(dom.ankiClear, "click", () => {
+    if (confirmAnkiClear("Clear saved Anki sync data?")) {
+      void controller
+        .clearAnkiSyncData()
+        .then(() => {
+          delete dom.ankiSetup.dataset.editing;
+          dom.ankiSetup.hidden = true;
+        })
+        .catch(() => {});
+    }
   });
 
   bindSearch(dom.stickySearch);
