@@ -37,6 +37,42 @@
           <div id="knownStatus" class="file-status optional">Optional · no list loaded</div>
         </div>
       </div>
+      <section id="ankiSection" class="anki-section" aria-label="Anki Sync">
+        <h3>Anki Sync</h3>
+        <p id="ankiDescription">Automatically classify words from your Anki collection.</p>
+        <p id="ankiStatusLine" class="anki-status" hidden></p>
+        <p id="ankiError" class="anki-error" role="alert" hidden></p>
+        <button id="ankiConnect" type="button" class="anki-primary">Connect to Anki</button>
+        <div id="ankiSetup" class="anki-setup" hidden>
+          <label class="control">
+            <span>Deck scope</span>
+            <select id="ankiDeckScope"></select>
+          </label>
+          <label class="control">
+            <span>Note type</span>
+            <select id="ankiNoteType"></select>
+          </label>
+          <label class="control">
+            <span>Target word field</span>
+            <select id="ankiTargetField"></select>
+          </label>
+          <button id="ankiCheckConfig" type="button" class="anki-primary">Check configuration</button>
+        </div>
+        <div id="ankiActions" class="anki-actions" hidden>
+          <button id="ankiSyncNow" type="button" class="anki-primary">Sync from Anki</button>
+          <button id="ankiSettings" type="button" class="anki-secondary">Settings</button>
+          <button id="ankiClear" type="button" class="anki-danger">Clear Anki sync data…</button>
+        </div>
+        <div id="ankiPreview" class="anki-preview" hidden>
+          <h4>Anki Sync Preview</h4>
+          <p id="ankiPreviewCounts"></p>
+          <p id="ankiPreviewWarning" class="anki-warning" role="alert" hidden></p>
+          <div class="anki-preview-actions">
+            <button id="ankiApply" type="button" class="anki-primary">Apply Sync</button>
+            <button id="ankiCancelPreview" type="button" class="anki-secondary">Cancel</button>
+          </div>
+        </div>
+      </section>
       <fieldset class="data-area">
         <legend>Data</legend>
         <div class="clear-row">
@@ -50,7 +86,7 @@
           <span id="backupStatus" class="clear-note" aria-live="polite"></span>
           <span id="backupFreshness" class="clear-note backup-freshness" title="Exporting does not guarantee the downloaded file was kept."></span>
         </div>
-        <p class="data-note">Saved locally in this browser. Backups contain your known-word list, decisions, and preferences — not Jiten datasets or the session queue. Keep your original CSV files — they are not included in any export.</p>
+        <p class="data-note">Saved locally in this browser. Backups contain your known-word list, decisions, preferences, and Anki sync data — not Jiten datasets or the session queue. Keep your original CSV files — they are not included in any export.</p>
       </fieldset>
       <div id="errorBox" class="error-box" role="alert" hidden></div>
     </section>

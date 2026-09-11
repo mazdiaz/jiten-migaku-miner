@@ -127,6 +127,130 @@ h1 {
   color: var(--subtle);
 }
 
+.anki-section {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-2);
+}
+
+.anki-section h3,
+.anki-section h4 {
+  margin: 0;
+}
+
+.anki-section h3 {
+  font-size: 1rem;
+}
+
+.anki-section h4 {
+  color: var(--muted);
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.anki-section p {
+  margin: 0;
+}
+
+#ankiDescription,
+.anki-status {
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.anki-setup,
+.anki-actions,
+.anki-preview-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: end;
+}
+
+.anki-setup {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+}
+
+.anki-setup[hidden],
+.anki-actions[hidden],
+.anki-preview[hidden] {
+  display: none;
+}
+
+.anki-primary,
+.anki-secondary,
+.anki-danger {
+  min-height: 38px;
+  padding: 7px 11px;
+  border: 1px solid var(--border-strong);
+  border-radius: 9px;
+  background: var(--surface-3);
+  color: var(--text);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.anki-primary {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.anki-primary:hover:not(:disabled),
+.anki-secondary:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.anki-danger {
+  color: var(--danger);
+}
+
+.anki-danger:hover:not(:disabled) {
+  border-color: var(--danger);
+}
+
+.anki-primary:disabled,
+.anki-secondary:disabled,
+.anki-danger:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.anki-preview {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  background: var(--accent-soft);
+}
+
+#ankiPreviewCounts {
+  color: var(--text);
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.anki-warning,
+.anki-error {
+  padding: 9px 11px;
+  border: 1px solid rgba(255, 155, 155, 0.35);
+  border-radius: 9px;
+  background: var(--danger-bg);
+  color: var(--danger);
+  font-size: 0.85rem;
+}
+
+.anki-error {
+  margin-top: 0;
+}
+
 .file-picker {
   width: fit-content;
   margin-top: 4px;
@@ -718,6 +842,9 @@ body.advanced-open #resultsHeading {
   .import-grid {
     grid-template-columns: 1fr;
   }
+  .anki-setup {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
   .sticky-row-1 {
     grid-template-columns: minmax(0, 1fr) auto auto auto;
   }
@@ -744,6 +871,9 @@ body.advanced-open #resultsHeading {
   }
   .sticky-title {
     display: none;
+  }
+  .anki-setup {
+    grid-template-columns: 1fr;
   }
   .sticky-row-1 {
     grid-template-columns: minmax(0, 1fr) auto auto;

@@ -2,6 +2,7 @@ import type { AppState } from "../app/state";
 import { canonicalWord } from "../domain/text";
 import type { QueryResult } from "../domain/types";
 import type { DomMap } from "./dom";
+import { renderAnkiSection } from "./views/anki-view";
 import { createCoveragePanelView } from "./views/coverage-view";
 import {
   type EntryRenderOptions,
@@ -274,6 +275,7 @@ export function createRenderer(dom: DomMap): Renderer {
     syncControls(state, hasData);
 
     renderImportPanel(state);
+    renderAnkiSection(dom, state);
 
     if (state.errorMessage === null) {
       dom.errorBox.textContent = "";
