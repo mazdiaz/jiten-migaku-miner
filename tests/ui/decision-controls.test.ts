@@ -878,9 +878,9 @@ describe("review mode ui", () => {
     try {
       expect(harness.dom.resultsList.parentElement).toBe(harness.dom.reviewContent);
       expect(harness.dom.reviewContent.firstElementChild).toBe(harness.dom.resultsList);
-      expect(
-        harness.dom.resultsList.querySelector(".review-entry .target-word")?.textContent,
-      ).toBe("言葉");
+      expect(harness.dom.resultsList.querySelector(".review-entry .target-word")?.textContent).toBe(
+        "言葉",
+      );
       expect(document.querySelectorAll("#reviewOverlay #resultsList")).toHaveLength(1);
     } finally {
       harness.dispose();
