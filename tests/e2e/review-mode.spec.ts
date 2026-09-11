@@ -49,7 +49,9 @@ test.describe("review mode", () => {
         "keydown",
         (event) => {
           if (event.key.toLowerCase() !== "q") return;
-          (window as unknown as { __reviewQ?: { key: string; defaultPrevented: boolean } }).__reviewQ = {
+          (
+            window as unknown as { __reviewQ?: { key: string; defaultPrevented: boolean } }
+          ).__reviewQ = {
             key: event.key,
             defaultPrevented: event.defaultPrevented,
           };
@@ -62,7 +64,8 @@ test.describe("review mode", () => {
     expect(
       await page.evaluate(
         () =>
-          (window as unknown as { __reviewQ?: { key: string; defaultPrevented: boolean } }).__reviewQ,
+          (window as unknown as { __reviewQ?: { key: string; defaultPrevented: boolean } })
+            .__reviewQ,
       ),
     ).toEqual({ key: "q", defaultPrevented: false });
 
