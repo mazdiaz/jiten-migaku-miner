@@ -376,4 +376,40 @@ describe("renderer render-skip invalidation (audit phase 6, task 5 fixes)", () =
     expect(dom.resultsList.textContent).toContain("機械");
     expect(dom.resultsList.textContent).not.toContain("言葉");
   });
+
+  it("rebuilds rows when the decision source changes with identical decision text", () => {
+    const dom = seedDom();
+    const renderer = createRenderer(dom);
+    const specs: TestEntrySpec[] = [{ id: "e0", word: "言葉", sentence: "同じ文。" }];
+
+    const manual = pagedResult(specs);
+    manual.items[0] = { ...manual.items[0]!, decision: "known", decisionSource: "manual" };
+    renderer.render({
+      ...createInitialAppState("memory"),
+      dataset: dataset("d1"),
+      status: "ready",
+      result: manual,
+    });
+    expect(dom.resultsList.querySelector(".entry-badge-decision")?.textContent).toBe("Known");
+
+    // Same id/word/decision text: only decisionSource and knownByAnki differ.
+    // Both participate in the signature so the badge cannot stay stale.
+    const anki = freshResult(pagedResult(specs));
+    anki.items[0] = {
+      ...anki.items[0]!,
+      decision: "known",
+      decisionSource: "anki",
+      knownByAnki: true,
+    };
+    renderer.render({
+      ...createInitialAppState("memory"),
+      dataset: dataset("d1"),
+      status: "ready",
+      result: anki,
+    });
+
+    expect(dom.resultsList.querySelector(".entry-badge-decision")?.textContent).toBe(
+      "Known · Anki",
+    );
+  });
 });

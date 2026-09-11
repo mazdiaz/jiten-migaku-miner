@@ -105,7 +105,7 @@ export function createRenderer(dom: DomMap): Renderer {
     const items = result.items
       .map(
         (item) =>
-          `${item.id}·${item.word}·${item.decision}·${item.known}·${item.knownByMigaku}·${item.knownByDecision}·${item.occurrences}`,
+          `${item.id}·${item.word}·${item.decision}·${item.decisionSource}·${item.known}·${item.knownByMigaku}·${item.knownByDecision}·${item.knownByAnki}·${item.occurrences}`,
       )
       .join(",");
     return `${datasetId}/${result.page}/${result.totalPages}/${result.totalEntries}/${result.startIndex}/${result.endIndex}/${String(result.pageSize)}/${result.knownCount}/${result.windowed}|${items}`;
