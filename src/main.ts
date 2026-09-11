@@ -57,13 +57,17 @@ async function bootstrap(): Promise<void> {
   controller.subscribe((state) => {
     latest = state;
     renderer.render(state);
-    queryController.applyResult(state.result);
-    highlight.reconcile(dom.resultsList);
     const queueKey = `${state.queue.normalizedWords.join("\n")}|${state.queue.mode}`;
-    if (queueKey !== lastQueueKey && state.result?.windowed === true) {
-      virtualList.setTotal(state.result.totalEntries);
-      virtualList.setWindow(Math.max(0, state.result.startIndex - 1), state.result.items);
+    // Review owns the shared #resultsList while active. Do not let the normal
+    // query/virtual-list path replace its one-card DOM; resume it on exit.
+    if (!state.review.active) {
+      queryController.applyResult(state.result);
+      if (queueKey !== lastQueueKey && state.result?.windowed === true) {
+        virtualList.setTotal(state.result.totalEntries);
+        virtualList.setWindow(Math.max(0, state.result.startIndex - 1), state.result.items);
+      }
     }
+    highlight.reconcile(dom.resultsList);
     lastQueueKey = queueKey;
   });
   bindControls(dom, controller, {
