@@ -972,6 +972,26 @@ describe("AnkiSyncService", () => {
     expect(harness.coverageSpy.request).toHaveBeenCalledTimes(1);
   });
 
+  it("still requests coverage when the post-apply query refresh fails", async () => {
+    const store = createMemoryAppStore();
+    await store.ankiSync.saveConfig(config);
+    const harness = coreFor(store);
+    vi.mocked(harness.port.findCards).mockResolvedValue([1]);
+    vi.mocked(harness.port.cardsInfo).mockResolvedValue([
+      { cardId: 1, fields: { [config.targetField]: "word" } },
+    ]);
+    const service = serviceFor(harness);
+    await service.initialize();
+    await service.previewSync();
+
+    const queryError = new Error("query failed");
+    harness.runQuerySpy.mockRejectedValueOnce(queryError);
+
+    await expect(service.applySync()).rejects.toBe(queryError);
+
+    expect(harness.coverageSpy.request).toHaveBeenCalledTimes(1);
+  });
+
   it("refuses a stale preview after the user-state epoch changes", async () => {
     const store = createMemoryAppStore();
     await store.ankiSync.saveConfig(config);
@@ -1026,6 +1046,32 @@ describe("AnkiSyncService", () => {
     expect(harness.runQuerySpy).toHaveBeenCalledTimes(1);
     expect(harness.coverageSpy.request).toHaveBeenCalledTimes(1);
     expect(harness.state.changesSinceExport).toBe(1);
+  });
+
+  it("preserves the original apply rejection when error reporting itself fails to publish", async () => {
+    const store = createMemoryAppStore();
+    await store.ankiSync.saveConfig(config);
+    const harness = coreFor(store);
+    vi.mocked(harness.port.findCards).mockResolvedValue([1]);
+    vi.mocked(harness.port.cardsInfo).mockResolvedValue([
+      { cardId: 1, fields: { [config.targetField]: "word" } },
+    ]);
+    const service = serviceFor(harness);
+    await service.initialize();
+    await service.previewSync();
+
+    const storageError = new Error("storage failed");
+    store.ankiSync.replaceSnapshot = vi.fn().mockRejectedValue(storageError);
+    const publishFailure = new Error("publish failed");
+    vi.mocked(harness.core.publish)
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw publishFailure;
+      });
+
+    await expect(service.applySync()).rejects.toBe(storageError);
+
+    expect((storageError as Error & { cause?: unknown }).cause).toBe(publishFailure);
   });
 
   it("refuses apply after active dataset identity changes", async () => {

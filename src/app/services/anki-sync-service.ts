@@ -420,14 +420,17 @@ export class AnkiSyncService {
         this.publishSummary("idle", null);
       });
     } catch (error) {
-      this.reportApplyError(candidate, error);
+      this.reportApplyErrorGuarded(candidate, error);
       throw error;
     } finally {
       this.applyInProgress = false;
     }
 
-    await this.core.runQuery();
-    await this.coverage.request();
+    try {
+      await this.core.runQuery();
+    } finally {
+      await this.coverage.request();
+    }
   }
 
   async clearSyncData(): Promise<void> {
@@ -560,6 +563,16 @@ export class AnkiSyncService {
       this.dropPreview();
     }
     this.publishError(error);
+  }
+
+  private reportApplyErrorGuarded(candidate: PreviewCandidate, error: unknown): void {
+    try {
+      this.reportApplyError(candidate, error);
+    } catch (reportFailure) {
+      if (error instanceof Error && error.cause === undefined) {
+        (error as { cause?: unknown }).cause = reportFailure;
+      }
+    }
   }
 
   private removeAppliedQueueWords(
