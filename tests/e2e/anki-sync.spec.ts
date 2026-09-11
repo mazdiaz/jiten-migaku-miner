@@ -111,6 +111,16 @@ test.describe("Anki decision sync", () => {
     await page.getByRole("button", { name: "Check configuration" }).click();
     await expect(page.locator("#ankiActions")).toBeVisible();
 
+    const mainActions = page.locator("#ankiActions");
+    await expect(mainActions.getByRole("button", { name: "Sync from Anki" })).toBeVisible();
+    await expect(mainActions.getByRole("button", { name: "Settings" })).toBeVisible();
+    await expect(mainActions.getByRole("button")).toHaveCount(2);
+    await expect(page.locator("#ankiClear")).toBeHidden();
+
+    await page.getByRole("button", { name: "Settings" }).click();
+    await expect(page.locator("#ankiSetup")).toBeVisible();
+    await expect(page.locator("#ankiSetup #ankiClear")).toBeVisible();
+
     await page.getByRole("button", { name: "Sync from Anki" }).click();
     await expect(page.getByText("Anki Sync Preview")).toBeVisible();
     await page.getByRole("button", { name: "Apply Sync" }).click();
