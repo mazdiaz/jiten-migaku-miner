@@ -39,6 +39,7 @@ export interface Renderer {
 const EMPTY_LOAD_MESSAGE = "Load a Jiten CSV above.";
 const EMPTY_FILTER_MESSAGE = "No entries match the current filters.";
 const EMPTY_FILTER_HINT = "Try removing a filter.";
+const REVIEW_LOADING_MESSAGE = "Loading review queue…";
 const UNDO_BASE_LABEL = "Undo";
 
 export const NO_EXPORT_MESSAGE = "No export this session";
@@ -87,11 +88,17 @@ export function createRenderer(dom: DomMap): Renderer {
   let advancedExpanded = false;
   let advancedDatasetId: string | null = null;
   const coveragePanel = createCoveragePanelView(dom);
+  // Preserve the exact results-list node that Migaku already knows about.
+  // Review temporarily moves this node into its modal, then puts it back at
+  // the same DOM position on exit instead of rendering a second text surface.
+  const resultsHome = dom.resultsList.parentNode;
+  const resultsHomeNextSibling = dom.resultsList.nextSibling;
   // Identity of the last non-windowed list render: null until the first
   // render, then the (result, view, queue) signature that produced the
   // currently mounted rows. Result snapshots are cloned per publish, so the
   // result is compared by content signature, not reference.
   let itemsRendered: { resultSig: string; viewSig: string; queueSig: string } | null = null;
+  let reviewRenderedKey: string | null = null;
   let lastState: Readonly<AppState> | null = null;
 
   const resultSignature = (
@@ -122,7 +129,47 @@ export function createRenderer(dom: DomMap): Renderer {
     for (const button of [dom.bottomNext, dom.stickyNext]) button.disabled = atEnd;
   };
 
+  const mountResultsSurface = (reviewActive: boolean): void => {
+    if (reviewActive) {
+      if (dom.resultsList.parentNode !== dom.reviewContent) {
+        dom.reviewContent.prepend(dom.resultsList);
+      }
+      return;
+    }
+    if (resultsHome !== null && dom.resultsList.parentNode !== resultsHome) {
+      resultsHome.insertBefore(dom.resultsList, resultsHomeNextSibling);
+    }
+  };
+
   const renderItems = (state: Readonly<AppState>, hasData: boolean): void => {
+    if (state.review.active) {
+      // Keep review's current Japanese DOM stable across unrelated publishes.
+      // Migaku may have inserted parsing markup into it; rebuilding the same
+      // card would throw that work away and make Q mining unreliable.
+      itemsRendered = null;
+      const current = state.review.current;
+      const viewSig = JSON.stringify(state.view);
+      const reviewKey =
+        current === null
+          ? `empty/${state.review.status}/${viewSig}`
+          : `${current.id}/${current.normalizedWord}/${viewSig}`;
+      if (reviewRenderedKey === reviewKey && dom.resultsList.childElementCount > 0) return;
+      reviewRenderedKey = reviewKey;
+      dom.resultsList.textContent = "";
+      if (current !== null) {
+        dom.resultsList.appendChild(renderReviewEntryNode(current, state.view));
+        return;
+      }
+      if (state.review.status === "loading") {
+        const loading = document.createElement("div");
+        loading.className = "empty-state review-loading";
+        loading.textContent = REVIEW_LOADING_MESSAGE;
+        dom.resultsList.appendChild(loading);
+      }
+      return;
+    }
+
+    reviewRenderedKey = null;
     if (state.result?.windowed === true && state.result.totalEntries > 0) {
       // Windowed results own the list DOM (virtual list mounts spacers +
       // container straight into resultsList). Invalidate the paged skip
@@ -323,6 +370,7 @@ export function createRenderer(dom: DomMap): Renderer {
     setPager(state.result);
     coveragePanel.render(state, hasData);
     renderFilterChips(dom, state, hasData);
+    mountResultsSurface(state.review.active);
     renderItems(state, hasData);
     renderReviewSurface(dom, state);
 
