@@ -236,6 +236,74 @@ describe("storage fallback classification", () => {
     expect(replacementKnown?.words).toEqual(new Set(["いぬ"]));
   });
 
+  it("transfers loaded Anki state when storage falls back to memory", async () => {
+    const store = createMemoryAppStore();
+    await seedActive(store);
+    const ankiConfig = {
+      deckScope: { kind: "deck" as const, name: "Main" },
+      noteType: "Mine",
+      targetField: "Word",
+    };
+    const ankiSnapshot = {
+      syncedAt: "2026-09-10T10:00:00.000Z",
+      statuses: [["ねこ", "known"] as [string, "known"]],
+    };
+    await store.ankiSync.saveConfig(ankiConfig);
+    await store.ankiSync.replaceSnapshot(ankiSnapshot);
+    let fail = false;
+    store.wordDecisions.set = async (decision) => {
+      if (fail) throw new DOMException("backend vanished", "SecurityError");
+      await store.wordDecisions.replaceAll([decision]);
+    };
+    const controller = createMinerController(
+      options(store, new FakeWorkerClient(), new FakeStorage()),
+    );
+    await controller.init();
+
+    fail = true;
+    await controller.setWordDecision("いぬ", "mined");
+
+    const backup = JSON.parse(await controller.exportBackup()) as {
+      ankiSync: { config: typeof ankiConfig; snapshot: typeof ankiSnapshot };
+    };
+    expect(backup.ankiSync).toEqual({ config: ankiConfig, snapshot: ankiSnapshot });
+  });
+
+  it("surfaces a warning when the Anki state transfer fails during memory fallback", async () => {
+    const store = createMemoryAppStore();
+    await seedActive(store);
+    await store.ankiSync.saveConfig({
+      deckScope: { kind: "deck" as const, name: "Main" },
+      noteType: "Mine",
+      targetField: "Word",
+    });
+    let fail = false;
+    store.wordDecisions.set = async (decision) => {
+      if (fail) throw new DOMException("backend vanished", "SecurityError");
+      await store.wordDecisions.replaceAll([decision]);
+    };
+    const controller = createMinerController(
+      options(store, new FakeWorkerClient(), new FakeStorage()),
+    );
+    await controller.init();
+    const ankiSyncService = (
+      controller as unknown as {
+        ankiSyncService: { storageState: () => unknown };
+      }
+    ).ankiSyncService;
+    ankiSyncService.storageState = () => {
+      throw new Error("snapshot locked");
+    };
+
+    fail = true;
+    await controller.setWordDecision("いぬ", "mined");
+
+    const state = capture(controller);
+    expect(state.persistence).toBe("memory");
+    expect(state.errorMessage).toContain("Anki-sync recovery failed");
+    expect(state.errorMessage).toContain("snapshot locked");
+  });
+
   it("does not silently switch to memory on an application error", async () => {
     const store = createMemoryAppStore();
     await seedActive(store);

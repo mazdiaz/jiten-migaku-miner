@@ -286,6 +286,7 @@ class MinerControllerImpl implements MinerController {
           await this.activateAndVerify(dataset);
           if (generation !== this.importGeneration) return false;
           this.state.dataset = dataset;
+          this.ankiSyncService.cancelPreview();
           this.state.query = { ...this.state.query, page: 1 };
           this.state.result = candidateResult;
           // A newly activated dataset starts with a fresh queue association.
@@ -730,6 +731,13 @@ class MinerControllerImpl implements MinerController {
       });
     } catch {
       // Preferences are non-critical; visible state retains them.
+    }
+    try {
+      const ankiSync = this.ankiSyncService.storageState();
+      if (ankiSync.config !== null) await replacement.ankiSync.saveConfig(ankiSync.config);
+      if (ankiSync.snapshot !== null) await replacement.ankiSync.replaceSnapshot(ankiSync.snapshot);
+    } catch (transferError) {
+      transferFailures.push(`Anki-sync recovery failed: ${errorMessage(transferError)}`);
     }
 
     this.store = replacement;

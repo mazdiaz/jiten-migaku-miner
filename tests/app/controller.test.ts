@@ -583,6 +583,29 @@ describe("MinerController", () => {
     });
   });
 
+  it("clears an Anki preview when replacing the active dataset", async () => {
+    const store = createMemoryAppStore();
+    await seedActive(store);
+    const worker = new FakeWorkerClient();
+    const port = ankiPort();
+    const controller = createMinerController(controllerOptions(store, worker, undefined, port));
+    const states: Readonly<AppState>[] = [];
+    controller.subscribe((state) => states.push(state));
+    await controller.init();
+
+    await controller.validateAndSaveAnkiConfig(ankiConfig);
+    await controller.previewAnkiSync();
+    expect(states.at(-1)?.ankiPreview).not.toBeNull();
+
+    await controller.importJiten({
+      name: "new.csv",
+      text: async () => "Word\n新しい",
+    });
+
+    expect(states.at(-1)?.ankiPreview).toBeNull();
+    expect(states.at(-1)?.anki.status).toBe("idle");
+  });
+
   it("fills display-preference defaults when stored preferences predate the fields", async () => {
     const store = createMemoryAppStore();
     await seedActive(store);
