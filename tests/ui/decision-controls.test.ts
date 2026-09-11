@@ -873,11 +873,15 @@ describe("review mode ui", () => {
     }
   });
 
-  it("keeps the normal list rendering untouched while the overlay is open", () => {
+  it("moves the shared results surface into the review overlay", () => {
     const harness = setup(reviewState({ current: makeEntry() }));
     try {
-      expect(harness.dom.resultsList.querySelector(".mining-entry")).toBeNull();
-      expect(document.querySelectorAll("#reviewOverlay .mining-entry").length).toBe(1);
+      expect(harness.dom.resultsList.parentElement).toBe(harness.dom.reviewContent);
+      expect(harness.dom.reviewContent.firstElementChild).toBe(harness.dom.resultsList);
+      expect(
+        harness.dom.resultsList.querySelector(".review-entry .target-word")?.textContent,
+      ).toBe("言葉");
+      expect(document.querySelectorAll("#reviewOverlay #resultsList")).toHaveLength(1);
     } finally {
       harness.dispose();
     }
@@ -955,11 +959,11 @@ describe("review mode ui", () => {
       expect(
         harness.dom.reviewContent.querySelector(".review-entry .target-word")?.textContent,
       ).toBe("言葉");
-      // The alert region is appended after the card, which stays visible.
+      // The alert region is appended after the shared results surface, whose
+      // current review card stays visible and Migaku-interactive.
       expect(harness.dom.reviewContent.lastElementChild).toBe(alert);
-      expect(harness.dom.reviewContent.firstElementChild?.classList.contains("review-entry")).toBe(
-        true,
-      );
+      expect(harness.dom.reviewContent.firstElementChild).toBe(harness.dom.resultsList);
+      expect(harness.dom.resultsList.querySelector(".review-entry")).not.toBeNull();
       // Status returned to "ready" after the failed save, so retry stays possible.
       for (const button of [
         harness.dom.reviewKnown,
