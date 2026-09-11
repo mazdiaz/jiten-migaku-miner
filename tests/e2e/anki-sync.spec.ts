@@ -111,6 +111,17 @@ test.describe("Anki decision sync", () => {
     await page.getByRole("button", { name: "Check configuration" }).click();
     await expect(page.locator("#ankiActions")).toBeVisible();
 
+    // Everyday action row holds only Sync and Settings; the destructive Clear
+    // lives inside the Settings danger zone so it cannot be hit accidentally.
+    const actionButtons = page.locator("#ankiActions > button");
+    await expect(actionButtons).toHaveCount(2);
+    await expect(actionButtons.nth(0)).toHaveText("Sync from Anki");
+    await expect(actionButtons.nth(1)).toHaveText("Settings");
+    await expect(page.locator("#ankiActions #ankiClear")).toHaveCount(0);
+    await expect(page.locator("#ankiSetup #ankiClear")).toHaveCount(1);
+    await expect(page.locator("#ankiSetup .anki-danger-zone")).toHaveCount(1);
+    await expect(page.getByText("Danger zone")).toBeAttached();
+
     await page.getByRole("button", { name: "Sync from Anki" }).click();
     await expect(page.getByText("Anki Sync Preview")).toBeVisible();
     await page.getByRole("button", { name: "Apply Sync" }).click();

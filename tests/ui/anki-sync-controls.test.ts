@@ -79,12 +79,12 @@ function makeDom(): DomMap {
     "ankiCheckConfig",
     "ankiSyncNow",
     "ankiSettings",
-    "ankiClear",
     "ankiApply",
     "ankiCancelPreview",
   ]) {
     add(id, "button");
   }
+  document.getElementById("ankiSetup")?.appendChild(add<HTMLButtonElement>("ankiClear", "button"));
   add<HTMLInputElement>("restoreBackupInput", "input").type = "file";
   add<HTMLInputElement>("stickySearch", "input").type = "search";
   add<HTMLInputElement>("hideKnown", "input").type = "checkbox";
@@ -262,6 +262,28 @@ describe("Anki sync controls", () => {
     expect(dom.ankiNoteType.value).toBe("Diaz Custom Mine");
     expect(controller.loadAnkiModelFields).toHaveBeenCalledWith("Diaz Custom Mine");
     expect(dom.ankiTargetField.value).toBe("Target Word (no syntax)");
+
+    bindings.dispose();
+  });
+
+  it("keeps Clear inside the Settings danger zone, out of the everyday action row", async () => {
+    const dom = makeDom();
+    const controller = makeController();
+    controller.state.anki = { ...controller.state.anki, configured: true };
+    const bindings = bindControls(dom, controller);
+
+    renderAnkiSection(dom, controller.state);
+    expect(dom.ankiActions.hidden).toBe(false);
+    expect(dom.ankiSyncNow.disabled).toBe(false);
+    expect(dom.ankiSettings.disabled).toBe(false);
+    expect(dom.ankiClear.closest("#ankiActions")).toBeNull();
+
+    dom.ankiSettings.click();
+    await flush();
+    renderAnkiSection(dom, controller.state);
+    expect(dom.ankiSetup.hidden).toBe(false);
+    expect(dom.ankiClear.closest("#ankiSetup")).not.toBeNull();
+    expect(dom.ankiClear.disabled).toBe(false);
 
     bindings.dispose();
   });

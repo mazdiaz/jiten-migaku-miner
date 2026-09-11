@@ -177,6 +177,37 @@ h1 {
   grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
 }
 
+.anki-actions {
+  flex-wrap: wrap;
+}
+
+/* Action-row buttons never shrink below their labels: collapsed
+   empty-square buttons at narrow widths are a usability bug, not a
+   space-saving feature. */
+.anki-actions > button {
+  flex: 0 0 auto;
+}
+
+.anki-danger-zone {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.anki-danger-title {
+  margin: 0;
+  color: var(--danger);
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .anki-setup[hidden],
 .anki-actions[hidden],
 .anki-preview[hidden] {
