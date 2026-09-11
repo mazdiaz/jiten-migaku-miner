@@ -43,14 +43,19 @@ test.describe("review mode", () => {
     // Q is intentionally not consumed by our review shortcuts so Migaku can
     // keep using its instant-card shortcut on the shared results surface.
     await page.evaluate(() => {
-      (window as unknown as { __reviewQ?: { key: string; defaultPrevented: boolean } }).__reviewQ =
-        undefined;
+      (
+        window as unknown as {
+          __reviewQ: { key: string; defaultPrevented: boolean } | null;
+        }
+      ).__reviewQ = null;
       document.addEventListener(
         "keydown",
         (event) => {
           if (event.key.toLowerCase() !== "q") return;
           (
-            window as unknown as { __reviewQ?: { key: string; defaultPrevented: boolean } }
+            window as unknown as {
+              __reviewQ: { key: string; defaultPrevented: boolean } | null;
+            }
           ).__reviewQ = {
             key: event.key,
             defaultPrevented: event.defaultPrevented,
@@ -64,8 +69,11 @@ test.describe("review mode", () => {
     expect(
       await page.evaluate(
         () =>
-          (window as unknown as { __reviewQ?: { key: string; defaultPrevented: boolean } })
-            .__reviewQ,
+          (
+            window as unknown as {
+              __reviewQ: { key: string; defaultPrevented: boolean } | null;
+            }
+          ).__reviewQ,
       ),
     ).toEqual({ key: "q", defaultPrevented: false });
 
