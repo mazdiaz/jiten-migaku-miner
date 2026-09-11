@@ -106,7 +106,7 @@ class FakeStorage implements Storage {
 class FakeWorkerClient implements WorkerClient {
   async importJiten(name: string): Promise<Extract<ImportCompleteResponse, { kind: "jiten" }>> {
     return {
-      protocolVersion: 2,
+      protocolVersion: 3,
       type: "import-complete",
       requestId: "import",
       kind: "jiten",
@@ -119,7 +119,7 @@ class FakeWorkerClient implements WorkerClient {
 
   async importKnown(name: string): Promise<Extract<ImportCompleteResponse, { kind: "known" }>> {
     return {
-      protocolVersion: 2,
+      protocolVersion: 3,
       type: "import-complete",
       requestId: "known",
       kind: "known",
@@ -138,6 +138,10 @@ class FakeWorkerClient implements WorkerClient {
 
   async coverage(_request: WorkerCoverageInput): Promise<ReturnType<typeof coverageStats>> {
     return coverageStats();
+  }
+
+  async previewAnkiMatch() {
+    return { matchedWords: 0, knownCount: 0, minedCount: 0, manualProtected: 0 };
   }
 
   dispose(): void {}

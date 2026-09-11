@@ -132,6 +132,7 @@ describe("AnkiConnect adapter", () => {
     });
     await expect(protectedPermission.requestPermission()).rejects.toMatchObject({
       code: "api-key-required",
+      message: expect.stringContaining("unsupported in v1"),
     });
 
     const protectedRequest = createAnkiConnectPort({
@@ -139,6 +140,7 @@ describe("AnkiConnect adapter", () => {
     });
     await expect(protectedRequest.deckNames()).rejects.toMatchObject({
       code: "api-key-required",
+      message: expect.stringContaining("unsupported in v1"),
     });
   });
 

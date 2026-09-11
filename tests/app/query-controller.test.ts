@@ -79,6 +79,7 @@ function _makeState(overrides: Partial<AppState> = {}): AppState {
       wordCount: 0,
       knownCount: 0,
       minedCount: 0,
+      deckScopeKind: null,
       deckScopeLabel: null,
       noteType: null,
       targetField: null,

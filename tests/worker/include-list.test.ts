@@ -35,12 +35,13 @@ function queryState(overrides: Partial<QueryState> = {}): QueryState {
 
 function queryRequest(overrides: Partial<QueryRequest> = {}): QueryRequest {
   return {
-    protocolVersion: 2,
+    protocolVersion: 3,
     type: "query",
     requestId: "query-1",
     datasetId: "dataset-1",
     knownWords: [],
     decisions: [],
+    ankiStatuses: [],
     query: queryState(),
     ...overrides,
   };
@@ -271,12 +272,13 @@ describe("worker canonical case-insensitive matching", () => {
 describe("worker include-list protocol", () => {
   it("parses an optional include list of non-empty strings", () => {
     const parsed = parseWorkerRequest({
-      protocolVersion: 2,
+      protocolVersion: 3,
       type: "query",
       requestId: "query-1",
       datasetId: "dataset-1",
       knownWords: [],
       decisions: [],
+      ankiStatuses: [],
       query: queryState(),
       includeNormalizedWords: ["一", "二"],
     });
@@ -289,12 +291,13 @@ describe("worker include-list protocol", () => {
 
   it("omits the include list when absent", () => {
     const parsed = parseWorkerRequest({
-      protocolVersion: 2,
+      protocolVersion: 3,
       type: "query",
       requestId: "query-1",
       datasetId: "dataset-1",
       knownWords: [],
       decisions: [],
+      ankiStatuses: [],
       query: queryState(),
     });
 
@@ -305,12 +308,13 @@ describe("worker include-list protocol", () => {
   it("rejects include lists containing non-string or empty values", () => {
     expect(() =>
       parseWorkerRequest({
-        protocolVersion: 2,
+        protocolVersion: 3,
         type: "query",
         requestId: "query-1",
         datasetId: "dataset-1",
         knownWords: [],
         decisions: [],
+        ankiStatuses: [],
         query: queryState(),
         includeNormalizedWords: ["一", 3],
       }),
@@ -318,12 +322,13 @@ describe("worker include-list protocol", () => {
 
     expect(() =>
       parseWorkerRequest({
-        protocolVersion: 2,
+        protocolVersion: 3,
         type: "query",
         requestId: "query-1",
         datasetId: "dataset-1",
         knownWords: [],
         decisions: [],
+        ankiStatuses: [],
         query: queryState(),
         includeNormalizedWords: [""],
       }),

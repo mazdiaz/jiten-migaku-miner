@@ -94,7 +94,10 @@ function parseEnvelope(value: unknown): unknown {
   if (value.error !== null) {
     const message = errorText(value.error);
     if (isApiKeyRequiredMessage(message)) {
-      throw new AnkiConnectError("api-key-required", message);
+      throw new AnkiConnectError(
+        "api-key-required",
+        `AnkiConnect requires an API key; API-key-protected AnkiConnect is unsupported in v1: ${message}`,
+      );
     }
     throw new AnkiConnectError("anki-error", message);
   }
@@ -182,7 +185,10 @@ export function createAnkiConnectPort(options: AnkiConnectOptions = {}): AnkiCon
         ]);
       } catch {
         if (timedOut) throw new AnkiConnectError("timeout", "AnkiConnect request timed out");
-        throw new AnkiConnectError("connection-failed", "Unable to connect to AnkiConnect");
+        throw new AnkiConnectError(
+          "connection-failed",
+          "Unable to connect to AnkiConnect. Ensure AnkiConnect is installed and enabled.",
+        );
       }
 
       if (httpResponse.status < 200 || httpResponse.status >= 300) {
@@ -197,7 +203,10 @@ export function createAnkiConnectPort(options: AnkiConnectOptions = {}): AnkiCon
         responseBody = await Promise.race([httpResponse.text(), timeoutPromise]);
       } catch {
         if (timedOut) throw new AnkiConnectError("timeout", "AnkiConnect request timed out");
-        throw new AnkiConnectError("connection-failed", "Unable to read AnkiConnect response");
+        throw new AnkiConnectError(
+          "connection-failed",
+          "Unable to read AnkiConnect response. Ensure AnkiConnect is installed and enabled.",
+        );
       }
       let envelope: unknown;
       try {
@@ -224,7 +233,10 @@ export function createAnkiConnectPort(options: AnkiConnectOptions = {}): AnkiCon
         return protocolError("requestPermission requireApikey must be a boolean");
       }
       if (result.requireApiKey === true || result.requireApikey === true) {
-        throw new AnkiConnectError("api-key-required", "AnkiConnect requires an API key");
+        throw new AnkiConnectError(
+          "api-key-required",
+          "AnkiConnect requires an API key; API-key-protected AnkiConnect is unsupported in v1",
+        );
       }
       if (result.permission === "granted") return;
       if (result.permission === "denied" || result.permission === "unauthorized") {

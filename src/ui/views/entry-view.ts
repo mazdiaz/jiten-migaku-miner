@@ -93,7 +93,7 @@ function appendBadges(header: HTMLElement, entry: EntryWithKnown): void {
   if (entry.decision !== "unreviewed") {
     const badge = document.createElement("span");
     badge.className = "entry-badge entry-badge-decision";
-    badge.textContent = DECISION_LABELS[entry.decision];
+    badge.textContent = `${DECISION_LABELS[entry.decision]}${entry.decisionSource === "anki" ? " · Anki" : ""}`;
     badges.appendChild(badge);
   }
   if (badges.childNodes.length > 0) header.appendChild(badges);

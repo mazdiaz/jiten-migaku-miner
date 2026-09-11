@@ -1,6 +1,6 @@
 import type { AnkiDeckScope, AnkiSyncConfig, AnkiSyncSnapshot, AnkiWordStatus } from "./anki";
 import { isAnkiWordStatus } from "./anki";
-import { normalizeText } from "./text";
+import { canonicalWord, normalizeText } from "./text";
 import type {
   QueryState,
   ViewState,
@@ -293,7 +293,7 @@ function validateAnkiStatuses(value: unknown): Array<[string, AnkiWordStatus]> {
       fail("invalid-shape", `ankiSync.snapshot.statuses[${index}] must be a [key, status] pair`);
     }
     const key = requiredString(entry[0], `ankiSync.snapshot.statuses[${index}][0]`);
-    const normalizedKey = normalizeText(key);
+    const normalizedKey = canonicalWord(key);
     if (normalizedKey.length === 0) {
       fail(
         "invalid-shape",

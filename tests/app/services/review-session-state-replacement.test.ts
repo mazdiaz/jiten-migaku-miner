@@ -50,7 +50,7 @@ class DeferredWorker implements WorkerClient {
 
   async importJiten(name: string) {
     return {
-      protocolVersion: 2 as const,
+      protocolVersion: 3 as const,
       type: "import-complete" as const,
       requestId: "jiten",
       kind: "jiten" as const,
@@ -63,7 +63,7 @@ class DeferredWorker implements WorkerClient {
 
   async importKnown(name: string) {
     return {
-      protocolVersion: 2 as const,
+      protocolVersion: 3 as const,
       type: "import-complete" as const,
       requestId: "known",
       kind: "known" as const,

@@ -8,6 +8,25 @@ export interface DomMap {
   readonly importSummary: HTMLElement;
   readonly changeFiles: HTMLButtonElement;
   readonly importGrid: HTMLElement;
+  readonly ankiSection: HTMLElement;
+  readonly ankiDescription: HTMLElement;
+  readonly ankiStatusLine: HTMLElement;
+  readonly ankiError: HTMLElement;
+  readonly ankiConnect: HTMLButtonElement;
+  readonly ankiSetup: HTMLElement;
+  readonly ankiDeckScope: HTMLSelectElement;
+  readonly ankiNoteType: HTMLSelectElement;
+  readonly ankiTargetField: HTMLSelectElement;
+  readonly ankiCheckConfig: HTMLButtonElement;
+  readonly ankiActions: HTMLElement;
+  readonly ankiSyncNow: HTMLButtonElement;
+  readonly ankiSettings: HTMLButtonElement;
+  readonly ankiClear: HTMLButtonElement;
+  readonly ankiPreview: HTMLElement;
+  readonly ankiPreviewCounts: HTMLElement;
+  readonly ankiPreviewWarning: HTMLElement;
+  readonly ankiApply: HTMLButtonElement;
+  readonly ankiCancelPreview: HTMLButtonElement;
   readonly clearData: HTMLButtonElement;
   readonly exportBackup: HTMLButtonElement;
   readonly restoreBackup: HTMLButtonElement;
@@ -95,6 +114,25 @@ export function getDomMap(): DomMap {
     importSummary: byId<HTMLElement>("importSummary"),
     changeFiles: byId<HTMLButtonElement>("changeFiles"),
     importGrid: byId<HTMLElement>("importGrid"),
+    ankiSection: byId<HTMLElement>("ankiSection"),
+    ankiDescription: byId<HTMLElement>("ankiDescription"),
+    ankiStatusLine: byId<HTMLElement>("ankiStatusLine"),
+    ankiError: byId<HTMLElement>("ankiError"),
+    ankiConnect: byId<HTMLButtonElement>("ankiConnect"),
+    ankiSetup: byId<HTMLElement>("ankiSetup"),
+    ankiDeckScope: byId<HTMLSelectElement>("ankiDeckScope"),
+    ankiNoteType: byId<HTMLSelectElement>("ankiNoteType"),
+    ankiTargetField: byId<HTMLSelectElement>("ankiTargetField"),
+    ankiCheckConfig: byId<HTMLButtonElement>("ankiCheckConfig"),
+    ankiActions: byId<HTMLElement>("ankiActions"),
+    ankiSyncNow: byId<HTMLButtonElement>("ankiSyncNow"),
+    ankiSettings: byId<HTMLButtonElement>("ankiSettings"),
+    ankiClear: byId<HTMLButtonElement>("ankiClear"),
+    ankiPreview: byId<HTMLElement>("ankiPreview"),
+    ankiPreviewCounts: byId<HTMLElement>("ankiPreviewCounts"),
+    ankiPreviewWarning: byId<HTMLElement>("ankiPreviewWarning"),
+    ankiApply: byId<HTMLButtonElement>("ankiApply"),
+    ankiCancelPreview: byId<HTMLButtonElement>("ankiCancelPreview"),
     clearData: byId<HTMLButtonElement>("clearData"),
     exportBackup: byId<HTMLButtonElement>("exportBackup"),
     restoreBackup: byId<HTMLButtonElement>("restoreBackup"),

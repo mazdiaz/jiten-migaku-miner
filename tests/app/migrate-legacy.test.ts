@@ -73,7 +73,7 @@ class FakeWorkerClient implements WorkerClient {
     onChunk?: (chunk: Extract<ImportChunkResponse, { kind: "jiten" }>) => void,
   ): Promise<Extract<ImportCompleteResponse, { kind: "jiten" }>> {
     onChunk?.({
-      protocolVersion: 2,
+      protocolVersion: 3,
       type: "import-chunk",
       requestId: "legacy-jiten",
       kind: "jiten",
@@ -82,7 +82,7 @@ class FakeWorkerClient implements WorkerClient {
       entries: [oldEntry],
     });
     return {
-      protocolVersion: 2,
+      protocolVersion: 3,
       type: "import-complete",
       requestId: "legacy-jiten",
       kind: "jiten",
@@ -99,7 +99,7 @@ class FakeWorkerClient implements WorkerClient {
     onChunk?: (chunk: Extract<ImportChunkResponse, { kind: "known" }>) => void,
   ): Promise<Extract<ImportCompleteResponse, { kind: "known" }>> {
     onChunk?.({
-      protocolVersion: 2,
+      protocolVersion: 3,
       type: "import-chunk",
       requestId: "legacy-known",
       kind: "known",
@@ -108,7 +108,7 @@ class FakeWorkerClient implements WorkerClient {
       words: ["猫"],
     });
     return {
-      protocolVersion: 2,
+      protocolVersion: 3,
       type: "import-complete",
       requestId: "legacy-known",
       kind: "known",
@@ -123,6 +123,10 @@ class FakeWorkerClient implements WorkerClient {
   }
   async coverage(): Promise<never> {
     throw new Error("not used");
+  }
+
+  async previewAnkiMatch() {
+    return { matchedWords: 0, knownCount: 0, minedCount: 0, manualProtected: 0 };
   }
   dispose(): void {}
 }

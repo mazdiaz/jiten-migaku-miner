@@ -365,7 +365,7 @@ function validateAnkiStatuses(value: unknown): Array<[string, AnkiWordStatus]> {
     if (!Array.isArray(item) || item.length !== 2) {
       throw invalidMessage(`ankiStatuses[${index}] must be a [normalizedWord, status] pair`);
     }
-    if (typeof item[0] !== "string" || item[0].length === 0) {
+    if (typeof item[0] !== "string" || item[0].trim().length === 0) {
       throw invalidMessage(`ankiStatuses[${index}][0] must be a non-empty string`);
     }
     if (!isAnkiWordStatus(item[1])) {

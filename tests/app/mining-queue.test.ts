@@ -116,7 +116,7 @@ class FakeWorkerClient implements WorkerClient {
     const importing = this.nextJiten ?? {
       chunks: [[entry("new-entry", "新しい")]],
       complete: {
-        protocolVersion: 2 as const,
+        protocolVersion: 3 as const,
         type: "import-complete" as const,
         requestId: "import",
         kind: "jiten" as const,
@@ -128,7 +128,7 @@ class FakeWorkerClient implements WorkerClient {
     };
     importing.chunks.forEach((entries, chunkIndex) => {
       onChunk?.({
-        protocolVersion: 2,
+        protocolVersion: 3,
         type: "import-chunk",
         requestId: importing.complete.requestId,
         kind: "jiten",
@@ -142,7 +142,7 @@ class FakeWorkerClient implements WorkerClient {
 
   async importKnown(name: string): Promise<Extract<ImportCompleteResponse, { kind: "known" }>> {
     return {
-      protocolVersion: 2,
+      protocolVersion: 3,
       type: "import-complete",
       requestId: "known",
       kind: "known",
@@ -165,6 +165,10 @@ class FakeWorkerClient implements WorkerClient {
 
   async coverage(): Promise<never> {
     throw new Error("coverage is not used in these tests");
+  }
+
+  async previewAnkiMatch() {
+    return { matchedWords: 0, knownCount: 0, minedCount: 0, manualProtected: 0 };
   }
 
   dispose(): void {}
@@ -306,7 +310,7 @@ describe("mining queue controller operations", () => {
     env.worker.nextJiten = {
       chunks: [[entry("new", "新しい", 0, 9)]],
       complete: {
-        protocolVersion: 2,
+        protocolVersion: 3,
         type: "import-complete",
         requestId: "import",
         kind: "jiten",

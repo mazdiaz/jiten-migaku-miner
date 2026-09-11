@@ -37,9 +37,7 @@ export function ankiCardStatus(isNewAndNotSuspended: boolean): AnkiWordStatus {
   return isNewAndNotSuspended ? "mined" : "known";
 }
 
-export function aggregateAnkiStatuses(
-  statuses: Iterable<AnkiWordStatus>,
-): AnkiWordStatus | null {
+export function aggregateAnkiStatuses(statuses: Iterable<AnkiWordStatus>): AnkiWordStatus | null {
   let found = false;
   for (const status of statuses) {
     found = true;

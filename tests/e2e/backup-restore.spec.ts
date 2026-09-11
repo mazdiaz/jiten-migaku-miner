@@ -59,7 +59,7 @@ test.describe("backup and restore", () => {
       };
     };
     expect(backup.format).toBe("jiten-migaku-miner-backup");
-    expect(backup.version).toBe(1);
+    expect(backup.version).toBe(2);
     expect(backup.knownWords).toEqual({
       name: "known-small.txt",
       words: ["プール"],

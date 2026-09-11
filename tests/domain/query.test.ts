@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { computeCoverage } from "../../src/domain/coverage";
 import {
   applyKnownWords,
   filterEntries,
@@ -6,7 +7,6 @@ import {
   queryEntries,
   sortEntries,
 } from "../../src/domain/query";
-import { computeCoverage } from "../../src/domain/coverage";
 import type { Entry, EntryWithKnown, QueryState, WordDecision } from "../../src/domain/types";
 
 const entries: Entry[] = Array.from({ length: 150 }, (_, originalIndex) => ({
@@ -91,7 +91,12 @@ describe("applyKnownWords", () => {
     const [entry] = applyKnownWords(
       [entries[0]!],
       new Set(),
-      new Map([[entries[0]!.normalizedWord, { normalizedWord: entries[0]!.normalizedWord, status: "mined", updatedAt: "now" }]]),
+      new Map([
+        [
+          entries[0]!.normalizedWord,
+          { normalizedWord: entries[0]!.normalizedWord, status: "mined", updatedAt: "now" },
+        ],
+      ]),
       new Map([[entries[0]!.normalizedWord, "known"]]),
     );
     expect(entry).toMatchObject({ known: false, decision: "mined", decisionSource: "manual" });
@@ -359,7 +364,14 @@ describe("queryEntries", () => {
   it("keeps query and coverage knownness identical", () => {
     const anki = new Map([[entries[0]!.normalizedWord, "known" as const]]);
     const query = queryState();
-    const result = queryEntries(entries.slice(0, 1), new Set(), { ...query, pageSize: "all" }, undefined, new Map(), anki);
+    const result = queryEntries(
+      entries.slice(0, 1),
+      new Set(),
+      { ...query, pageSize: "all" },
+      undefined,
+      new Map(),
+      anki,
+    );
     const coverage = computeCoverage(entries.slice(0, 1), new Set(), new Map(), undefined, anki);
     expect(result.knownCount).toBe(coverage.knownUniqueWords);
   });

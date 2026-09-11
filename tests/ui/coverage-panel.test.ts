@@ -38,6 +38,25 @@ function seedDom(): DomMap {
   changeFiles.setAttribute("aria-expanded", "false");
   changeFiles.setAttribute("aria-controls", "importGrid");
   add("importGrid", "div");
+  add("ankiSection", "section");
+  add("ankiDescription", "p");
+  add("ankiStatusLine", "p").hidden = true;
+  add("ankiError", "p").hidden = true;
+  add("ankiConnect", "button");
+  add("ankiSetup", "div").hidden = true;
+  add("ankiDeckScope", "select");
+  add("ankiNoteType", "select");
+  add("ankiTargetField", "select");
+  add("ankiCheckConfig", "button");
+  add("ankiActions", "div").hidden = true;
+  add("ankiSyncNow", "button");
+  add("ankiSettings", "button");
+  add("ankiClear", "button");
+  add("ankiPreview", "div").hidden = true;
+  add("ankiPreviewCounts", "p");
+  add("ankiPreviewWarning", "p").hidden = true;
+  add("ankiApply", "button");
+  add("ankiCancelPreview", "button");
   add("clearData", "button");
   add("exportBackup", "button");
   add("restoreBackup", "button");
@@ -250,6 +269,13 @@ function createFakeController(initial?: Partial<AppState>): FakeController {
     exportBackup: vi.fn(async () => "{}"),
     restoreBackup: vi.fn(async () => {}),
     clearSavedData: vi.fn(async () => {}),
+    connectAnki: vi.fn(async () => ({ decks: [], models: [] })),
+    loadAnkiModelFields: vi.fn(async () => []),
+    validateAndSaveAnkiConfig: vi.fn(async () => {}),
+    previewAnkiSync: vi.fn(async () => {}),
+    applyAnkiSync: vi.fn(async () => {}),
+    cancelAnkiSyncPreview: vi.fn(),
+    clearAnkiSyncData: vi.fn(async () => {}),
     init: vi.fn(async () => {}),
   };
   return controller;

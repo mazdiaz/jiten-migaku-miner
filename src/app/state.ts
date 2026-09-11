@@ -1,4 +1,4 @@
-import type { AnkiSyncConfig } from "../domain/anki";
+import type { AnkiDeckScope, AnkiSyncConfig } from "../domain/anki";
 import type {
   CoverageStats,
   EntryWithKnown,
@@ -40,6 +40,7 @@ export interface AnkiUiState {
   wordCount: number;
   knownCount: number;
   minedCount: number;
+  deckScopeKind: AnkiDeckScope["kind"] | null;
   deckScopeLabel: string | null;
   noteType: string | null;
   targetField: string | null;
@@ -178,6 +179,7 @@ export const EMPTY_ANKI: AnkiUiState = {
   wordCount: 0,
   knownCount: 0,
   minedCount: 0,
+  deckScopeKind: null,
   deckScopeLabel: null,
   noteType: null,
   targetField: null,

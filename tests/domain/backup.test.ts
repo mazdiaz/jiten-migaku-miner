@@ -686,6 +686,7 @@ describe("backup format v2 Anki state", () => {
   it.each<[string, RegExp]>([
     ["", /ankiSync\.snapshot\.statuses\[0\]\[0\] must be a non-empty string/],
     [" word ", /ankiSync\.snapshot\.statuses\[0\]\[0\] must be canonical/],
+    ["WORD", /ankiSync\.snapshot\.statuses\[0\]\[0\] must be canonical/],
   ])("rejects empty or non-canonical Anki keys %j", (key, fragment) => {
     expectInvalidAnki(
       { snapshot: { syncedAt: "2026-09-10T09:00:00.000Z", statuses: [[key, "known"]] } },

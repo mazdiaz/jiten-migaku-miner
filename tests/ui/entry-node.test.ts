@@ -158,6 +158,24 @@ describe("renderEntryNode structure", () => {
     expect(article.querySelector(".entry-definitions")).not.toBeNull();
   });
 
+  it("shows Anki source on effective decision badges", () => {
+    const article = renderEntryNode(
+      makeEntry({ decision: "known", decisionSource: "anki", knownByAnki: true }),
+      1,
+      view,
+    );
+    expect(article.querySelector(".entry-badge-decision")?.textContent).toBe("Known · Anki");
+  });
+
+  it("does not label manual decisions as Anki", () => {
+    const article = renderEntryNode(
+      makeEntry({ decision: "mined", decisionSource: "manual" }),
+      1,
+      view,
+    );
+    expect(article.querySelector(".entry-badge-decision")?.textContent).toBe("Mined");
+  });
+
   it("renders full-definition disclosure for truncated definitions", () => {
     const article = renderEntryNode(makeEntry(), 1, view);
     const definitions = article.querySelector<HTMLElement>(".entry-definitions");

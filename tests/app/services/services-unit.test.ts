@@ -70,7 +70,7 @@ class FakeWorker implements WorkerClient {
 
   async importJiten(name: string) {
     return {
-      protocolVersion: 2 as const,
+      protocolVersion: 3 as const,
       type: "import-complete" as const,
       requestId: "i",
       kind: "jiten" as const,
@@ -83,7 +83,7 @@ class FakeWorker implements WorkerClient {
 
   async importKnown(name: string) {
     return {
-      protocolVersion: 2 as const,
+      protocolVersion: 3 as const,
       type: "import-complete" as const,
       requestId: "i",
       kind: "known" as const,

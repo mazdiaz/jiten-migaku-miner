@@ -95,6 +95,20 @@ describe("worker protocol", () => {
     },
   );
 
+  it("rejects whitespace-only Anki tuple keys", () => {
+    expect(() =>
+      parseWorkerRequest({
+        protocolVersion: 3,
+        type: "anki-preview-match",
+        requestId: "preview-1",
+        datasetId: "dataset-1",
+        knownWords: [],
+        decisions: [],
+        ankiStatuses: [[" ", "known"]],
+      }),
+    ).toThrowError(expect.objectContaining({ code: "invalid-message" }));
+  });
+
   it("round-trips decisions through query requests", () => {
     const request: WorkerRequest = {
       ...validQueryRequest,

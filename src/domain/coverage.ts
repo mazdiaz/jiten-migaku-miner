@@ -1,4 +1,4 @@
-import { resolveEffectiveDecision, type AnkiWordStatus } from "./anki";
+import { type AnkiWordStatus, resolveEffectiveDecision } from "./anki";
 import { canonicalWord } from "./text";
 import type {
   CoverageStats,

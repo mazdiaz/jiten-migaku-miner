@@ -151,7 +151,7 @@ class FakeWorkerClient implements WorkerClient {
     const importing = this.nextJiten ?? {
       chunks: [[entry("new-entry", "新しい")]],
       complete: {
-        protocolVersion: 2 as const,
+        protocolVersion: 3 as const,
         type: "import-complete" as const,
         requestId: "import",
         kind: "jiten" as const,
@@ -163,7 +163,7 @@ class FakeWorkerClient implements WorkerClient {
     };
     importing.chunks.forEach((entries, chunkIndex) => {
       onChunk?.({
-        protocolVersion: 2,
+        protocolVersion: 3,
         type: "import-chunk",
         requestId: importing.complete.requestId,
         kind: "jiten",
@@ -185,7 +185,7 @@ class FakeWorkerClient implements WorkerClient {
     const importing = this.nextKnown ?? {
       chunks: [["新しい"]],
       complete: {
-        protocolVersion: 2 as const,
+        protocolVersion: 3 as const,
         type: "import-complete" as const,
         requestId: "known-import",
         kind: "known" as const,
@@ -195,7 +195,7 @@ class FakeWorkerClient implements WorkerClient {
     };
     importing.chunks.forEach((words, chunkIndex) => {
       onChunk?.({
-        protocolVersion: 2,
+        protocolVersion: 3,
         type: "import-chunk",
         requestId: importing.complete.requestId,
         kind: "known",
@@ -696,7 +696,7 @@ describe("MinerController", () => {
     worker.nextJiten = {
       chunks: [[entry("new-entry", "新しい")]],
       complete: {
-        protocolVersion: 2,
+        protocolVersion: 3,
         type: "import-complete",
         requestId: "import-new",
         kind: "jiten",
@@ -808,7 +808,7 @@ describe("MinerController", () => {
     worker.nextKnown = {
       chunks: [["新しい"]],
       complete: {
-        protocolVersion: 2,
+        protocolVersion: 3,
         type: "import-complete",
         requestId: "known-new",
         kind: "known",
@@ -987,7 +987,7 @@ describe("MinerController", () => {
     worker.nextJiten = {
       chunks: [[entry("new-entry", "新しい")]],
       complete: {
-        protocolVersion: 2,
+        protocolVersion: 3,
         type: "import-complete",
         requestId: "import-count",
         kind: "jiten",
@@ -1019,7 +1019,7 @@ describe("MinerController", () => {
     worker.nextKnown = {
       chunks: [["古い"]],
       complete: {
-        protocolVersion: 2,
+        protocolVersion: 3,
         type: "import-complete",
         requestId: "known-new",
         kind: "known",
@@ -1053,7 +1053,7 @@ describe("MinerController", () => {
     worker.nextKnown = {
       chunks: [["新しい"]],
       complete: {
-        protocolVersion: 2,
+        protocolVersion: 3,
         type: "import-complete",
         requestId: "known-new",
         kind: "known",
@@ -1565,7 +1565,7 @@ describe("MinerController word decisions", () => {
     worker.nextKnown = {
       chunks: [["犬"]],
       complete: {
-        protocolVersion: 2,
+        protocolVersion: 3,
         type: "import-complete",
         requestId: "known-new",
         kind: "known",
@@ -3510,7 +3510,7 @@ describe("MinerController coverage lifecycle", () => {
     worker.nextKnown = {
       chunks: [["新しい"]],
       complete: {
-        protocolVersion: 2,
+        protocolVersion: 3,
         type: "import-complete",
         requestId: "known-new",
         kind: "known",
