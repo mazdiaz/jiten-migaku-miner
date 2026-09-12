@@ -1,6 +1,16 @@
 /* Modern browsers can paint target ranges without inserting wrapper nodes
    into Migaku-owned parsed markup. Legacy .th-wrap styles remain in
    entries.css for browsers without the CSS Custom Highlight API. */
+
+/* Migaku can give individual parsed-token wrappers their own vertical-align
+   or line-height, which shifts otherwise adjacent Japanese glyphs up/down.
+   Normalize only ordinary inline text wrappers on Jiten's sentence surface.
+   Ruby/readings and positioned status UI are deliberately left alone. */
+#resultsList .sentence :where(span, a, b, i, em, strong):not(.migaku-spacer) {
+  vertical-align: baseline !important;
+  line-height: inherit !important;
+}
+
 ::highlight(jiten-target) {
   background-color: rgba(255, 255, 0, 0.22);
 }
