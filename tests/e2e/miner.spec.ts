@@ -276,7 +276,7 @@ test.describe("canonical miner", () => {
     await expect(page.locator(".target-highlight")).toHaveCount(0);
   });
 
-  test("switches to non-mutating highlights after external parsing and falls back live", async ({
+  test("uses non-mutating browser highlights across DOM mutations and falls back live", async ({
     page,
   }) => {
     await page.goto("/");
@@ -287,25 +287,11 @@ test.describe("canonical miner", () => {
 
     const firstSentence = page.locator(".sentence[data-surface]").first();
     await expect(firstSentence.locator("span.target-highlight ruby").first()).toBeVisible();
-    await expect(firstSentence.locator("span.th-wrap")).not.toHaveCount(0);
-
-    // Simulate Migaku Full Power taking ownership of the sentence DOM. The
-    // marker intentionally contributes no visible text; its non-Jiten span is
-    // enough to put the adapter on the non-mutating Custom Highlight path.
-    await page.evaluate(() => {
-      const sentence = document.querySelector("#resultsList .sentence[data-surface]");
-      if (sentence === null) return;
-      const marker = document.createElement("span");
-      marker.className = "migaku-token";
-      marker.setAttribute("aria-hidden", "true");
-      sentence.appendChild(marker);
-    });
 
     await expect
       .poll(() =>
         page.evaluate(() => {
-          const registry = CSS.highlights;
-          const highlight = registry?.get("jiten-target");
+          const highlight = CSS.highlights?.get("jiten-target");
           if (highlight === undefined) return "";
           return [...highlight].map((range) => range.toString().replaceAll("​", "")).join("");
         }),
@@ -316,7 +302,10 @@ test.describe("canonical miner", () => {
     await page.evaluate(() => {
       const sentence = document.querySelector("#resultsList .sentence[data-surface]");
       if (sentence === null) return;
-      sentence.appendChild(document.createTextNode(""));
+      const marker = document.createElement("span");
+      marker.className = "migaku-token";
+      marker.setAttribute("aria-hidden", "true");
+      sentence.appendChild(marker);
     });
 
     await expect
