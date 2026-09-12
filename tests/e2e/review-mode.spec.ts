@@ -1,4 +1,4 @@
-﻿import { expect, type Page, test } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 
 const SMALL_CSV = "tests/fixtures/jiten-small.csv";
 
@@ -7,7 +7,7 @@ async function acceptDialogs(page: Page): Promise<void> {
 }
 
 function reviewTarget(page: Page): ReturnType<Page["locator"]> {
-  return page.locator("#reviewContent .review-entry .target-word");
+  return page.locator("#reviewContent #resultsList .review-entry .target-word");
 }
 
 async function openReview(page: Page): Promise<void> {
@@ -33,8 +33,49 @@ test.describe("review mode", () => {
     await expect(reviewTarget(page)).toHaveText("気になる");
     await expect(page.locator("#reviewKnown")).toBeEnabled();
 
-    // Normal list stays untouched underneath.
-    await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
+    // Review temporarily mounts the existing results surface into the modal.
+    // This keeps the same Migaku-facing DOM surface instead of creating a
+    // separate Japanese sentence tree that Full Power never parsed.
+    await expect(page.locator("#reviewContent > #resultsList")).toHaveCount(1);
+    await expect(page.locator("#reviewContent #resultsList .review-entry")).toHaveCount(1);
+    await expect(page.locator("main.app-shell #resultsList")).toHaveCount(0);
+
+    // Q is intentionally not consumed by our review shortcuts so Migaku can
+    // keep using its instant-card shortcut on the shared results surface.
+    await page.evaluate(() => {
+      (
+        window as unknown as {
+          __reviewQ: { key: string; defaultPrevented: boolean } | null;
+        }
+      ).__reviewQ = null;
+      document.addEventListener(
+        "keydown",
+        (event) => {
+          if (event.key.toLowerCase() !== "q") return;
+          (
+            window as unknown as {
+              __reviewQ: { key: string; defaultPrevented: boolean } | null;
+            }
+          ).__reviewQ = {
+            key: event.key,
+            defaultPrevented: event.defaultPrevented,
+          };
+        },
+        { once: true },
+      );
+    });
+    await page.keyboard.press("q");
+    await expect(reviewTarget(page)).toHaveText("気になる");
+    expect(
+      await page.evaluate(
+        () =>
+          (
+            window as unknown as {
+              __reviewQ: { key: string; defaultPrevented: boolean } | null;
+            }
+          ).__reviewQ,
+      ),
+    ).toEqual({ key: "q", defaultPrevented: false });
 
     await page.keyboard.press("m");
     await expect(reviewTarget(page)).toHaveText("プール");
@@ -53,6 +94,10 @@ test.describe("review mode", () => {
     await page.keyboard.press("Escape");
     await expect(page.locator("#reviewOverlay")).toBeHidden();
     await expect(page.locator("#reviewButton")).toBeFocused();
+
+    // The same results surface returns to the normal app after review exits.
+    await expect(page.locator("main.app-shell #resultsList")).toHaveCount(1);
+    await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
 
     // Decisions land in the normal list filters.
     await page.locator("#advancedToggle").click();

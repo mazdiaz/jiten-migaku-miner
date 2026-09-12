@@ -1,8 +1,6 @@
 import type { AppState } from "../../app/state";
 import type { DomMap } from "../dom";
-import { renderReviewEntryNode } from "./entry-view";
 
-const REVIEW_COMPLETE_MESSAGE = "No unreviewed candidates remain for the current filters.";
 const REVIEW_UNDO_BASE_LABEL = "Undo last";
 
 export function renderReviewSurface(dom: DomMap, state: Readonly<AppState>): void {
@@ -10,7 +8,8 @@ export function renderReviewSurface(dom: DomMap, state: Readonly<AppState>): voi
   dom.reviewOverlay.hidden = !review.active;
   document.body.classList.toggle("review-open", review.active);
   // Inert the background shell so background controls are unfocusable while
-  // the modal review overlay is open; the overlay lives outside main.app-shell.
+  // the modal review overlay is open; the shared results surface is moved
+  // into the overlay before this runs, so the Japanese text stays interactive.
   document.querySelector("main.app-shell")?.toggleAttribute("inert", review.active);
   dom.reviewButton.disabled = state.dataset === null || state.status === "loading" || review.active;
 
@@ -27,8 +26,14 @@ export function renderReviewSurface(dom: DomMap, state: Readonly<AppState>): voi
   dom.reviewComplete.hidden = !complete;
   dom.reviewContent.hidden = !review.active || complete;
 
+  // Review content owns the shared #resultsList while active. Only remove
+  // error nodes that this view created; clearing reviewContent would detach
+  // the Migaku-facing results surface and throw away extension parsing.
+  for (const child of [...dom.reviewContent.children]) {
+    if (child.classList.contains("review-error")) child.remove();
+  }
+
   if (!review.active) {
-    dom.reviewContent.textContent = "";
     dom.reviewProgress.textContent = "";
     return;
   }
@@ -37,25 +42,11 @@ export function renderReviewSurface(dom: DomMap, state: Readonly<AppState>): voi
 
   // The error renders whenever it is set, regardless of status: a failed
   // decision returns to "ready" with the card kept, so retry stays possible.
-  const appendReviewError = (message: string): void => {
+  if (review.errorMessage !== null) {
     const error = document.createElement("div");
     error.className = "review-error";
     error.setAttribute("role", "alert");
-    error.textContent = message;
+    error.textContent = review.errorMessage;
     dom.reviewContent.appendChild(error);
-  };
-
-  if (review.current === null) {
-    if (review.errorMessage !== null) {
-      dom.reviewContent.textContent = "";
-      appendReviewError(review.errorMessage);
-      return;
-    }
-    dom.reviewContent.textContent =
-      review.status === "loading" ? "Loading review queue…" : REVIEW_COMPLETE_MESSAGE;
-    return;
   }
-  dom.reviewContent.textContent = "";
-  dom.reviewContent.appendChild(renderReviewEntryNode(review.current, state.view));
-  if (review.errorMessage !== null) appendReviewError(review.errorMessage);
 }
