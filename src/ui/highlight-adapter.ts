@@ -204,12 +204,10 @@ function renderLegacySegments(segments: TextSegment[]): void {
 }
 
 function getCustomHighlightApi(): CustomHighlightApi | null {
-  const globals = globalThis as unknown as {
-    Highlight?: unknown;
-    CSS?: { highlights?: unknown };
-  };
-  const Highlight = globals.Highlight;
-  const registry = globals.CSS?.highlights as Partial<HighlightRegistryLike> | undefined;
+  const Highlight = (globalThis as unknown as { Highlight?: unknown }).Highlight;
+  const cssGlobal =
+    typeof CSS === "undefined" ? undefined : (CSS as unknown as { highlights?: unknown });
+  const registry = cssGlobal?.highlights as Partial<HighlightRegistryLike> | undefined;
   if (
     typeof Highlight !== "function" ||
     registry === undefined ||
