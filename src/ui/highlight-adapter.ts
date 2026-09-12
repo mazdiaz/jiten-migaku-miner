@@ -27,6 +27,11 @@ interface CustomHighlightApi {
   registry: HighlightRegistryLike;
 }
 
+interface HighlightRealm {
+  Highlight?: unknown;
+  CSS?: { highlights?: unknown };
+}
+
 const JITEN_HIGHLIGHT_NAME = "jiten-target";
 
 function isSkipTag(tag: string): boolean {
@@ -141,7 +146,8 @@ function findTargetSegments(
 
 function createRange(segment: TextSegment): Range | null {
   try {
-    const range = document.createRange();
+    const ownerDocument = segment.node.ownerDocument ?? document;
+    const range = ownerDocument.createRange();
     range.setStart(segment.node, segment.first);
     range.setEnd(segment.node, segment.last + 1);
     return range;
@@ -203,11 +209,10 @@ function renderLegacySegments(segments: TextSegment[]): void {
   }
 }
 
-function getCustomHighlightApi(): CustomHighlightApi | null {
-  const Highlight = (globalThis as unknown as { Highlight?: unknown }).Highlight;
-  const cssGlobal =
-    typeof CSS === "undefined" ? undefined : (CSS as unknown as { highlights?: unknown });
-  const registry = cssGlobal?.highlights as Partial<HighlightRegistryLike> | undefined;
+function getCustomHighlightApi(root: Element): CustomHighlightApi | null {
+  const view = root.ownerDocument.defaultView as unknown as HighlightRealm | null;
+  const Highlight = view?.Highlight;
+  const registry = view?.CSS?.highlights as Partial<HighlightRegistryLike> | undefined;
   if (
     typeof Highlight !== "function" ||
     registry === undefined ||
@@ -236,7 +241,7 @@ export function createHighlightAdapter(root: Element): HighlightAdapter {
     if (disposed) return;
     suppressCount += 1;
     try {
-      const customHighlight = getCustomHighlightApi();
+      const customHighlight = getCustomHighlightApi(target);
       const ranges: Range[] = [];
 
       for (const sentence of [...target.querySelectorAll<HTMLElement>(".sentence[data-surface]")]) {
@@ -301,7 +306,7 @@ export function createHighlightAdapter(root: Element): HighlightAdapter {
         cancelAnimationFrame(frame);
         frame = null;
       }
-      getCustomHighlightApi()?.registry.delete(JITEN_HIGHLIGHT_NAME);
+      getCustomHighlightApi(root)?.registry.delete(JITEN_HIGHLIGHT_NAME);
       observer.disconnect();
     },
   };
