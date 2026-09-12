@@ -22,9 +22,18 @@ interface HighlightRegistryLike {
 
 type HighlightConstructor = new (...ranges: Range[]) => unknown;
 
-interface CustomHighlightApi {
+export interface CustomHighlightApi {
   Highlight: HighlightConstructor;
   registry: HighlightRegistryLike;
+}
+
+export interface HighlightAdapterOptions {
+  /**
+   * Undefined uses native browser feature detection. Supplying an API is
+   * useful for deterministic DOM tests; null explicitly exercises the legacy
+   * wrapper fallback.
+   */
+  highlightApi?: CustomHighlightApi | null;
 }
 
 interface HighlightRealm {
@@ -213,8 +222,6 @@ function getCustomHighlightApi(root: Element): CustomHighlightApi | null {
   const view = root.ownerDocument.defaultView as unknown as HighlightRealm | null;
   const globalRealm = globalThis as unknown as HighlightRealm;
   const Highlight = view?.Highlight ?? globalRealm.Highlight;
-  // Browsers expose CSS on the document window. Some DOM/test realms expose
-  // Highlight there but keep CSS on the global object, so use a safe fallback.
   const registry = (view?.CSS?.highlights ?? globalRealm.CSS?.highlights) as
     | Partial<HighlightRegistryLike>
     | undefined;
@@ -237,16 +244,22 @@ export interface HighlightAdapter {
   destroy(): void;
 }
 
-export function createHighlightAdapter(root: Element): HighlightAdapter {
+export function createHighlightAdapter(
+  root: Element,
+  options: HighlightAdapterOptions = {},
+): HighlightAdapter {
   let frame: number | null = null;
   let suppressCount = 0;
   let disposed = false;
+
+  const resolveHighlightApi = (target: Element): CustomHighlightApi | null =>
+    options.highlightApi === undefined ? getCustomHighlightApi(target) : options.highlightApi;
 
   const reconcileRoot = (target: Element): void => {
     if (disposed) return;
     suppressCount += 1;
     try {
-      const customHighlight = getCustomHighlightApi(target);
+      const customHighlight = resolveHighlightApi(target);
       const ranges: Range[] = [];
 
       for (const sentence of [...target.querySelectorAll<HTMLElement>(".sentence[data-surface]")]) {
@@ -311,7 +324,7 @@ export function createHighlightAdapter(root: Element): HighlightAdapter {
         cancelAnimationFrame(frame);
         frame = null;
       }
-      getCustomHighlightApi(root)?.registry.delete(JITEN_HIGHLIGHT_NAME);
+      resolveHighlightApi(root)?.registry.delete(JITEN_HIGHLIGHT_NAME);
       observer.disconnect();
     },
   };
