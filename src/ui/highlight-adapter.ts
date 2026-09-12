@@ -91,10 +91,23 @@ function unwrapThWraps(sentence: Element): void {
   }
 }
 
-function isParsedSentence(sentence: Element): boolean {
+function isJitenOwnedParseElement(element: Element): boolean {
+  if (
+    element.matches(
+      "span.target-highlight, span.th-run, span.th-wrap, span.th-live, .target-highlight.th-live",
+    )
+  ) {
+    return true;
+  }
+  // Jiten's own furigana renderer creates ruby only inside target-highlight.
+  // Ruby elsewhere, links/bold nodes, or any other span are evidence that an
+  // external parser (such as Migaku Full Power) has rewritten the sentence.
+  return element.tagName === "RUBY" && element.closest(".target-highlight") !== null;
+}
+
+function isExternallyParsedSentence(sentence: Element): boolean {
   return [...sentence.querySelectorAll("span, a, ruby, b")].some(
-    (element) =>
-      !element.className || !/(target-highlight|th-run|th-wrap|th-live)/.test(element.className),
+    (element) => !isJitenOwnedParseElement(element),
   );
 }
 
@@ -264,7 +277,7 @@ export function createHighlightAdapter(
 
       for (const sentence of [...target.querySelectorAll<HTMLElement>(".sentence[data-surface]")]) {
         unwrapThWraps(sentence);
-        if (!isParsedSentence(sentence)) continue;
+        const externallyParsed = isExternallyParsedSentence(sentence);
 
         const segments = findTargetSegments(
           sentence,
@@ -276,7 +289,7 @@ export function createHighlightAdapter(
           continue;
         }
 
-        if (customHighlight === null) {
+        if (customHighlight === null || !externallyParsed) {
           renderLegacySegments(segments);
           continue;
         }
