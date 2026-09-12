@@ -9,6 +9,26 @@ interface VisibleText {
   text: string;
 }
 
+interface TextSegment {
+  node: Text;
+  first: number;
+  last: number;
+}
+
+interface HighlightRegistryLike {
+  set(name: string, highlight: unknown): unknown;
+  delete(name: string): boolean;
+}
+
+type HighlightConstructor = new (...ranges: Range[]) => unknown;
+
+interface CustomHighlightApi {
+  Highlight: HighlightConstructor;
+  registry: HighlightRegistryLike;
+}
+
+const JITEN_HIGHLIGHT_NAME = "jiten-target";
+
 function isSkipTag(tag: string): boolean {
   return tag === "RT" || tag === "RP" || tag === "SCRIPT" || tag === "STYLE";
 }
@@ -64,14 +84,16 @@ function isParsedSentence(sentence: Element): boolean {
   );
 }
 
-function markSentence(sentence: HTMLElement, surface: string, word: string): void {
-  unwrapThWraps(sentence);
-  if (!isParsedSentence(sentence)) return;
-
+function findTargetSegments(
+  sentence: HTMLElement,
+  surface: string,
+  word: string,
+): TextSegment[] | null {
   const { leaves, text } = collectVisibleText(sentence);
   const ordinalRaw = Number(sentence.dataset.surfaceIndex ?? 0);
   const ordinal = Number.isFinite(ordinalRaw) ? ordinalRaw : 0;
   let index = -1;
+
   if (surface) {
     let cursor = text.indexOf(surface);
     let seen = 0;
@@ -86,6 +108,7 @@ function markSentence(sentence: HTMLElement, surface: string, word: string): voi
     // Defensive: fewer occurrences than the ordinal asks for -> first match.
     if (index === -1 && seen > 0) index = text.indexOf(surface);
   }
+
   let target = surface;
   if (index === -1 && word) {
     let stem = "";
@@ -98,37 +121,75 @@ function markSentence(sentence: HTMLElement, surface: string, word: string): voi
       target = stem;
     }
   }
-  if (index === -1) {
-    sentence.querySelector(".target-highlight")?.classList.add("th-live");
-    return;
-  }
+
+  if (index === -1) return null;
 
   const end = index + target.length;
-  const marked: HTMLElement[] = [];
-  const push = (element: HTMLElement): void => {
-    if (!marked.includes(element)) marked.push(element);
-  };
-
   const inRange = leaves.filter((leaf) => leaf.pos >= index && leaf.pos < end);
-  const byNode = new Map<Text, { node: Text; first: number; last: number }>();
+  const byNode = new Map<Text, TextSegment>();
   for (const leaf of inRange) {
-    let record = byNode.get(leaf.node);
-    if (record === undefined) {
-      record = { node: leaf.node, first: leaf.offset, last: leaf.offset };
-      byNode.set(leaf.node, record);
+    let segment = byNode.get(leaf.node);
+    if (segment === undefined) {
+      segment = { node: leaf.node, first: leaf.offset, last: leaf.offset };
+      byNode.set(leaf.node, segment);
     }
-    record.first = Math.min(record.first, leaf.offset);
-    record.last = Math.max(record.last, leaf.offset);
+    segment.first = Math.min(segment.first, leaf.offset);
+    segment.last = Math.max(segment.last, leaf.offset);
   }
-  for (const record of byNode.values()) {
+  return [...byNode.values()];
+}
+
+function createRange(segment: TextSegment): Range | null {
+  try {
+    const range = document.createRange();
+    range.setStart(segment.node, segment.first);
+    range.setEnd(segment.node, segment.last + 1);
+    return range;
+  } catch {
+    return null;
+  }
+}
+
+function hasMeaningfulBox(rect: DOMRect): boolean {
+  return rect.width > 0 && rect.height > 0;
+}
+
+function intersects(a: DOMRect, b: DOMRect): boolean {
+  return a.right > b.left && a.left < b.right && a.bottom > b.top && a.top < b.bottom;
+}
+
+function isVisibleRange(range: Range, sentence: HTMLElement): boolean {
+  const sentenceRect = sentence.getBoundingClientRect();
+  // DOM-only test environments do not provide layout. In that case, avoid
+  // treating missing geometry as proof that otherwise valid text is hidden.
+  if (!hasMeaningfulBox(sentenceRect)) return true;
+
+  const getClientRects = (range as Range & { getClientRects?: () => DOMRectList }).getClientRects;
+  if (typeof getClientRects !== "function") return true;
+
+  let rects: DOMRectList;
+  try {
+    rects = getClientRects.call(range);
+  } catch {
+    return true;
+  }
+
+  for (const rect of Array.from(rects)) {
+    if (hasMeaningfulBox(rect) && intersects(rect, sentenceRect)) return true;
+  }
+  return false;
+}
+
+function renderLegacySegments(segments: TextSegment[]): void {
+  const marked: HTMLElement[] = [];
+  for (const segment of segments) {
+    const range = createRange(segment);
+    if (range === null) continue;
     try {
-      const range = document.createRange();
-      range.setStart(record.node, record.first);
-      range.setEnd(record.node, record.last + 1);
       const wrapper = document.createElement("span");
       wrapper.className = "th-wrap";
       range.surroundContents(wrapper);
-      push(wrapper);
+      marked.push(wrapper);
     } catch {
       // Ranges that cross element boundaries cannot be wrapped; partial coverage is acceptable.
     }
@@ -140,6 +201,27 @@ function markSentence(sentence: HTMLElement, surface: string, word: string): voi
     marked[0]?.classList.add("th-first");
     marked[marked.length - 1]?.classList.add("th-last");
   }
+}
+
+function getCustomHighlightApi(): CustomHighlightApi | null {
+  const globals = globalThis as unknown as {
+    Highlight?: unknown;
+    CSS?: { highlights?: unknown };
+  };
+  const Highlight = globals.Highlight;
+  const registry = globals.CSS?.highlights as Partial<HighlightRegistryLike> | undefined;
+  if (
+    typeof Highlight !== "function" ||
+    registry === undefined ||
+    typeof registry.set !== "function" ||
+    typeof registry.delete !== "function"
+  ) {
+    return null;
+  }
+  return {
+    Highlight: Highlight as HighlightConstructor,
+    registry: registry as HighlightRegistryLike,
+  };
 }
 
 export interface HighlightAdapter {
@@ -156,8 +238,39 @@ export function createHighlightAdapter(root: Element): HighlightAdapter {
     if (disposed) return;
     suppressCount += 1;
     try {
+      const customHighlight = getCustomHighlightApi();
+      const ranges: Range[] = [];
+
       for (const sentence of [...target.querySelectorAll<HTMLElement>(".sentence[data-surface]")]) {
-        markSentence(sentence, sentence.dataset.surface ?? "", sentence.dataset.word ?? "");
+        unwrapThWraps(sentence);
+        if (!isParsedSentence(sentence)) continue;
+
+        const segments = findTargetSegments(
+          sentence,
+          sentence.dataset.surface ?? "",
+          sentence.dataset.word ?? "",
+        );
+        if (segments === null) {
+          sentence.querySelector(".target-highlight")?.classList.add("th-live");
+          continue;
+        }
+
+        if (customHighlight === null) {
+          renderLegacySegments(segments);
+          continue;
+        }
+
+        for (const segment of segments) {
+          const range = createRange(segment);
+          if (range !== null && isVisibleRange(range, sentence)) ranges.push(range);
+        }
+      }
+
+      if (customHighlight !== null) {
+        customHighlight.registry.set(
+          JITEN_HIGHLIGHT_NAME,
+          new customHighlight.Highlight(...ranges),
+        );
       }
     } finally {
       queueMicrotask(() => {
@@ -190,6 +303,7 @@ export function createHighlightAdapter(root: Element): HighlightAdapter {
         cancelAnimationFrame(frame);
         frame = null;
       }
+      getCustomHighlightApi()?.registry.delete(JITEN_HIGHLIGHT_NAME);
       observer.disconnect();
     },
   };
