@@ -1,9 +1,6 @@
 ﻿// @vitest-environment happy-dom
 import { describe, expect, it } from "vitest";
-import {
-  type CustomHighlightApi,
-  createHighlightAdapter,
-} from "../../src/ui/highlight-adapter";
+import { type CustomHighlightApi, createHighlightAdapter } from "../../src/ui/highlight-adapter";
 
 interface FakeHighlightRecord {
   ranges: Range[];
