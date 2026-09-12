@@ -1,6 +1,7 @@
 import "./styles/tokens.css";
 import "./styles/layout.css";
 import "./styles/entries.css";
+import "./styles/highlight.css";
 
 import { createMinerController } from "./app/controller";
 import { createQueryController } from "./app/query-controller";

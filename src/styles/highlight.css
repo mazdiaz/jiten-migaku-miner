@@ -1,0 +1,11 @@
+/* Modern browsers can paint target ranges without inserting wrapper nodes
+   into Migaku-owned parsed markup. Legacy .th-wrap styles remain in
+   entries.css for browsers without the CSS Custom Highlight API. */
+::highlight(jiten-target) {
+  background-color: rgba(255, 255, 0, 0.22);
+}
+
+body.hl-pill ::highlight(jiten-target) {
+  background-color: rgba(139, 167, 255, 0.1);
+  text-decoration: underline rgba(139, 167, 255, 0.55);
+}

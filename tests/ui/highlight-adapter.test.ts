@@ -98,7 +98,7 @@ describe("highlight adapter", () => {
     adapter.destroy();
   });
 
-  it("leaves fully parsed sentences untouched", () => {
+  it("keeps legacy wrapping for Jiten-owned target markup", () => {
     const root = document.createElement("div");
     const node = sentence("気になる", "気になる", [targetSpan("気になる")]);
     root.appendChild(node);
@@ -106,7 +106,8 @@ describe("highlight adapter", () => {
 
     adapter.reconcile(root);
 
-    expect(node.querySelectorAll("span.th-wrap")).toHaveLength(0);
+    expect(node.querySelectorAll("span.th-wrap")).toHaveLength(1);
+    expect(node.querySelector("span.th-wrap")?.textContent).toBe("気になる");
     expect(node.querySelector(".target-highlight")).not.toBeNull();
     adapter.destroy();
   });
