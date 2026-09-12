@@ -276,7 +276,7 @@ test.describe("canonical miner", () => {
     await expect(page.locator(".target-highlight")).toHaveCount(0);
   });
 
-  test("reconciles furigana highlights after DOM mutation and falls back live", async ({
+  test("reconciles furigana highlights without mutating parsed DOM and falls back live", async ({
     page,
   }) => {
     await page.goto("/");
@@ -287,20 +287,35 @@ test.describe("canonical miner", () => {
 
     const firstSentence = page.locator(".sentence[data-surface]").first();
     await expect(firstSentence.locator("span.target-highlight ruby").first()).toBeVisible();
-    await expect(firstSentence.locator("span.th-wrap").first()).toBeVisible();
-    await expect(firstSentence.locator("span.th-wrap.th-first").first()).toBeVisible();
+
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const registry = CSS.highlights;
+          const highlight = registry?.get("jiten-target");
+          if (highlight === undefined) return "";
+          return [...highlight].map((range) => range.toString().replaceAll("​", "")).join("");
+        }),
+      )
+      .toContain("気になる");
+    await expect(firstSentence.locator("span.th-wrap")).toHaveCount(0);
 
     await page.evaluate(() => {
-      document.querySelectorAll("#resultsList span.th-wrap").forEach((element) => {
-        const parent = element.parentNode;
-        if (parent === null) return;
-        while (element.firstChild !== null) parent.insertBefore(element.firstChild, element);
-        parent.removeChild(element);
-        parent.normalize();
-      });
+      const sentence = document.querySelector("#resultsList .sentence[data-surface]");
+      if (sentence === null) return;
+      sentence.appendChild(document.createTextNode(""));
     });
 
-    await expect(page.locator("#resultsList span.th-wrap").first()).toBeVisible();
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const highlight = CSS.highlights?.get("jiten-target");
+          if (highlight === undefined) return "";
+          return [...highlight].map((range) => range.toString().replaceAll("​", "")).join("");
+        }),
+      )
+      .toContain("気になる");
+    await expect(page.locator("#resultsList span.th-wrap")).toHaveCount(0);
 
     await page.evaluate(() => {
       const sentence = document.querySelector("#resultsList .sentence[data-surface]");
