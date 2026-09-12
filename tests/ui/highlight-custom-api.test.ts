@@ -1,25 +1,19 @@
 ﻿// @vitest-environment happy-dom
 import { describe, expect, it } from "vitest";
-import { createHighlightAdapter } from "../../src/ui/highlight-adapter";
+import {
+  type CustomHighlightApi,
+  createHighlightAdapter,
+} from "../../src/ui/highlight-adapter";
 
 interface FakeHighlightRecord {
   ranges: Range[];
 }
 
-interface HighlightRealm {
-  Highlight?: unknown;
-  CSS?: { highlights?: unknown };
-}
-
-function installFakeHighlightApi(): {
+function createFakeHighlightApi(): {
+  api: CustomHighlightApi;
   registry: Map<string, FakeHighlightRecord>;
-  restore(): void;
 } {
   const registry = new Map<string, FakeHighlightRecord>();
-  const view = document.defaultView as unknown as HighlightRealm;
-  const cssGlobal = view.CSS ?? (CSS as unknown as { highlights?: unknown });
-  const oldHighlight = Object.getOwnPropertyDescriptor(view, "Highlight");
-  const oldRegistry = Object.getOwnPropertyDescriptor(cssGlobal, "highlights");
 
   class FakeHighlight implements FakeHighlightRecord {
     ranges: Range[];
@@ -29,37 +23,20 @@ function installFakeHighlightApi(): {
     }
   }
 
-  Object.defineProperty(view, "Highlight", {
-    configurable: true,
-    writable: true,
-    value: FakeHighlight,
-  });
-  Object.defineProperty(cssGlobal, "highlights", {
-    configurable: true,
-    writable: true,
-    value: {
-      set(name: string, highlight: FakeHighlightRecord) {
-        registry.set(name, highlight);
+  const api: CustomHighlightApi = {
+    Highlight: FakeHighlight,
+    registry: {
+      set(name: string, highlight: unknown) {
+        registry.set(name, highlight as FakeHighlightRecord);
         return this;
-      },
-      get(name: string) {
-        return registry.get(name);
       },
       delete(name: string) {
         return registry.delete(name);
       },
     },
-  });
-
-  return {
-    registry,
-    restore() {
-      if (oldHighlight === undefined) Reflect.deleteProperty(view, "Highlight");
-      else Object.defineProperty(view, "Highlight", oldHighlight);
-      if (oldRegistry === undefined) Reflect.deleteProperty(cssGlobal, "highlights");
-      else Object.defineProperty(cssGlobal, "highlights", oldRegistry);
-    },
   };
+
+  return { api, registry };
 }
 
 function sentence(surface: string, word: string): HTMLElement {
@@ -83,89 +60,77 @@ function rangeText(range: Range): string {
 
 describe("CSS Custom Highlight compatibility", () => {
   it("highlights parsed Migaku-like text without inserting th-wrap elements", () => {
-    const fake = installFakeHighlightApi();
-    try {
-      const root = document.createElement("div");
-      const node = sentence("気になる", "気になる");
-      root.appendChild(node);
-      const adapter = createHighlightAdapter(root);
+    const fake = createFakeHighlightApi();
+    const root = document.createElement("div");
+    const node = sentence("気になる", "気になる");
+    root.appendChild(node);
+    const adapter = createHighlightAdapter(root, { highlightApi: fake.api });
 
-      adapter.reconcile(root);
+    adapter.reconcile(root);
 
-      expect(node.querySelectorAll("span.th-wrap")).toHaveLength(0);
-      const ranges = fake.registry.get("jiten-target")?.ranges ?? [];
-      expect(ranges).toHaveLength(2);
-      expect(ranges.map(rangeText).join("")).toBe("気になる");
-      expect(node.textContent).toBe("彼は気になる。");
-      adapter.destroy();
-    } finally {
-      fake.restore();
-    }
+    expect(node.querySelectorAll("span.th-wrap")).toHaveLength(0);
+    const ranges = fake.registry.get("jiten-target")?.ranges ?? [];
+    expect(ranges).toHaveLength(2);
+    expect(ranges.map(rangeText).join("")).toBe("気になる");
+    expect(node.textContent).toBe("彼は気になる。");
+    adapter.destroy();
   });
 
   it("replaces stale registered ranges on repeated reconciliation and clears them on destroy", () => {
-    const fake = installFakeHighlightApi();
-    try {
-      const root = document.createElement("div");
-      const node = sentence("気になる", "気になる");
-      root.appendChild(node);
-      const adapter = createHighlightAdapter(root);
+    const fake = createFakeHighlightApi();
+    const root = document.createElement("div");
+    const node = sentence("気になる", "気になる");
+    root.appendChild(node);
+    const adapter = createHighlightAdapter(root, { highlightApi: fake.api });
 
-      adapter.reconcile(root);
-      const first = fake.registry.get("jiten-target");
-      expect(first?.ranges.map(rangeText).join("")).toBe("気になる");
+    adapter.reconcile(root);
+    const first = fake.registry.get("jiten-target");
+    expect(first?.ranges.map(rangeText).join("")).toBe("気になる");
 
-      node.dataset.surface = "彼";
-      node.dataset.word = "彼";
-      adapter.reconcile(root);
-      const second = fake.registry.get("jiten-target");
-      expect(second).not.toBe(first);
-      expect(second?.ranges.map(rangeText).join("")).toBe("彼");
+    node.dataset.surface = "彼";
+    node.dataset.word = "彼";
+    adapter.reconcile(root);
+    const second = fake.registry.get("jiten-target");
+    expect(second).not.toBe(first);
+    expect(second?.ranges.map(rangeText).join("")).toBe("彼");
 
-      adapter.destroy();
-      expect(fake.registry.has("jiten-target")).toBe(false);
-    } finally {
-      fake.restore();
-    }
+    adapter.destroy();
+    expect(fake.registry.has("jiten-target")).toBe(false);
   });
 
   it("still ignores ruby readings, Migaku spacers, and zero-width spaces", () => {
-    const fake = installFakeHighlightApi();
-    try {
-      const root = document.createElement("div");
-      const node = document.createElement("p");
-      node.className = "sentence";
-      node.dataset.surface = "気になる";
-      node.dataset.word = "気になる";
+    const fake = createFakeHighlightApi();
+    const root = document.createElement("div");
+    const node = document.createElement("p");
+    node.className = "sentence";
+    node.dataset.surface = "気になる";
+    node.dataset.word = "気になる";
 
-      const ruby = document.createElement("ruby");
-      const rb = document.createElement("rb");
-      rb.textContent = "気";
-      const rt = document.createElement("rt");
-      rt.textContent = "き";
-      ruby.append(rb, rt);
-      const spacer = document.createElement("span");
-      spacer.className = "migaku-spacer";
-      spacer.textContent = "helper";
-      node.append(ruby, document.createTextNode("に​な​る"), spacer);
-      root.appendChild(node);
-      const adapter = createHighlightAdapter(root);
+    const ruby = document.createElement("ruby");
+    const rb = document.createElement("rb");
+    rb.textContent = "気";
+    const rt = document.createElement("rt");
+    rt.textContent = "き";
+    ruby.append(rb, rt);
+    const spacer = document.createElement("span");
+    spacer.className = "migaku-spacer";
+    spacer.textContent = "helper";
+    node.append(ruby, document.createTextNode("に​な​る"), spacer);
+    root.appendChild(node);
+    const adapter = createHighlightAdapter(root, { highlightApi: fake.api });
 
-      adapter.reconcile(root);
+    adapter.reconcile(root);
 
-      const ranges = fake.registry.get("jiten-target")?.ranges ?? [];
-      expect(ranges.map(rangeText).join("")).toBe("気になる");
-      expect(ranges.map(rangeText).join("")).not.toContain("き");
-      expect(ranges.map(rangeText).join("")).not.toContain("helper");
-      expect(node.querySelectorAll("span.th-wrap")).toHaveLength(0);
-      adapter.destroy();
-    } finally {
-      fake.restore();
-    }
+    const ranges = fake.registry.get("jiten-target")?.ranges ?? [];
+    expect(ranges.map(rangeText).join("")).toBe("気になる");
+    expect(ranges.map(rangeText).join("")).not.toContain("き");
+    expect(ranges.map(rangeText).join("")).not.toContain("helper");
+    expect(node.querySelectorAll("span.th-wrap")).toHaveLength(0);
+    adapter.destroy();
   });
 
   it("rejects a target when real layout data says its ranges have no visible geometry", () => {
-    const fake = installFakeHighlightApi();
+    const fake = createFakeHighlightApi();
     const rangePrototype = Range.prototype as Range & {
       getClientRects?: () => DOMRectList;
     };
@@ -190,7 +155,7 @@ describe("CSS Custom Highlight compatibility", () => {
           toJSON: () => ({}),
         }) as DOMRect;
       root.appendChild(node);
-      const adapter = createHighlightAdapter(root);
+      const adapter = createHighlightAdapter(root, { highlightApi: fake.api });
 
       adapter.reconcile(root);
 
@@ -199,7 +164,19 @@ describe("CSS Custom Highlight compatibility", () => {
     } finally {
       if (oldGetClientRects === undefined) Reflect.deleteProperty(rangePrototype, "getClientRects");
       else Object.defineProperty(rangePrototype, "getClientRects", oldGetClientRects);
-      fake.restore();
     }
+  });
+
+  it("preserves the legacy wrapper fallback when Custom Highlight is unavailable", () => {
+    const root = document.createElement("div");
+    const node = sentence("気になる", "気になる");
+    root.appendChild(node);
+    const adapter = createHighlightAdapter(root, { highlightApi: null });
+
+    adapter.reconcile(root);
+
+    expect(node.querySelectorAll("span.th-wrap")).toHaveLength(2);
+    expect(node.textContent).toBe("彼は気になる。");
+    adapter.destroy();
   });
 });
