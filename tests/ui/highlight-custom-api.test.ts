@@ -190,7 +190,7 @@ describe("CSS Custom Highlight compatibility", () => {
       expect(fake.registry.get("jiten-target")?.ranges ?? []).toHaveLength(0);
       adapter.destroy();
     } finally {
-      if (oldGetClientRects === undefined) delete rangePrototype.getClientRects;
+      if (oldGetClientRects === undefined) Reflect.deleteProperty(rangePrototype, "getClientRects");
       else Object.defineProperty(rangePrototype, "getClientRects", oldGetClientRects);
       fake.restore();
     }
