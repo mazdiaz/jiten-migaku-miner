@@ -6,13 +6,20 @@ interface FakeHighlightRecord {
   ranges: Range[];
 }
 
+interface HighlightRealm {
+  Highlight?: unknown;
+  CSS?: { highlights?: unknown };
+}
+
 function installFakeHighlightApi(): {
   registry: Map<string, FakeHighlightRecord>;
   restore(): void;
 } {
   const registry = new Map<string, FakeHighlightRecord>();
-  const oldHighlight = Object.getOwnPropertyDescriptor(globalThis, "Highlight");
-  const oldRegistry = Object.getOwnPropertyDescriptor(CSS, "highlights");
+  const view = document.defaultView as unknown as HighlightRealm;
+  const cssGlobal = view.CSS ?? (CSS as unknown as { highlights?: unknown });
+  const oldHighlight = Object.getOwnPropertyDescriptor(view, "Highlight");
+  const oldRegistry = Object.getOwnPropertyDescriptor(cssGlobal, "highlights");
 
   class FakeHighlight implements FakeHighlightRecord {
     ranges: Range[];
@@ -22,12 +29,12 @@ function installFakeHighlightApi(): {
     }
   }
 
-  Object.defineProperty(globalThis, "Highlight", {
+  Object.defineProperty(view, "Highlight", {
     configurable: true,
     writable: true,
     value: FakeHighlight,
   });
-  Object.defineProperty(CSS, "highlights", {
+  Object.defineProperty(cssGlobal, "highlights", {
     configurable: true,
     writable: true,
     value: {
@@ -47,10 +54,10 @@ function installFakeHighlightApi(): {
   return {
     registry,
     restore() {
-      if (oldHighlight === undefined) delete (globalThis as { Highlight?: unknown }).Highlight;
-      else Object.defineProperty(globalThis, "Highlight", oldHighlight);
-      if (oldRegistry === undefined) delete (CSS as { highlights?: unknown }).highlights;
-      else Object.defineProperty(CSS, "highlights", oldRegistry);
+      if (oldHighlight === undefined) Reflect.deleteProperty(view, "Highlight");
+      else Object.defineProperty(view, "Highlight", oldHighlight);
+      if (oldRegistry === undefined) Reflect.deleteProperty(cssGlobal, "highlights");
+      else Object.defineProperty(cssGlobal, "highlights", oldRegistry);
     },
   };
 }
