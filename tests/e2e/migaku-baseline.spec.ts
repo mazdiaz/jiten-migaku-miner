@@ -8,12 +8,11 @@ test.describe("Migaku sentence baseline compatibility", () => {
   }) => {
     await page.goto("/");
     await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
-    await expect(page.locator("#resultsList .sentence").first()).toBeVisible();
 
-    await page.evaluate(() => {
-      const sentence = document.querySelector<HTMLElement>("#resultsList .sentence[data-surface]");
-      if (sentence === null) throw new Error("Expected a rendered sentence");
+    const sentence = page.locator("#resultsList .sentence").first();
+    await expect(sentence).toBeVisible();
 
+    await sentence.evaluate((element) => {
       const token = document.createElement("span");
       token.id = "migaku-baseline-probe";
       token.textContent = "兄";
@@ -25,7 +24,7 @@ test.describe("Migaku sentence baseline compatibility", () => {
       ruby.style.setProperty("vertical-align", "super");
       ruby.innerHTML = "兄<rt>あに</rt>";
 
-      sentence.append(token, ruby);
+      element.append(token, ruby);
     });
 
     const token = page.locator("#migaku-baseline-probe");
@@ -33,20 +32,18 @@ test.describe("Migaku sentence baseline compatibility", () => {
 
     await expect
       .poll(() =>
-        token.evaluate((element) => ({
-          verticalAlign: getComputedStyle(element).verticalAlign,
-          lineHeight: getComputedStyle(element).lineHeight,
-          parentLineHeight: getComputedStyle(element.parentElement as Element).lineHeight,
-        })),
+        token.evaluate((element) => {
+          const style = getComputedStyle(element);
+          const parentStyle = getComputedStyle(element.parentElement as Element);
+          return {
+            verticalAlign: style.verticalAlign,
+            sharesLineHeight: style.lineHeight === parentStyle.lineHeight,
+          };
+        }),
       )
       .toEqual({
         verticalAlign: "baseline",
-        lineHeight: await token.evaluate(
-          (element) => getComputedStyle(element.parentElement as Element).lineHeight,
-        ),
-        parentLineHeight: await token.evaluate(
-          (element) => getComputedStyle(element.parentElement as Element).lineHeight,
-        ),
+        sharesLineHeight: true,
       });
 
     await expect
