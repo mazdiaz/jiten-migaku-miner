@@ -211,8 +211,13 @@ function renderLegacySegments(segments: TextSegment[]): void {
 
 function getCustomHighlightApi(root: Element): CustomHighlightApi | null {
   const view = root.ownerDocument.defaultView as unknown as HighlightRealm | null;
-  const Highlight = view?.Highlight;
-  const registry = view?.CSS?.highlights as Partial<HighlightRegistryLike> | undefined;
+  const globalRealm = globalThis as unknown as HighlightRealm;
+  const Highlight = view?.Highlight ?? globalRealm.Highlight;
+  // Browsers expose CSS on the document window. Some DOM/test realms expose
+  // Highlight there but keep CSS on the global object, so use a safe fallback.
+  const registry = (view?.CSS?.highlights ?? globalRealm.CSS?.highlights) as
+    | Partial<HighlightRegistryLike>
+    | undefined;
   if (
     typeof Highlight !== "function" ||
     registry === undefined ||
