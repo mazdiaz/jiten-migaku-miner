@@ -117,10 +117,24 @@ function createPracticeElements(resultsList: HTMLElement): PracticeElements {
   overlay.appendChild(panel);
   document.body.appendChild(overlay);
 
-  return { button, overlay, panel, progress, exit, content, complete, returnButton, actions, reveal };
+  return {
+    button,
+    overlay,
+    panel,
+    progress,
+    exit,
+    content,
+    complete,
+    returnButton,
+    actions,
+    reveal,
+  };
 }
 
-function entryAtAbsoluteIndex(state: Readonly<AppState>, absoluteIndex: number): EntryWithKnown | null {
+function entryAtAbsoluteIndex(
+  state: Readonly<AppState>,
+  absoluteIndex: number,
+): EntryWithKnown | null {
   const result = state.result;
   if (result === null || result.items.length === 0 || result.startIndex <= 0) return null;
   const offset = absoluteIndex - (result.startIndex - 1);
