@@ -24,6 +24,7 @@
   line-height: 1;
   cursor: pointer;
   user-select: none;
+  gap: 6px;
 }
 
 .quick-toggle::after {
@@ -32,13 +33,15 @@
   white-space: nowrap;
 }
 
+/* Keep the real checkbox interactive instead of replacing it with a visual-only
+   affordance. This preserves keyboard access and lets browser automation use
+   the native checked state directly. */
 .quick-toggle input {
-  position: absolute;
-  width: 1px;
-  height: 1px;
+  width: 14px;
+  height: 14px;
   margin: 0;
-  opacity: 0;
-  pointer-events: none;
+  accent-color: var(--accent);
+  cursor: pointer;
 }
 
 .quick-toggle:hover {
