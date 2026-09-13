@@ -1,0 +1,90 @@
+/* High-frequency mining controls get their own row inside the sticky toolbar;
+   the existing More disclosure is left for secondary controls only. */
+.quick-controls {
+  display: flex;
+  /* One scrollable row: wrapping to multiple lines pushed the sticky toolbar
+     past its mobile height budget (mobile-layout.spec asserts < 200px). */
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.quick-controls[hidden] {
+  display: none;
+}
+
+.quick-toggle {
+  position: relative;
+  min-height: 32px;
+  padding: 6px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 0;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+  gap: 6px;
+}
+
+.quick-toggle::after {
+  content: attr(data-short-label);
+  font-size: 0.82rem;
+  white-space: nowrap;
+}
+
+/* Keep the real checkbox interactive instead of replacing it with a visual-only
+   affordance. This preserves keyboard access and lets browser automation use
+   the native checked state directly. */
+.quick-toggle input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.quick-toggle:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.quick-toggle:has(input:focus-visible) {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.quick-toggle:has(input:checked) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.quick-toggle:has(input:disabled) {
+  cursor: default;
+  opacity: 0.45;
+}
+
+/* Shortcut instructions are discoverable from the controls themselves and
+   no longer need to occupy permanent vertical space below every result set. */
+.shortcut-note {
+  display: none;
+}
+
+@media (max-width: 760px) {
+  .quick-controls {
+    gap: 6px 8px;
+  }
+
+  .quick-toggle {
+    min-height: 30px;
+    padding: 5px 8px;
+  }
+
+  .quick-toggle::after {
+    font-size: 0.78rem;
+  }
+}

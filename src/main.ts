@@ -2,6 +2,7 @@ import "./styles/tokens.css";
 import "./styles/layout.css";
 import "./styles/entries.css";
 import "./styles/highlight.css";
+import "./styles/toolbar-cleanup.css";
 
 import { createMinerController } from "./app/controller";
 import { createQueryController } from "./app/query-controller";
@@ -13,6 +14,7 @@ import { bindControls } from "./ui/controls";
 import { getDomMap } from "./ui/dom";
 import { createHighlightAdapter } from "./ui/highlight-adapter";
 import { createRenderer, renderEntryNode } from "./ui/renderer";
+import { syncStickyToolbarClarity } from "./ui/sticky-toolbar-clarity";
 import { createVirtualList } from "./ui/virtual-list";
 
 async function discoverFolderSources(
@@ -58,6 +60,7 @@ async function bootstrap(): Promise<void> {
   controller.subscribe((state) => {
     latest = state;
     renderer.render(state);
+    syncStickyToolbarClarity(dom, state);
     const queueKey = `${state.queue.normalizedWords.join("\n")}|${state.queue.mode}`;
     // Review owns the shared #resultsList while active. Do not let the normal
     // query/virtual-list path replace its one-card DOM; resume it on exit.
@@ -74,7 +77,10 @@ async function bootstrap(): Promise<void> {
   bindControls(dom, controller, {
     onSearch: (value) => queryController.search(value),
     onToggleImports: () => renderer.toggleImportsExpanded(),
-    onToggleAdvanced: () => renderer.toggleAdvancedPanel(),
+    onToggleAdvanced: () => {
+      renderer.toggleAdvancedPanel();
+      if (latest !== null) syncStickyToolbarClarity(dom, latest);
+    },
     onToggleCoverage: () => renderer.toggleCoveragePanel(),
   });
   await controller.init();
