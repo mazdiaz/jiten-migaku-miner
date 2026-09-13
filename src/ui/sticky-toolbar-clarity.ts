@@ -30,13 +30,27 @@ const SUMMARY_LABELS: Record<WordDecisionStatus, string> = {
   skip: "skipped",
 };
 
-function decorateQuickToggles(dom: DomMap): void {
+function ensureQuickControls(dom: DomMap): HTMLDivElement {
+  const document = dom.advancedPanel.ownerDocument;
+  const existing = document.getElementById("quickControls");
+  if (existing instanceof HTMLDivElement) return existing;
+
+  const quickControls = document.createElement("div");
+  quickControls.id = "quickControls";
+  quickControls.className = "quick-controls";
+  quickControls.setAttribute("aria-label", "Quick mining controls");
+  dom.advancedPanel.before(quickControls);
+  return quickControls;
+}
+
+function moveQuickToggles(dom: DomMap, quickControls: HTMLDivElement): void {
   for (const [key, shortLabel] of QUICK_TOGGLES) {
     const input = dom[key];
     const label = input.closest("label");
     if (!(label instanceof HTMLLabelElement)) continue;
     label.classList.add("quick-toggle");
     label.dataset.shortLabel = shortLabel;
+    if (label.parentElement !== quickControls) quickControls.appendChild(label);
   }
 }
 
@@ -60,18 +74,17 @@ function compactDecisionSummary(dom: DomMap, state: Readonly<AppState>): void {
 }
 
 /**
- * Applies the deliberately small, high-frequency toolbar layer after the main
- * renderer has synchronized state. The renderer still owns expansion state;
- * this keeps its panel visible as the quick-controls row and lets `More`
- * reveal only the secondary controls through CSS.
+ * Pulls the six high-frequency toggles into their own persistent row inside
+ * the sticky toolbar. The existing advanced panel remains a normal disclosure
+ * and therefore contains only the lower-frequency controls after this runs.
  */
 export function syncStickyToolbarClarity(dom: DomMap, state: Readonly<AppState>): void {
   const hasData = state.dataset !== null && state.dataset.entryCount > 0;
+  const quickControls = ensureQuickControls(dom);
 
   dom.advancedToggle.textContent = "More";
-  dom.advancedPanel.dataset.quickControls = "true";
-  dom.advancedPanel.hidden = !hasData;
-  decorateQuickToggles(dom);
+  quickControls.hidden = !hasData;
+  moveQuickToggles(dom, quickControls);
 
   if (!hasData) return;
   compactDecisionSummary(dom, state);
