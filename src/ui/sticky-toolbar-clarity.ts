@@ -59,16 +59,6 @@ function compactDecisionSummary(dom: DomMap, state: Readonly<AppState>): void {
   dom.decisionSummary.textContent = parts.join(" · ");
 }
 
-function compactResultStats(dom: DomMap, state: Readonly<AppState>): void {
-  if (!state.dataset || !state.result) return;
-  const matches = state.result.totalEntries;
-  const total = state.dataset.entryCount;
-  dom.resultStats.textContent =
-    matches === total
-      ? `${total.toLocaleString()} words`
-      : `${matches.toLocaleString()} ${matches === 1 ? "match" : "matches"} · ${total.toLocaleString()} total`;
-}
-
 /**
  * Applies the deliberately small, high-frequency toolbar layer after the main
  * renderer has synchronized state. The renderer still owns expansion state;
@@ -84,6 +74,5 @@ export function syncStickyToolbarClarity(dom: DomMap, state: Readonly<AppState>)
   decorateQuickToggles(dom);
 
   if (!hasData) return;
-  compactResultStats(dom, state);
   compactDecisionSummary(dom, state);
 }
