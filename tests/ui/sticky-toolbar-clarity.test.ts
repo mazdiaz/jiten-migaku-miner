@@ -87,7 +87,11 @@ describe("sticky toolbar clarity", () => {
 
     syncStickyToolbarClarity(
       dom,
-      state({ knownWords: new Set(), wordDecisions: new Map(), result: { totalEntries: 3 } } as Partial<AppState>),
+      state({
+        knownWords: new Set(),
+        wordDecisions: new Map(),
+        result: { totalEntries: 3 },
+      } as Partial<AppState>),
     );
     expect(dom.resultStats.textContent).toBe("3 words");
     expect(dom.decisionSummary.hidden).toBe(true);
@@ -95,8 +99,10 @@ describe("sticky toolbar clarity", () => {
 
   it("keeps secondary controls and helper copy out of the default quick row", () => {
     const css = readFileSync(resolve(process.cwd(), "src/styles/toolbar-cleanup.css"), "utf8");
-    expect(css).toContain('body:not(.advanced-open) #advancedPanel[data-quick-controls="true"] .control');
-    expect(css).toContain("#advancedPanel[data-quick-controls=\"true\"] .adv-note");
+    expect(css).toContain(
+      'body:not(.advanced-open) #advancedPanel[data-quick-controls="true"] .control',
+    );
+    expect(css).toContain('#advancedPanel[data-quick-controls="true"] .adv-note');
     expect(css).toContain(".shortcut-note");
   });
 });
