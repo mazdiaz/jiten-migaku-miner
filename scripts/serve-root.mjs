@@ -1,5 +1,5 @@
 import { createReadStream } from "node:fs";
-import { stat } from "node:fs/promises";
+import { readdir, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import { extname, join, resolve, sep } from "node:path";
 
@@ -54,6 +54,22 @@ function sendError(res, statusCode, reason) {
 const root = process.cwd();
 const port = parsePort(process.argv.slice(2));
 
+function escapeHtml(value) {
+  return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+}
+
+// Mirrors the essentials of `python -m http.server` directory listings: anchor
+// hrefs the app's folder discovery parses (src/platform/folder-source.ts).
+function directoryListing(entries) {
+  const rows = entries
+    .map((entry) => {
+      const href = encodeURIComponent(entry.name) + (entry.isDirectory ? "/" : "");
+      return `<li><a href="${href}">${escapeHtml(entry.name)}${entry.isDirectory ? "/" : ""}</a></li>`;
+    })
+    .join("\n");
+  return `<!DOCTYPE html>\n<html><head><meta charset="utf-8"><title>Directory listing</title></head>\n<body>\n<ul>\n${rows}\n</ul>\n</body></html>\n`;
+}
+
 async function handle(req, res) {
   if (req.method !== "GET" && req.method !== "HEAD") {
     res.setHeader("Allow", "GET, HEAD");
@@ -88,12 +104,29 @@ async function handle(req, res) {
   }
 
   let filePath = resolvedPath;
+  let listing = null;
   if (stats.isDirectory()) {
     try {
       filePath = join(resolvedPath, "index.html");
       stats = await stat(filePath);
     } catch {
-      sendError(res, 404, "Not Found");
+      let entries;
+      try {
+        entries = await readdir(resolvedPath, { withFileTypes: true });
+      } catch {
+        sendError(res, 404, "Not Found");
+        return;
+      }
+      listing = Buffer.from(directoryListing(entries), "utf8");
+      res.writeHead(200, {
+        "Content-Type": "text/html; charset=utf-8",
+        "Content-Length": listing.length,
+      });
+      if (req.method === "HEAD") {
+        res.end();
+        return;
+      }
+      res.end(listing);
       return;
     }
   }
@@ -101,6 +134,7 @@ async function handle(req, res) {
   res.writeHead(200, {
     "Content-Type": contentTypeFor(filePath),
     "Content-Length": stats.size,
+    "Last-Modified": stats.mtime.toUTCString(),
   });
   if (req.method === "HEAD") {
     res.end();

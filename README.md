@@ -4,8 +4,7 @@ A local-first, offline-capable miner for Jiten vocabulary exports and Migaku kno
 
 ## Requirements
 
-- Node.js 22.12 or newer (development, build, tests)
-- Python 3 or newer (only for the `start-miner.bat` static file server)
+- Node.js 22.12 or newer (development, build, tests, and the bundled loopback file server)
 - A browser with Web Workers, IndexedDB, and `:has()` CSS support (current Chrome, Edge, Firefox, Safari). The CSS Custom Highlight API is used when available for sentence highlighting; unsupported browsers fall back to wrapper spans.
 - Optional: Anki Desktop with AnkiConnect listening on `http://127.0.0.1:8765` (for Anki sync only; the app works fully without it)
 
@@ -20,13 +19,13 @@ Open `http://127.0.0.1:8920/`.
 
 ## Quick start (end user, Windows)
 
-Run `start-miner.bat`. It verifies `npm` and `python` are installed, builds the production bundle (`npm run build`), serves the repository root on loopback, and opens `http://127.0.0.1:8920/dist/`. Because the server root is the repository itself, the optional `WORDS TO MINE` / `MIGAKU KNOWN WORDS` folder discovery works without copying vocabulary files anywhere; the built app in `dist/` stays free of them. Browser access is loopback only. If the build fails, the launcher stops before opening the browser.
+Run `start-miner.bat`. It verifies `npm` is installed, builds the production bundle (`npm run build`), serves the repository root on loopback with the bundled Node file server (`npm run serve:root`), and opens `http://127.0.0.1:8920/dist/`. The server provides the directory listings and `Last-Modified` headers the optional `WORDS TO MINE` / `MIGAKU KNOWN WORDS` folder discovery needs, so vocabulary files work without copying them anywhere; the built app in `dist/` stays free of them. Browser access is loopback only. If the build fails, the launcher stops before opening the browser.
 
 Manual equivalent on any platform:
 
 ```text
 npm run build
-python -m http.server 8920 --bind 127.0.0.1 --directory .
+npm run serve:root -- --port 8920
 ```
 
 Then open `http://127.0.0.1:8920/dist/`.
