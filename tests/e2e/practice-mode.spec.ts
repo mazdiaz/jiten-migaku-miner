@@ -29,7 +29,9 @@ test.describe("practice mode", () => {
     await expect(page.locator("#practiceReveal")).toHaveText("Next");
   });
 
-  test("uses the current filters once each without saving practice as decisions", async ({ page }) => {
+  test("uses the current filters once each without saving practice as decisions", async ({
+    page,
+  }) => {
     await page.goto("/");
     await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
