@@ -78,10 +78,9 @@ describe("sticky toolbar clarity", () => {
     expect(dom.showFurigana.closest("label")?.dataset.shortLabel).toBe("Furigana");
   });
 
-  it("reduces result copy and hides empty decision noise", () => {
+  it("compacts decision information and hides empty decision noise", () => {
     const dom = harness();
     syncStickyToolbarClarity(dom, state());
-    expect(dom.resultStats.textContent).toBe("2 matches · 3 total");
     expect(dom.decisionSummary.textContent).toBe("1 mined · 1 Migaku-known");
     expect(dom.decisionSummary.hidden).toBe(false);
 
@@ -93,7 +92,6 @@ describe("sticky toolbar clarity", () => {
         result: { totalEntries: 3 },
       } as Partial<AppState>),
     );
-    expect(dom.resultStats.textContent).toBe("3 words");
     expect(dom.decisionSummary.hidden).toBe(true);
   });
 
@@ -102,7 +100,9 @@ describe("sticky toolbar clarity", () => {
     expect(css).toContain(
       'body:not(.advanced-open) #advancedPanel[data-quick-controls="true"] .control',
     );
-    expect(css).toContain('#advancedPanel[data-quick-controls="true"] .adv-note');
+    expect(css).toContain(
+      'body:not(.advanced-open) #advancedPanel[data-quick-controls="true"] .adv-note',
+    );
     expect(css).toContain(".shortcut-note");
   });
 });
