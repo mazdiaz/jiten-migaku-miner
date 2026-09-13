@@ -3,6 +3,7 @@ import "./styles/layout.css";
 import "./styles/entries.css";
 import "./styles/highlight.css";
 import "./styles/toolbar-cleanup.css";
+import "./styles/practice.css";
 
 import { createMinerController } from "./app/controller";
 import { createQueryController } from "./app/query-controller";
@@ -13,6 +14,7 @@ import { createFolderSource } from "./platform/folder-source";
 import { bindControls } from "./ui/controls";
 import { getDomMap } from "./ui/dom";
 import { createHighlightAdapter } from "./ui/highlight-adapter";
+import { createPracticeMode } from "./ui/practice-mode";
 import { createRenderer, renderEntryNode } from "./ui/renderer";
 import { syncStickyToolbarClarity } from "./ui/sticky-toolbar-clarity";
 import { createVirtualList } from "./ui/virtual-list";
@@ -56,15 +58,32 @@ async function bootstrap(): Promise<void> {
   );
   queryController = createQueryController({ controller, virtualList });
 
+  const practice = createPracticeMode({
+    controller,
+    resultsList: dom.resultsList,
+    onContentChanged: () => highlight.reconcile(dom.resultsList),
+    onExit: (state) => {
+      renderer.render(state);
+      syncStickyToolbarClarity(dom, state);
+      queryController.applyResult(state.result);
+      highlight.reconcile(dom.resultsList);
+    },
+  });
+
   let lastQueueKey = `${""}|normal`;
   controller.subscribe((state) => {
     latest = state;
-    renderer.render(state);
-    syncStickyToolbarClarity(dom, state);
+    // Practice, like Review, temporarily owns the shared Migaku-facing results
+    // surface. Leave its one-card DOM alone while controller queries navigate
+    // through the shuffled session.
+    if (!practice.isActive()) {
+      renderer.render(state);
+      syncStickyToolbarClarity(dom, state);
+    }
+    practice.sync(state);
     const queueKey = `${state.queue.normalizedWords.join("\n")}|${state.queue.mode}`;
-    // Review owns the shared #resultsList while active. Do not let the normal
-    // query/virtual-list path replace its one-card DOM; resume it on exit.
-    if (!state.review.active) {
+    const focusedModeOwnsResults = state.review.active || practice.isActive();
+    if (!focusedModeOwnsResults) {
       queryController.applyResult(state.result);
       if (queueKey !== lastQueueKey && state.result?.windowed === true) {
         virtualList.setTotal(state.result.totalEntries);

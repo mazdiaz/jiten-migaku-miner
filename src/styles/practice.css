@@ -1,0 +1,25 @@
+body.practice-open {
+  overflow: hidden;
+}
+
+.practice-actions {
+  grid-template-columns: 1fr;
+}
+
+.practice-entry .occurrence-count,
+.practice-entry .entry-badges {
+  display: none;
+}
+
+.practice-entry.practice-concealed .entry-definitions,
+.practice-entry.practice-concealed rt {
+  display: none;
+}
+
+.practice-entry .target-word {
+  font-size: 1.6rem;
+}
+
+.practice-reveal {
+  min-height: 44px;
+}
