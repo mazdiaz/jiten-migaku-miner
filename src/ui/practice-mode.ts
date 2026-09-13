@@ -8,7 +8,11 @@ export function shuffleIndexes(length: number, random: () => number = Math.rando
   for (let index = order.length - 1; index > 0; index -= 1) {
     const draw = Math.min(Math.max(random(), 0), 0.9999999999999999);
     const swapIndex = Math.floor(draw * (index + 1));
-    [order[index], order[swapIndex]] = [order[swapIndex], order[index]];
+    const current = order[index];
+    const swap = order[swapIndex];
+    if (current === undefined || swap === undefined) continue;
+    order[index] = swap;
+    order[swapIndex] = current;
   }
   return order;
 }
