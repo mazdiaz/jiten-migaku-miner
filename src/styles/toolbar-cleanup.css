@@ -2,7 +2,10 @@
    the existing More disclosure is left for secondary controls only. */
 .quick-controls {
   display: flex;
-  flex-wrap: wrap;
+  /* One scrollable row: wrapping to multiple lines pushed the sticky toolbar
+     past its mobile height budget (mobile-layout.spec asserts < 200px). */
+  flex-wrap: nowrap;
+  overflow-x: auto;
   gap: 6px;
   align-items: center;
 }
