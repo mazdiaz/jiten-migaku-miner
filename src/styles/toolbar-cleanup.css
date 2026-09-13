@@ -1,0 +1,129 @@
+/* High-frequency mining controls stay visible in the sticky toolbar. The
+   existing disclosure still owns expansion state; "More" only reveals the
+   secondary selects/number inputs. */
+#advancedPanel[data-quick-controls="true"] {
+  gap: 8px 12px;
+  align-items: center;
+}
+
+#advancedPanel[data-quick-controls="true"] .adv-group {
+  flex: 0 1 auto;
+}
+
+#advancedPanel[data-quick-controls="true"] .adv-controls {
+  gap: 6px;
+}
+
+body:not(.advanced-open) #advancedPanel[data-quick-controls="true"] .adv-group legend,
+body:not(.advanced-open) #advancedPanel[data-quick-controls="true"] .control,
+#advancedPanel[data-quick-controls="true"] .adv-note,
+.shortcut-note {
+  display: none;
+}
+
+#advancedPanel[data-quick-controls="true"] .quick-toggle {
+  position: relative;
+  min-height: 32px;
+  padding: 6px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 0;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+}
+
+#advancedPanel[data-quick-controls="true"] .quick-toggle::after {
+  content: attr(data-short-label);
+  font-size: 0.82rem;
+  white-space: nowrap;
+}
+
+#advancedPanel[data-quick-controls="true"] .quick-toggle input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+#advancedPanel[data-quick-controls="true"] .quick-toggle:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+#advancedPanel[data-quick-controls="true"] .quick-toggle:has(input:focus-visible) {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+#advancedPanel[data-quick-controls="true"] .quick-toggle:has(input:checked) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+#advancedPanel[data-quick-controls="true"] .quick-toggle:has(input:disabled) {
+  cursor: default;
+  opacity: 0.45;
+}
+
+/* Keep the display toggles in the order users reach for them most often. */
+#advancedPanel[data-quick-controls="true"] label:has(#showDefinitions) {
+  order: 1;
+}
+
+#advancedPanel[data-quick-controls="true"] label:has(#showHighlight) {
+  order: 2;
+}
+
+#advancedPanel[data-quick-controls="true"] label:has(#pillHighlight) {
+  order: 3;
+}
+
+#advancedPanel[data-quick-controls="true"] label:has(#showFurigana) {
+  order: 4;
+}
+
+body.advanced-open #advancedPanel[data-quick-controls="true"] {
+  align-items: flex-start;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+}
+
+body.advanced-open #advancedPanel[data-quick-controls="true"] .adv-group {
+  flex: 1 1 300px;
+}
+
+body.advanced-open #advancedPanel[data-quick-controls="true"] .adv-controls {
+  gap: 10px 12px;
+}
+
+/* Once More is open, secondary controls regain their normal inline layout. */
+body.advanced-open #advancedPanel[data-quick-controls="true"] .control {
+  display: inline-flex;
+}
+
+body.advanced-open #advancedPanel[data-quick-controls="true"] .adv-group legend {
+  display: block;
+}
+
+/* The quick row is meant to remain compact while following the user. */
+@media (max-width: 760px) {
+  #advancedPanel[data-quick-controls="true"] {
+    gap: 6px 8px;
+  }
+
+  #advancedPanel[data-quick-controls="true"] .quick-toggle {
+    min-height: 30px;
+    padding: 5px 8px;
+  }
+
+  #advancedPanel[data-quick-controls="true"] .quick-toggle::after {
+    font-size: 0.78rem;
+  }
+}
