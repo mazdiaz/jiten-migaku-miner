@@ -16,7 +16,7 @@
 
 body:not(.advanced-open) #advancedPanel[data-quick-controls="true"] .adv-group legend,
 body:not(.advanced-open) #advancedPanel[data-quick-controls="true"] .control,
-#advancedPanel[data-quick-controls="true"] .adv-note,
+body:not(.advanced-open) #advancedPanel[data-quick-controls="true"] .adv-note,
 .shortcut-note {
   display: none;
 }
