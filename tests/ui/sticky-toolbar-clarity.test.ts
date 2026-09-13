@@ -7,7 +7,7 @@ const html = readFileSync(resolve(process.cwd(), "index.html"), "utf8");
 describe("sticky toolbar clarity", () => {
   it("keeps frequent mining toggles in a persistent quick row", () => {
     expect(html).toContain('id="quickControls"');
-    expect(html).toContain('>More</button>');
+    expect(html).toContain(">More</button>");
   });
 
   it("hides verbose mining helper copy by default", () => {
