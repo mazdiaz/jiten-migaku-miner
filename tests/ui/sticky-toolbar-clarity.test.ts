@@ -63,19 +63,28 @@ beforeEach(() => {
 });
 
 describe("sticky toolbar clarity", () => {
-  it("keeps frequent mining toggles visible and gives them short labels", () => {
+  it("moves frequent mining toggles into a persistent quick row", () => {
     const dom = harness();
     syncStickyToolbarClarity(dom, state());
 
+    const quickControls = document.getElementById("quickControls");
     expect(dom.advancedToggle.textContent).toBe("More");
-    expect(dom.advancedPanel.hidden).toBe(false);
-    expect(dom.advancedPanel.dataset.quickControls).toBe("true");
-    expect(dom.hideKnown.closest("label")?.dataset.shortLabel).toBe("Hide Known");
-    expect(dom.hideKanaOnly.closest("label")?.dataset.shortLabel).toBe("Hide Kana");
-    expect(dom.showDefinitions.closest("label")?.dataset.shortLabel).toBe("Definitions");
-    expect(dom.showHighlight.closest("label")?.dataset.shortLabel).toBe("Highlight");
-    expect(dom.pillHighlight.closest("label")?.dataset.shortLabel).toBe("Pill");
-    expect(dom.showFurigana.closest("label")?.dataset.shortLabel).toBe("Furigana");
+    expect(dom.advancedPanel.hidden).toBe(true);
+    expect(quickControls).toBeInstanceOf(HTMLDivElement);
+    expect((quickControls as HTMLDivElement).hidden).toBe(false);
+
+    for (const [input, label] of [
+      [dom.hideKnown, "Hide Known"],
+      [dom.hideKanaOnly, "Hide Kana"],
+      [dom.showDefinitions, "Definitions"],
+      [dom.showHighlight, "Highlight"],
+      [dom.pillHighlight, "Pill"],
+      [dom.showFurigana, "Furigana"],
+    ] as const) {
+      expect(input.closest("#quickControls")).not.toBeNull();
+      expect(input.closest("label")?.dataset.shortLabel).toBe(label);
+      expect(dom.advancedPanel.contains(input)).toBe(false);
+    }
   });
 
   it("compacts decision information and hides empty decision noise", () => {
@@ -95,14 +104,10 @@ describe("sticky toolbar clarity", () => {
     expect(dom.decisionSummary.hidden).toBe(true);
   });
 
-  it("keeps secondary controls and helper copy out of the default quick row", () => {
+  it("styles the quick row compactly and removes persistent shortcut clutter", () => {
     const css = readFileSync(resolve(process.cwd(), "src/styles/toolbar-cleanup.css"), "utf8");
-    expect(css).toContain(
-      'body:not(.advanced-open) #advancedPanel[data-quick-controls="true"] .control',
-    );
-    expect(css).toContain(
-      'body:not(.advanced-open) #advancedPanel[data-quick-controls="true"] .adv-note',
-    );
+    expect(css).toContain(".quick-controls");
+    expect(css).toContain(".quick-toggle:has(input:checked)");
     expect(css).toContain(".shortcut-note");
   });
 });
