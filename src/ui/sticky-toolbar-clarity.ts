@@ -2,10 +2,18 @@ import type { AppState } from "../app/state";
 import type { WordDecisionStatus } from "../domain/types";
 import type { DomMap } from "./dom";
 
-const QUICK_TOGGLES: readonly [keyof Pick<
-  DomMap,
-  "hideKnown" | "hideKanaOnly" | "showDefinitions" | "showHighlight" | "pillHighlight" | "showFurigana"
->, string][] = [
+const QUICK_TOGGLES: readonly [
+  keyof Pick<
+    DomMap,
+    | "hideKnown"
+    | "hideKanaOnly"
+    | "showDefinitions"
+    | "showHighlight"
+    | "pillHighlight"
+    | "showFurigana"
+  >,
+  string,
+][] = [
   ["hideKnown", "Hide Known"],
   ["hideKanaOnly", "Hide Kana"],
   ["showDefinitions", "Definitions"],
