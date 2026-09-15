@@ -93,14 +93,17 @@ test.describe("practice mode", () => {
     await pillToggle.check();
     await expect(page.locator("body")).toHaveClass(/hl-pill/);
 
-    // Uncheck definitions in practice
+    // Uncheck definitions in practice, then reveal through the explicit action.
+    // The checkbox retains focus after interaction, so a Space keypress would
+    // toggle the checkbox instead of exercising Practice Mode's reveal action.
     await definitionsToggle.uncheck();
-    await page.keyboard.press("Space");
+    await page.locator("#practiceReveal").click();
     await expect(page.locator("#practiceContent .entry-definitions")).toBeHidden();
 
-    // Check furigana in practice while revealed
+    // Check furigana in practice while revealed. Target both the intended
+    // headword ruby and not the sentence ruby, which may also be present.
     await furiganaToggle.check();
-    await expect(page.locator("#practiceContent rt")).toBeVisible();
+    await expect(page.locator("#practiceContent .target-word rt")).toBeVisible();
 
     // Check highlight toggling on and off while revealed
     await highlightToggle.uncheck();
