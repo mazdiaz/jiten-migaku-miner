@@ -67,6 +67,9 @@ test.describe("practice mode", () => {
     await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
 
+    await page.locator("#stickySearch").fill("気になる");
+    await expect(page.locator("#resultsList .mining-entry")).toHaveCount(1);
+
     await openPractice(page);
     const furiganaToggle = page.locator("#practiceShowFurigana");
     const highlightToggle = page.locator("#practiceShowHighlight");
@@ -78,7 +81,11 @@ test.describe("practice mode", () => {
     await expect(pillToggle).toBeVisible();
     await expect(definitionsToggle).toBeVisible();
 
-    // Check highlight in practice
+    // Check highlight on and off in practice before reveal
+    await highlightToggle.check();
+    await expect(page.locator("#practiceContent .target-highlight")).toBeVisible();
+    await highlightToggle.uncheck();
+    await expect(page.locator("#practiceContent .target-highlight")).toHaveCount(0);
     await highlightToggle.check();
     await expect(page.locator("#practiceContent .target-highlight")).toBeVisible();
 
@@ -95,11 +102,18 @@ test.describe("practice mode", () => {
     await furiganaToggle.check();
     await expect(page.locator("#practiceContent rt")).toBeVisible();
 
+    // Check highlight toggling on and off while revealed
+    await highlightToggle.uncheck();
+    await expect(page.locator("#practiceContent .target-highlight")).toHaveCount(0);
+    await highlightToggle.check();
+    await expect(page.locator("#practiceContent .target-highlight")).toBeVisible();
+
     // Exit practice and confirm toggles persisted to main page
     await page.locator("#practiceExit").click();
     await expect(page.locator("#showFurigana")).toBeChecked();
     await expect(page.locator("#showHighlight")).toBeChecked();
     await expect(page.locator("#pillHighlight")).toBeChecked();
     await expect(page.locator("#showDefinitions")).not.toBeChecked();
+    await expect(page.locator("#resultsList .target-highlight")).toBeVisible();
   });
 });

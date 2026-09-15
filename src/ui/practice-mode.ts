@@ -203,8 +203,7 @@ export function createPracticeMode(options: PracticeModeOptions): PracticeMode {
   let renderedAbsoluteIndex: number | null = null;
   let renderedViewKey: string | null = null;
 
-  const viewKeyFor = (view: Readonly<AppState["view"]>): string =>
-    `${view.showFurigana}|${view.showHighlight}|${view.pillHighlight}|${view.showDefinitions}`;
+  const viewKeyFor = (view: Readonly<AppState["view"]>): string => JSON.stringify(view);
 
   const setBackgroundInert = (value: boolean): void => {
     document.querySelector("main.app-shell")?.toggleAttribute("inert", value);

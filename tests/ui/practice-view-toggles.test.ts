@@ -8,6 +8,7 @@ import {
   type FileSource,
   type MinerController,
 } from "../../src/miner/state";
+import { createHighlightAdapter } from "../../src/ui/highlight-adapter";
 import { createPracticeMode } from "../../src/ui/practice-mode";
 import { renderMinerShell } from "../support/shell";
 
@@ -293,6 +294,131 @@ describe("Practice Mode view toggles", () => {
     ).toBe(false);
     expect(revealButton.textContent).toBe("Next");
 
+    // Toggle Highlight on while revealed
+    const highlight = document.getElementById("practiceShowHighlight") as HTMLInputElement;
+    highlight.checked = true;
+    highlight.dispatchEvent(new Event("change"));
+    practice.sync(controller.state);
+
+    expect(resultsList.querySelector(".target-highlight")).not.toBeNull();
+    expect(
+      resultsList.querySelector(".practice-entry")?.classList.contains("practice-concealed"),
+    ).toBe(false);
+    expect(revealButton.textContent).toBe("Next");
+
+    // Toggle Highlight off while revealed
+    highlight.checked = false;
+    highlight.dispatchEvent(new Event("change"));
+    practice.sync(controller.state);
+
+    expect(resultsList.querySelector(".target-highlight")).toBeNull();
+    expect(
+      resultsList.querySelector(".practice-entry")?.classList.contains("practice-concealed"),
+    ).toBe(false);
+    expect(revealButton.textContent).toBe("Next");
+
     practice.destroy();
+  });
+
+  it("applies highlight adapter reconciliation when Highlight is toggled before and after reveal", () => {
+    const onContentChanged = vi.fn();
+    const controller = createFakeController({
+      status: "ready",
+      dataset: makeDataset(),
+      result: makeResult([SAMPLE_ENTRY]),
+      view: {
+        ...DEFAULT_VIEW,
+        showFurigana: false,
+        showHighlight: false,
+      },
+    });
+    const resultsList = document.getElementById("resultsList")!;
+    const highlightAdapter = createHighlightAdapter(resultsList);
+    const practice = createPracticeMode({
+      controller,
+      resultsList,
+      onContentChanged: () => {
+        highlightAdapter.reconcile(resultsList);
+        onContentChanged();
+      },
+    });
+    practice.sync(controller.state);
+
+    const practiceButton = document.getElementById("practiceButton") as HTMLButtonElement;
+    practiceButton.click();
+
+    const highlight = document.getElementById("practiceShowHighlight") as HTMLInputElement;
+    const revealButton = document.getElementById("practiceReveal") as HTMLButtonElement;
+
+    // Initially concealed and unhighlighted
+    expect(
+      resultsList.querySelector(".practice-entry")?.classList.contains("practice-concealed"),
+    ).toBe(true);
+    expect(resultsList.querySelector(".target-highlight")).toBeNull();
+    expect(resultsList.querySelector(".th-wrap")).toBeNull();
+
+    // 1. Toggle Highlight ON before reveal
+    highlight.checked = true;
+    highlight.dispatchEvent(new Event("change"));
+    practice.sync(controller.state);
+
+    expect(resultsList.querySelector(".target-highlight")).not.toBeNull();
+    expect(resultsList.querySelector(".th-wrap")).not.toBeNull();
+    expect(
+      resultsList.querySelector(".practice-entry")?.classList.contains("practice-concealed"),
+    ).toBe(true);
+    expect(onContentChanged).toHaveBeenCalled();
+    onContentChanged.mockClear();
+
+    // 2. Toggle Highlight OFF before reveal
+    highlight.checked = false;
+    highlight.dispatchEvent(new Event("change"));
+    practice.sync(controller.state);
+
+    expect(resultsList.querySelector(".target-highlight")).toBeNull();
+    expect(resultsList.querySelector(".th-wrap")).toBeNull();
+    expect(
+      resultsList.querySelector(".practice-entry")?.classList.contains("practice-concealed"),
+    ).toBe(true);
+    expect(onContentChanged).toHaveBeenCalled();
+    onContentChanged.mockClear();
+
+    // 3. Reveal the card
+    revealButton.click();
+    expect(
+      resultsList.querySelector(".practice-entry")?.classList.contains("practice-concealed"),
+    ).toBe(false);
+    expect(revealButton.textContent).toBe("Next");
+    expect(onContentChanged).toHaveBeenCalled();
+    onContentChanged.mockClear();
+
+    // 4. Toggle Highlight ON after reveal
+    highlight.checked = true;
+    highlight.dispatchEvent(new Event("change"));
+    practice.sync(controller.state);
+
+    expect(resultsList.querySelector(".target-highlight")).not.toBeNull();
+    expect(resultsList.querySelector(".th-wrap")).not.toBeNull();
+    expect(
+      resultsList.querySelector(".practice-entry")?.classList.contains("practice-concealed"),
+    ).toBe(false);
+    expect(revealButton.textContent).toBe("Next");
+    expect(onContentChanged).toHaveBeenCalled();
+    onContentChanged.mockClear();
+
+    // 5. Toggle Highlight OFF after reveal
+    highlight.checked = false;
+    highlight.dispatchEvent(new Event("change"));
+    practice.sync(controller.state);
+
+    expect(resultsList.querySelector(".target-highlight")).toBeNull();
+    expect(resultsList.querySelector(".th-wrap")).toBeNull();
+    expect(
+      resultsList.querySelector(".practice-entry")?.classList.contains("practice-concealed"),
+    ).toBe(false);
+    expect(revealButton.textContent).toBe("Next");
+
+    practice.destroy();
+    highlightAdapter.destroy();
   });
 });
