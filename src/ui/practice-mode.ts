@@ -42,6 +42,11 @@ interface PracticeElements {
   returnButton: HTMLButtonElement;
   actions: HTMLElement;
   reveal: HTMLButtonElement;
+  controls: HTMLElement;
+  furiganaToggle: HTMLInputElement;
+  highlightToggle: HTMLInputElement;
+  pillToggle: HTMLInputElement;
+  definitionsToggle: HTMLInputElement;
 }
 
 function createPracticeElements(resultsList: HTMLElement): PracticeElements {
@@ -114,11 +119,39 @@ function createPracticeElements(resultsList: HTMLElement): PracticeElements {
   reveal.textContent = "Reveal";
   actions.appendChild(reveal);
 
+  const controls = document.createElement("div");
+  controls.id = "practiceControls";
+  controls.className = "quick-controls practice-controls";
+  controls.setAttribute("role", "toolbar");
+  controls.setAttribute("aria-label", "Practice display controls");
+
+  const createToggle = (
+    id: string,
+    shortLabel: string,
+    title: string,
+  ): { label: HTMLLabelElement; input: HTMLInputElement } => {
+    const label = document.createElement("label");
+    label.className = "quick-toggle";
+    label.dataset.shortLabel = shortLabel;
+    label.title = title;
+    const input = document.createElement("input");
+    input.id = id;
+    input.type = "checkbox";
+    label.appendChild(input);
+    return { label, input };
+  };
+
+  const furigana = createToggle("practiceShowFurigana", "Furigana", "Furigana on target");
+  const highlight = createToggle("practiceShowHighlight", "Highlight", "Highlight target");
+  const pill = createToggle("practicePillHighlight", "Pill", "Pill highlight");
+  const definitions = createToggle("practiceShowDefinitions", "Definitions", "Definitions");
+  controls.append(furigana.label, highlight.label, pill.label, definitions.label);
+
   const shortcutNote = document.createElement("p");
   shortcutNote.className = "review-shortcut-note";
   shortcutNote.textContent = "Space reveal / next · → next after reveal · Esc exit.";
 
-  panel.append(header, content, complete, actions, shortcutNote);
+  panel.append(header, controls, content, complete, actions, shortcutNote);
   overlay.appendChild(panel);
   document.body.appendChild(overlay);
 
@@ -133,6 +166,11 @@ function createPracticeElements(resultsList: HTMLElement): PracticeElements {
     returnButton,
     actions,
     reveal,
+    controls,
+    furiganaToggle: furigana.input,
+    highlightToggle: highlight.input,
+    pillToggle: pill.input,
+    definitionsToggle: definitions.input,
   };
 }
 
@@ -163,6 +201,9 @@ export function createPracticeMode(options: PracticeModeOptions): PracticeMode {
   let originalPage = 1;
   let originalWindowStart = 0;
   let renderedAbsoluteIndex: number | null = null;
+  let renderedViewKey: string | null = null;
+
+  const viewKeyFor = (view: Readonly<AppState["view"]>): string => JSON.stringify(view);
 
   const setBackgroundInert = (value: boolean): void => {
     document.querySelector("main.app-shell")?.toggleAttribute("inert", value);
@@ -193,24 +234,27 @@ export function createPracticeMode(options: PracticeModeOptions): PracticeMode {
     entry: EntryWithKnown,
     absoluteIndex: number,
   ): void => {
-    if (
-      renderedAbsoluteIndex === absoluteIndex &&
-      resultsList.querySelector(".practice-entry") !== null
-    ) {
+    const currentViewKey = viewKeyFor(state.view);
+    const hasCard = resultsList.querySelector(".practice-entry") !== null;
+    if (renderedAbsoluteIndex === absoluteIndex && renderedViewKey === currentViewKey && hasCard) {
       return;
     }
-    const practiceView = { ...state.view, showDefinitions: true, showFurigana: true };
-    const card = renderReviewEntryNode(entry, practiceView);
-    card.classList.add("practice-entry", "practice-concealed");
+    const wasRevealed = renderedAbsoluteIndex === absoluteIndex && revealed;
+    const card = renderReviewEntryNode(entry, state.view);
+    card.classList.add("practice-entry");
+    if (!wasRevealed) {
+      card.classList.add("practice-concealed");
+    }
     resultsList.textContent = "";
     resultsList.appendChild(card);
     renderedAbsoluteIndex = absoluteIndex;
-    revealed = false;
+    renderedViewKey = currentViewKey;
+    revealed = wasRevealed;
     elements.content.hidden = false;
     elements.complete.hidden = true;
     elements.actions.hidden = false;
     elements.reveal.disabled = false;
-    elements.reveal.textContent = "Reveal";
+    elements.reveal.textContent = wasRevealed ? "Next" : "Reveal";
     options.onContentChanged?.();
   };
 
@@ -235,6 +279,7 @@ export function createPracticeMode(options: PracticeModeOptions): PracticeMode {
     }
 
     renderedAbsoluteIndex = null;
+    renderedViewKey = null;
     elements.reveal.disabled = true;
     resultsList.textContent = "";
     const loading = document.createElement("div");
@@ -256,6 +301,7 @@ export function createPracticeMode(options: PracticeModeOptions): PracticeMode {
     if (!active || !revealed || latest === null) return;
     cursor += 1;
     renderedAbsoluteIndex = null;
+    renderedViewKey = null;
     if (cursor >= order.length) {
       resultsList.textContent = "";
       showComplete();
@@ -291,6 +337,7 @@ export function createPracticeMode(options: PracticeModeOptions): PracticeMode {
     active = false;
     revealed = false;
     renderedAbsoluteIndex = null;
+    renderedViewKey = null;
     order = [];
     cursor = 0;
     sessionDatasetId = null;
@@ -338,8 +385,10 @@ export function createPracticeMode(options: PracticeModeOptions): PracticeMode {
     originalWindowStart = Math.max(0, state.result.startIndex - 1);
     sessionDatasetId = state.dataset.id;
     renderedAbsoluteIndex = null;
+    renderedViewKey = null;
     revealed = false;
     active = true;
+    syncToggles(state);
 
     if (resultsList.parentNode !== elements.content) elements.content.prepend(resultsList);
     resultsList.textContent = "";
@@ -353,12 +402,41 @@ export function createPracticeMode(options: PracticeModeOptions): PracticeMode {
     elements.panel.focus();
   };
 
+  const syncToggles = (state: Readonly<AppState>): void => {
+    elements.furiganaToggle.checked = state.view.showFurigana;
+    elements.highlightToggle.checked = state.view.showHighlight;
+    elements.pillToggle.checked = state.view.pillHighlight;
+    elements.definitionsToggle.checked = state.view.showDefinitions;
+    document.body.classList.toggle("hl-pill", state.view.pillHighlight);
+  };
+
   elements.button.addEventListener("click", start);
   elements.exit.addEventListener("click", () => stop());
   elements.returnButton.addEventListener("click", () => stop());
   elements.reveal.addEventListener("click", revealOrAdvance);
 
   const lifecycle = new AbortController();
+  elements.furiganaToggle.addEventListener(
+    "change",
+    () => controller.updateView({ showFurigana: elements.furiganaToggle.checked }),
+    { signal: lifecycle.signal },
+  );
+  elements.highlightToggle.addEventListener(
+    "change",
+    () => controller.updateView({ showHighlight: elements.highlightToggle.checked }),
+    { signal: lifecycle.signal },
+  );
+  elements.pillToggle.addEventListener(
+    "change",
+    () => controller.updateView({ pillHighlight: elements.pillToggle.checked }),
+    { signal: lifecycle.signal },
+  );
+  elements.definitionsToggle.addEventListener(
+    "change",
+    () => controller.updateView({ showDefinitions: elements.definitionsToggle.checked }),
+    { signal: lifecycle.signal },
+  );
+
   document.addEventListener(
     "keydown",
     (event) => {
@@ -416,6 +494,7 @@ export function createPracticeMode(options: PracticeModeOptions): PracticeMode {
         stop(false);
         return;
       }
+      syncToggles(state);
       requestCurrentCard(state);
     },
   };

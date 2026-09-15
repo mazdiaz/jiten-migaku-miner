@@ -60,4 +60,63 @@ test.describe("practice mode", () => {
     await expect(page.locator("#practiceOverlay")).toBeHidden();
     await expect(page.locator("#resultsList .entry-badge-decision")).toHaveCount(0);
   });
+
+  test("toggles Furigana, Highlight, Pill, and Definitions during practice", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
+    await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
+    await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
+
+    await page.locator("#stickySearch").fill("気になる");
+    await expect(page.locator("#resultsList .mining-entry")).toHaveCount(1);
+
+    await openPractice(page);
+    const furiganaToggle = page.locator("#practiceShowFurigana");
+    const highlightToggle = page.locator("#practiceShowHighlight");
+    const pillToggle = page.locator("#practicePillHighlight");
+    const definitionsToggle = page.locator("#practiceShowDefinitions");
+
+    await expect(furiganaToggle).toBeVisible();
+    await expect(highlightToggle).toBeVisible();
+    await expect(pillToggle).toBeVisible();
+    await expect(definitionsToggle).toBeVisible();
+
+    // Check highlight on and off in practice before reveal
+    await highlightToggle.check();
+    await expect(page.locator("#practiceContent .target-highlight")).toBeVisible();
+    await highlightToggle.uncheck();
+    await expect(page.locator("#practiceContent .target-highlight")).toHaveCount(0);
+    await highlightToggle.check();
+    await expect(page.locator("#practiceContent .target-highlight")).toBeVisible();
+
+    // Check pill in practice
+    await pillToggle.check();
+    await expect(page.locator("body")).toHaveClass(/hl-pill/);
+
+    // Uncheck definitions in practice, then reveal through the explicit action.
+    // The checkbox retains focus after interaction, so a Space keypress would
+    // toggle the checkbox instead of exercising Practice Mode's reveal action.
+    await definitionsToggle.uncheck();
+    await page.locator("#practiceReveal").click();
+    await expect(page.locator("#practiceContent .entry-definitions")).toBeHidden();
+
+    // Check furigana in practice while revealed. Target both the intended
+    // headword ruby and not the sentence ruby, which may also be present.
+    await furiganaToggle.check();
+    await expect(page.locator("#practiceContent .target-word rt")).toBeVisible();
+
+    // Check highlight toggling on and off while revealed
+    await highlightToggle.uncheck();
+    await expect(page.locator("#practiceContent .target-highlight")).toHaveCount(0);
+    await highlightToggle.check();
+    await expect(page.locator("#practiceContent .target-highlight")).toBeVisible();
+
+    // Exit practice and confirm toggles persisted to main page
+    await page.locator("#practiceExit").click();
+    await expect(page.locator("#showFurigana")).toBeChecked();
+    await expect(page.locator("#showHighlight")).toBeChecked();
+    await expect(page.locator("#pillHighlight")).toBeChecked();
+    await expect(page.locator("#showDefinitions")).not.toBeChecked();
+    await expect(page.locator("#resultsList .target-highlight")).toBeVisible();
+  });
 });
