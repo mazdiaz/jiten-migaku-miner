@@ -56,28 +56,23 @@ export const ImportPanel = memo(function ImportPanel() {
             {"Optional · no list loaded"}
           </div>
         </div>
-
-        <section
-          id="datasetLibrary"
-          className="dataset-library"
-          aria-label="Saved datasets"
-          style={{ gridColumn: "1 / -1" }}
-        >
-          <div className="dataset-library-heading">
-            <div>
-              <h3>{"Dataset library"}</h3>
-              <p>{"Switch between saved Jiten CSVs without uploading them again."}</p>
-            </div>
-            <span id="libraryStatus" className="library-status" aria-live="polite"></span>
-          </div>
-
-          <div id="libraryList" className="library-list">
-            <p id="libraryEmpty" className="library-empty">
-              {"Your saved CSVs will appear here."}
-            </p>
-          </div>
-        </section>
       </div>
+
+      <section id="datasetLibrary" className="dataset-library" aria-label="Saved datasets">
+        <div className="dataset-library-heading">
+          <div>
+            <h3>{"Dataset library"}</h3>
+            <p>{"Switch between saved Jiten CSVs without uploading them again."}</p>
+          </div>
+          <span id="libraryStatus" className="library-status" aria-live="polite"></span>
+        </div>
+
+        <div id="libraryList" className="library-list">
+          <p id="libraryEmpty" className="library-empty">
+            {"Your saved CSVs will appear here."}
+          </p>
+        </div>
+      </section>
 
       <section id="ankiSection" className="anki-section" aria-label="Anki Sync">
         <h3>{"Anki Sync"}</h3>
