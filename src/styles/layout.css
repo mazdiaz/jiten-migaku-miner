@@ -135,6 +135,10 @@ h1 {
   background: var(--surface-2);
 }
 
+.dataset-library[hidden] {
+  display: none;
+}
+
 .dataset-library-heading {
   display: flex;
   align-items: flex-start;

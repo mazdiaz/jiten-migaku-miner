@@ -318,6 +318,10 @@ export function createRenderer(dom: DomMap): Renderer {
 
   const renderDatasetLibrary = (state: Readonly<AppState>): void => {
     const datasets = state.datasetLibrary;
+    // A switcher has no value while the active dataset is the only saved one.
+    // Keep the empty state visible before the first import, and reveal the
+    // library as soon as there is an alternative dataset to open.
+    dom.datasetLibrary.hidden = datasets.length === 1 && datasets[0]?.id === state.dataset?.id;
     dom.libraryStatus.textContent = state.status === "loading" ? "Loading…" : "";
     dom.libraryList.replaceChildren();
     if (datasets.length === 0) {

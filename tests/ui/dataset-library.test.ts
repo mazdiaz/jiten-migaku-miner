@@ -60,4 +60,22 @@ describe("dataset library", () => {
     expect(dom.libraryEmpty.hidden).toBe(false);
     expect(dom.libraryEmpty.textContent).toContain("saved CSVs");
   });
+
+  it("hides the switcher when the active dataset is the only saved dataset", () => {
+    const dom = getDomMap();
+    const renderer = createRenderer(dom);
+    const state = createInitialAppState("memory");
+    const first = dataset("first", "anime.csv", 1200);
+    const second = dataset("second", "novel.csv", 42);
+    state.dataset = first;
+    state.datasetLibrary = [first];
+    state.status = "ready";
+
+    renderer.render(state);
+    expect(dom.datasetLibrary.hidden).toBe(true);
+
+    state.datasetLibrary = [first, second];
+    renderer.render(state);
+    expect(dom.datasetLibrary.hidden).toBe(false);
+  });
 });
