@@ -89,6 +89,10 @@ export function mountStudy(onStatus: (status: CloudStatus) => void) {
     if (disposed) return;
     const sessionQueueStore: SessionQueueStore = {
       load: () => (queue === null ? null : structuredClone(queue)),
+      loadForDataset: async (datasetId) => {
+        const saved = await store.queue.load(datasetId);
+        return saved === null ? null : structuredClone(saved);
+      },
       save(snapshot) {
         queue = structuredClone(snapshot);
         void store.queue.save(snapshot).catch(fail);
@@ -195,6 +199,7 @@ export function mountStudy(onStatus: (status: CloudStatus) => void) {
         if (latest) syncStickyToolbarClarity(dom, latest);
       },
       onToggleCoverage: () => renderer.toggleCoveragePanel(),
+      onSwitchDataset: (datasetId) => controller.switchDataset?.(datasetId),
       confirmRestore: () =>
         window.confirm(
           "Restore this backup? A complete backup replaces datasets, queue, known words, decisions, preferences, and Anki state. A legacy backup replaces study settings only. Export a backup first if you want to keep current data.",

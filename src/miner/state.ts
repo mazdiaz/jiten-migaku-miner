@@ -62,6 +62,7 @@ export interface AnkiPreviewState {
 
 export interface AppState {
   dataset: DatasetMetadata | null;
+  datasetLibrary: DatasetMetadata[];
   knownWords: Set<string>;
   knownWordsName: string | null;
   wordDecisions: Map<string, WordDecision>;
@@ -100,6 +101,7 @@ export interface FolderSource {
 export interface MinerController {
   subscribe(listener: (state: Readonly<AppState>) => void): () => void;
   importJiten(source: FileSource): Promise<void>;
+  switchDataset?(datasetId: string): Promise<void>;
   importKnown(source: FileSource): Promise<void>;
   updateQuery(patch: Partial<QueryState>): void;
   updateView(patch: Partial<ViewState>): void;
@@ -191,6 +193,7 @@ export function createInitialAppState(
 ): AppState {
   return {
     dataset: null,
+    datasetLibrary: [],
     knownWords: new Set<string>(),
     knownWordsName: null,
     wordDecisions: new Map<string, WordDecision>(),
@@ -276,6 +279,7 @@ export function cloneAppState(value: AppState): AppState {
   return {
     ...value,
     dataset: cloneDataset(value.dataset),
+    datasetLibrary: value.datasetLibrary.map((dataset) => cloneDataset(dataset)!),
     knownWords: new Set(value.knownWords),
     wordDecisions: cloneWordDecisions(value.wordDecisions),
     query: cloneQuery(value.query),

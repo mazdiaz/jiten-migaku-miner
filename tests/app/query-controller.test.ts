@@ -32,6 +32,7 @@ class RecordingVirtualList implements Pick<VirtualList, "setTotal" | "setWindow"
 function _makeState(overrides: Partial<AppState> = {}): AppState {
   return {
     dataset: null,
+    datasetLibrary: [],
     knownWords: new Set<string>(),
     knownWordsName: null,
     wordDecisions: new Map(),

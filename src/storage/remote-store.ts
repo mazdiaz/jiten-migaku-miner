@@ -20,7 +20,7 @@ export interface CompleteBackup {
 export interface RemoteAppStore extends AppStore {
   initialize(): Promise<void>;
   queue: {
-    load(): Promise<SessionQueueSnapshot | null>;
+    load(datasetId?: string): Promise<SessionQueueSnapshot | null>;
     save(snapshot: SessionQueueSnapshot | null): Promise<void>;
   };
   exportCompleteBackup(): Promise<string>;
@@ -300,7 +300,10 @@ export function createRemoteAppStore(
       replaceSnapshot: (value) => savedUpload("ankiSnapshot", value),
       clear: () => run(() => mutate("state.clear", { resource: "ankiSync" })),
     },
-    queue: { load: () => run(() => queue()), save: (value) => savedUpload("queue", value) },
+    queue: {
+      load: (datasetId?: string) => run(() => queue(datasetId)),
+      save: (value) => savedUpload("queue", value),
+    },
     clearAll: () => run(() => mutate("state.clear", { resource: "all" })),
     restoreUserState: (value: RestoreUserStateSnapshot) => {
       const payload = {

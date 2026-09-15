@@ -522,6 +522,43 @@ describe("MinerController", () => {
     expect(states[0]).not.toBe(states.at(-1));
   });
 
+  it("lists saved datasets and switches to another dataset with its saved queue", async () => {
+    const store = createMemoryAppStore();
+    await seedActive(store, "old-dataset");
+    await store.datasets.stage(
+      metadata("second-dataset"),
+      (async function* () {
+        yield [entry("second-entry", "新しい")];
+      })(),
+    );
+    const sessionQueue = createSessionQueueStore(null);
+    sessionQueue.save({ version: 1, datasetId: "second-dataset", normalizedWords: ["新しい"] });
+    const worker = new FakeWorkerClient();
+    const controller = createMinerController({
+      ...controllerOptions(store, worker),
+      sessionQueueStore: sessionQueue,
+    });
+    const states: Readonly<AppState>[] = [];
+    controller.subscribe((state) => states.push(state));
+
+    await controller.init();
+    expect(states.at(-1)?.datasetLibrary.map((dataset) => dataset.id)).toEqual([
+      "old-dataset",
+      "second-dataset",
+    ]);
+
+    await controller.switchDataset!("second-dataset");
+
+    expect(await store.datasets.getActive()).toEqual(metadata("second-dataset"));
+    expect(states.at(-1)?.dataset).toEqual(metadata("second-dataset"));
+    expect(states.at(-1)?.queue).toMatchObject({
+      datasetId: "second-dataset",
+      normalizedWords: ["新しい"],
+      mode: "normal",
+    });
+    expect(worker.loadCalls.at(-1)?.datasetId).toBe("second-dataset");
+  });
+
   it("keeps saved Anki classifications active when Anki is unavailable", async () => {
     const store = createMemoryAppStore();
     await seedActive(store);

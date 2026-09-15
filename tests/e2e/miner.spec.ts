@@ -84,6 +84,22 @@ test.describe("canonical miner", () => {
     await expect(page.locator(".target-highlight")).toHaveCount(0);
   });
 
+  test("opens a previously imported CSV from the dataset library", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
+
+    await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
+    await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
+    await page.locator("#jitenInput").setInputFiles(SIXTY_CSV);
+    await expect(page.locator("#resultsList .mining-entry")).toHaveCount(50);
+
+    const savedSmall = page.locator(".library-item").filter({ hasText: "jiten-small" });
+    await expect(savedSmall).toBeVisible();
+    await savedSmall.getByRole("button", { name: "Open" }).click();
+    await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
+    await expect(savedSmall.getByRole("button", { name: "Active" })).toBeDisabled();
+  });
+
   test("collapses the import panel to a summary after load and expands on demand", async ({
     page,
   }) => {

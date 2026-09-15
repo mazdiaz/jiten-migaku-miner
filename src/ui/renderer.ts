@@ -316,12 +316,49 @@ export function createRenderer(dom: DomMap): Renderer {
     dom.changeFiles.setAttribute("aria-expanded", collapsed ? "false" : "true");
   };
 
+  const renderDatasetLibrary = (state: Readonly<AppState>): void => {
+    const datasets = state.datasetLibrary;
+    dom.libraryStatus.textContent = state.status === "loading" ? "Loading…" : "";
+    dom.libraryList.replaceChildren();
+    if (datasets.length === 0) {
+      dom.libraryList.append(dom.libraryEmpty);
+      return;
+    }
+
+    for (const dataset of datasets) {
+      const item = document.createElement("article");
+      item.className = "library-item";
+      if (dataset.id === state.dataset?.id) item.classList.add("active");
+
+      const details = document.createElement("div");
+      details.className = "library-item-details";
+      const title = document.createElement("h4");
+      title.textContent = dataset.name.replace(/\.csv$/i, "");
+      details.append(title);
+      const meta = document.createElement("p");
+      meta.textContent = `${dataset.entryCount.toLocaleString("en-US")} entries · Imported ${new Date(dataset.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
+      details.append(meta);
+      item.append(details);
+
+      const action = document.createElement("button");
+      action.type = "button";
+      action.className = "library-open";
+      action.dataset.libraryDatasetId = dataset.id;
+      action.textContent = dataset.id === state.dataset?.id ? "Active" : "Open";
+      action.disabled = dataset.id === state.dataset?.id || state.status === "loading";
+      if (dataset.id === state.dataset?.id) action.setAttribute("aria-current", "true");
+      item.append(action);
+      dom.libraryList.append(item);
+    }
+  };
+
   const renderState = (state: Readonly<AppState>): void => {
     lastState = state;
     const hasData = state.dataset !== null && state.dataset.entryCount > 0;
     syncControls(state, hasData);
 
     renderImportPanel(state);
+    renderDatasetLibrary(state);
     renderAnkiSection(dom, state);
 
     if (state.errorMessage === null) {

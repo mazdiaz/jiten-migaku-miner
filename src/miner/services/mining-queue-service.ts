@@ -1,5 +1,6 @@
 import { canonicalWord } from "../../domain/text";
 import type { EntryWithKnown, QueryState } from "../../domain/types";
+import type { SessionQueueSnapshot } from "../../platform/session-queue";
 import { type ControllerCore, errorMessage } from "./context";
 
 const VIEWPORT_WINDOW_SIZE = 100;
@@ -34,12 +35,15 @@ export class MiningQueueService {
     this.core.sessionQueue.clear();
   }
 
-  restoreSnapshot(active: { id: string } | null): void {
+  restoreSnapshot(active: { id: string } | null, saved?: SessionQueueSnapshot | null): void {
     if (active === null) return;
-    const snapshot = this.core.sessionQueue.load();
+    const snapshot = saved === undefined ? this.core.sessionQueue.load() : saved;
     const words =
       snapshot !== null && snapshot.datasetId === active.id ? [...snapshot.normalizedWords] : [];
     this.core.state.queue = { datasetId: active.id, normalizedWords: words, mode: "normal" };
+    if (saved !== undefined) {
+      this.core.sessionQueue.save({ version: 1, datasetId: active.id, normalizedWords: words });
+    }
   }
 
   setQueueWords(datasetId: string, words: string[]): void {

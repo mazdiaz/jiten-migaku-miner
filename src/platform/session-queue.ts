@@ -6,6 +6,8 @@ export interface SessionQueueSnapshot {
 
 export interface SessionQueueStore {
   load(): SessionQueueSnapshot | null;
+  /** Optional durable lookup used when switching between saved datasets. */
+  loadForDataset?(datasetId: string): Promise<SessionQueueSnapshot | null>;
   save(snapshot: SessionQueueSnapshot): void;
   clear(): void;
 }

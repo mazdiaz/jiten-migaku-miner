@@ -22,6 +22,7 @@ export interface ControlsOptions {
   onToggleImports?: () => void;
   onToggleAdvanced?: () => void;
   onToggleCoverage?: () => void;
+  onSwitchDataset?: (datasetId: string) => void | Promise<void>;
 }
 
 export interface ControlBindings {
@@ -119,6 +120,7 @@ export function bindControls(
   const onToggleImports = options.onToggleImports;
   const onToggleAdvanced = options.onToggleAdvanced;
   const onToggleCoverage = options.onToggleCoverage;
+  const onSwitchDataset = options.onSwitchDataset;
   let latest: Readonly<AppState> | null = null;
   let reviewWasActive = false;
   let pendingFocus: PendingFocus | null = null;
@@ -433,6 +435,16 @@ export function bindControls(
 
   recorder.add(dom.coverageToggle, "click", () => {
     onToggleCoverage?.();
+  });
+
+  recorder.add(dom.libraryList, "click", (event) => {
+    const target = event.target;
+    if (target === null || !(target instanceof Element)) return;
+    const button = target.closest<HTMLButtonElement>("button[data-library-dataset-id]");
+    if (button === null || button.disabled) return;
+    const datasetId = button.dataset.libraryDatasetId;
+    if (datasetId === undefined || datasetId.length === 0) return;
+    void onSwitchDataset?.(datasetId);
   });
 
   // Focus highest-value unknowns: ONLY hideKnown + occ-desc + page 1. All

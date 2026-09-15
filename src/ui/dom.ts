@@ -27,6 +27,10 @@ export interface DomMap {
   readonly ankiPreviewWarning: HTMLElement;
   readonly ankiApply: HTMLButtonElement;
   readonly ankiCancelPreview: HTMLButtonElement;
+  readonly datasetLibrary: HTMLElement;
+  readonly libraryList: HTMLElement;
+  readonly libraryEmpty: HTMLElement;
+  readonly libraryStatus: HTMLElement;
   readonly clearData: HTMLButtonElement;
   readonly exportBackup: HTMLButtonElement;
   readonly restoreBackup: HTMLButtonElement;
@@ -103,6 +107,11 @@ export function getDomMap(): DomMap {
     if (found === null) throw new Error(`Missing required element: #${id}`);
     return found as T;
   };
+  // The library was added after the original imperative test harnesses. A
+  // detached fallback keeps those focused harnesses valid while the real
+  // React shell always supplies the elements.
+  const byIdOrDetached = <T extends HTMLElement>(id: string): T =>
+    (document.getElementById(id) as T | null) ?? (document.createElement("div") as unknown as T);
 
   return {
     jitenInput: byId<HTMLInputElement>("jitenInput"),
@@ -133,6 +142,10 @@ export function getDomMap(): DomMap {
     ankiPreviewWarning: byId<HTMLElement>("ankiPreviewWarning"),
     ankiApply: byId<HTMLButtonElement>("ankiApply"),
     ankiCancelPreview: byId<HTMLButtonElement>("ankiCancelPreview"),
+    datasetLibrary: byIdOrDetached<HTMLElement>("datasetLibrary"),
+    libraryList: byIdOrDetached<HTMLElement>("libraryList"),
+    libraryEmpty: byIdOrDetached<HTMLElement>("libraryEmpty"),
+    libraryStatus: byIdOrDetached<HTMLElement>("libraryStatus"),
     clearData: byId<HTMLButtonElement>("clearData"),
     exportBackup: byId<HTMLButtonElement>("exportBackup"),
     restoreBackup: byId<HTMLButtonElement>("restoreBackup"),

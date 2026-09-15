@@ -127,6 +127,99 @@ h1 {
   color: var(--subtle);
 }
 
+.dataset-library {
+  margin-top: 18px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-2);
+}
+
+.dataset-library-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.dataset-library h3 {
+  margin: 0;
+  font-size: 0.98rem;
+}
+
+.dataset-library-heading p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.library-status {
+  min-height: 1.2em;
+  color: var(--muted);
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.library-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.library-empty {
+  margin: 0;
+  color: var(--subtle);
+  font-size: 0.86rem;
+}
+
+.library-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface);
+}
+
+.library-item.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.library-item h4 {
+  margin: 0;
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+
+.library-item p {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.library-open {
+  flex: 0 0 auto;
+  min-width: 64px;
+  padding: 6px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-weight: 700;
+}
+
+.library-open:not(:disabled):hover {
+  border-color: var(--accent);
+}
+
+.library-open:disabled {
+  cursor: default;
+  opacity: 0.65;
+}
+
 .anki-section {
   display: grid;
   gap: 10px;

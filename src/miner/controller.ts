@@ -289,6 +289,7 @@ class MinerControllerImpl implements MinerController {
         this.withUserStateLock(async () => {
           await this.activateAndVerify(dataset);
           if (generation !== this.importGeneration) return false;
+          this.state.datasetLibrary = await this.storageOperation((store) => store.datasets.list());
           this.state.dataset = dataset;
           this.ankiSyncService.cancelPreview();
           this.state.query = { ...this.state.query, page: 1 };
@@ -350,6 +351,88 @@ class MinerControllerImpl implements MinerController {
       const message =
         cleanupWarning === null ? errorMessage(error) : `${errorMessage(error)} ${cleanupWarning}`;
       this.setState({ status: "error", errorMessage: message });
+    }
+  }
+
+  async switchDataset(datasetId: string): Promise<void> {
+    const generation = ++this.importGeneration;
+    const previous = cloneAppState(this.state);
+    let activationAttempted = false;
+    this.setState({ status: "loading", errorMessage: null });
+
+    try {
+      const library = await this.storageOperation((store) => store.datasets.list());
+      const dataset = library.find((candidate) => candidate.id === datasetId);
+      if (dataset === undefined) throw new Error("That saved dataset could not be found.");
+      if (this.state.dataset?.id === dataset.id) {
+        this.state.datasetLibrary = library;
+        this.setState({ status: "ready", errorMessage: this.warningMessage });
+        return;
+      }
+
+      const savedQueue = this.sessionQueue.loadForDataset
+        ? await this.sessionQueue.loadForDataset(dataset.id)
+        : this.sessionQueue.load();
+      const loaded = await this.readDatasetChunks(dataset.id);
+      if (loaded.entryCount !== dataset.entryCount) {
+        throw new Error(
+          `Dataset entry count did not match metadata: expected ${dataset.entryCount}, found ${loaded.entryCount}`,
+        );
+      }
+      await this.worker.loadDataset(dataset.id, copiedEntryChunks(loaded.values));
+      const candidateWindow =
+        this.state.query.pageSize === "all" ? { start: 0, size: VIEWPORT_WINDOW_SIZE } : undefined;
+      const candidateResult = await this.worker.query({
+        datasetId: dataset.id,
+        knownWords: [...this.state.knownWords],
+        decisions: this.decisionTuples(),
+        ankiStatuses: this.ankiSyncService.ankiStatusTuples(),
+        query: { ...this.state.query, page: 1 },
+        queryChannel: "candidate",
+        ...(candidateWindow === undefined ? {} : { window: candidateWindow }),
+      });
+      if (generation !== this.importGeneration) return;
+
+      const committed = await this.withImportLock(() =>
+        this.withUserStateLock(async () => {
+          activationAttempted = true;
+          await this.activateAndVerify(dataset);
+          if (generation !== this.importGeneration) return false;
+          this.state.datasetLibrary = library;
+          this.state.dataset = dataset;
+          this.state.query = { ...this.state.query, page: 1 };
+          this.state.result = candidateResult;
+          this.queueService.restoreSnapshot(dataset, savedQueue);
+          this.ankiSyncService.cancelPreview();
+          this.decisionService.clearUndo();
+          this.viewportStart = 0;
+          this.queryGeneration += 1;
+          const committedQueryGeneration = this.queryGeneration;
+          this.coverageService.reset();
+          if (this.state.review.active) this.stopReview();
+          this.setState({ status: "ready", errorMessage: this.warningMessage });
+          await this.persistPreferencesUnlocked();
+          return committedQueryGeneration;
+        }),
+      );
+      if (committed === false) {
+        await this.withImportLock(() => this.rollbackActivation(dataset.id, previous.dataset));
+        return;
+      }
+      await this.runQuery();
+      await this.requestCoverage();
+    } catch (error) {
+      if (activationAttempted && previous.dataset !== null) {
+        try {
+          await this.withImportLock(() => this.rollbackActivation(datasetId, previous.dataset));
+        } catch {
+          // Preserve the original switch error as the actionable message.
+        }
+      }
+      this.state.dataset = previous.dataset;
+      this.state.datasetLibrary = previous.datasetLibrary;
+      this.state.result = previous.result;
+      this.setState({ status: "error", errorMessage: errorMessage(error) });
     }
   }
 
@@ -668,14 +751,17 @@ class MinerControllerImpl implements MinerController {
     let known: { id: string; name: string; words: Set<string> } | null;
     let decisions: WordDecision[];
     let preferences: { query: QueryState; view: ViewState; page: number } | null;
+    let datasetLibrary: DatasetMetadata[];
     try {
-      [active, known, decisions, preferences] = await this.storageOperation((store) =>
-        Promise.all([
-          store.datasets.getActive(),
-          store.knownWords.getActive(),
-          store.wordDecisions.list(),
-          store.preferences.load(),
-        ]),
+      [active, known, decisions, preferences, datasetLibrary] = await this.storageOperation(
+        (store) =>
+          Promise.all([
+            store.datasets.getActive(),
+            store.knownWords.getActive(),
+            store.wordDecisions.list(),
+            store.preferences.load(),
+            store.datasets.list(),
+          ]),
       );
       await this.ankiSyncService.initialize();
     } catch (error) {
@@ -702,6 +788,7 @@ class MinerControllerImpl implements MinerController {
       this.state.view = { ...DEFAULT_VIEW, ...preferences.view };
     }
     this.state.dataset = active;
+    this.state.datasetLibrary = datasetLibrary;
     this.queueService.restoreSnapshot(active);
     this.publish();
 
