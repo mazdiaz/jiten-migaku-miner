@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 
 const SMALL_CSV = "tests/fixtures/jiten-small.csv";
 
@@ -7,6 +7,7 @@ test.describe("Migaku sentence baseline compatibility", () => {
     page,
   }) => {
     await page.goto("/");
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
     await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
 
     const sentence = page.locator("#resultsList .sentence").first();

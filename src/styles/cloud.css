@@ -1,0 +1,60 @@
+.account-bar {
+  width: min(1120px, calc(100% - 32px));
+  margin: 4px auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: 13px;
+}
+.account-bar button,
+.login-shell button {
+  cursor: pointer;
+  padding: 8px 16px;
+  border: 1px solid currentColor;
+  border-radius: 8px;
+  color: inherit;
+  background: transparent;
+}
+.login-shell {
+  max-width: 650px;
+  margin: 12vh auto;
+  padding: 32px;
+}
+.cloud-status {
+  width: min(1120px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 4px 0;
+  font-size: 12px;
+  min-height: 26px;
+}
+.cloud-status[data-error="true"] {
+  color: #b91c1c;
+  background: #fff1f2;
+  border-radius: 8px;
+}
+.account-bar button {
+  padding: 4px 12px;
+}
+.app-shell {
+  padding-top: 12px;
+}
+.hero {
+  margin-bottom: 16px;
+}
+.hero-copy {
+  max-width: none;
+  font-size: 14px;
+}
+.anki-section {
+  gap: 6px;
+  padding: 10px;
+  margin-top: 12px;
+}
+fieldset.portability-row,
+fieldset.review-actions {
+  border: 0;
+  padding: 0;
+  min-width: 0;
+  margin-inline: 0;
+}

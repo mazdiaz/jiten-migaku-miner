@@ -1,18 +1,5 @@
 import "fake-indexeddb/auto";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  createMinerController,
-  MAX_BACKUP_BYTES,
-  type MinerControllerOptions,
-} from "../../src/app/controller";
-import type { AppState, MinerController } from "../../src/app/state";
-import { DEFAULT_QUERY, DEFAULT_VIEW } from "../../src/app/state";
-import type {
-  WorkerAnkiPreviewInput,
-  WorkerClient,
-  WorkerCoverageInput,
-  WorkerQueryInput,
-} from "../../src/app/worker-client";
 import type { AnkiSyncConfig, AnkiSyncSnapshot } from "../../src/domain/anki";
 import { serializeBackup } from "../../src/domain/backup";
 import { computeCoverage } from "../../src/domain/coverage";
@@ -24,6 +11,19 @@ import type {
   ViewState,
   WordDecisionStatus,
 } from "../../src/domain/types";
+import {
+  createMinerController,
+  MAX_BACKUP_BYTES,
+  type MinerControllerOptions,
+} from "../../src/miner/controller";
+import type { AppState, MinerController } from "../../src/miner/state";
+import { DEFAULT_QUERY, DEFAULT_VIEW } from "../../src/miner/state";
+import type {
+  WorkerAnkiPreviewInput,
+  WorkerClient,
+  WorkerCoverageInput,
+  WorkerQueryInput,
+} from "../../src/miner/worker-client";
 import type { AnkiConnectPort } from "../../src/platform/anki-connect";
 import { createFileSource } from "../../src/platform/file-source";
 import { createFolderSource } from "../../src/platform/folder-source";
@@ -2734,6 +2734,20 @@ describe("MinerController backup and restore", () => {
       view: { ...DEFAULT_VIEW },
       page: 1,
     });
+  });
+
+  it("keeps a backup error when an already committed import finishes saving preferences", async () => {
+    const delayed = createDelayedAppStore(createMemoryAppStore());
+    const { controller, states } = restoreSetup(delayed.store);
+    await controller.init();
+    delayed.gate("preferences.save");
+    const importing = controller.importJiten({ name: "new.csv", text: async () => "Word\n新しい" });
+    await delayed.started("preferences.save");
+    await expect(controller.restoreBackup("{not json")).rejects.toThrow();
+    delayed.release("preferences.save");
+    await importing;
+    expect(states.at(-1)?.dataset?.name).toBe("new.csv");
+    expect(states.at(-1)?.errorMessage).toContain("Backup could not be restored");
   });
 
   it("performs zero writes when the backup fails to parse", async () => {

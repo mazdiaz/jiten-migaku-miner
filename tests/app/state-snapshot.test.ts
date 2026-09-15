@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { createMinerController, type MinerControllerOptions } from "../../src/app/controller";
-import type { AppState, FileSource } from "../../src/app/state";
-import { createInitialAppState, snapshotAppState } from "../../src/app/state";
+import type { CoverageStats, Entry, QueryResult } from "../../src/domain/types";
+import { createMinerController, type MinerControllerOptions } from "../../src/miner/controller";
+import type { AppState, FileSource } from "../../src/miner/state";
+import { createInitialAppState, snapshotAppState } from "../../src/miner/state";
 import type {
   WorkerClient,
   WorkerCoverageInput,
   WorkerQueryInput,
-} from "../../src/app/worker-client";
-import type { CoverageStats, Entry, QueryResult } from "../../src/domain/types";
+} from "../../src/miner/worker-client";
 import type { AppStore, DatasetMetadata } from "../../src/storage/contracts";
 import { createMemoryAppStore } from "../../src/storage/memory-store";
 import type { ImportCompleteResponse } from "../../src/worker/protocol";

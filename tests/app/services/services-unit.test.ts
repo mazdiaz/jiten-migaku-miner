@@ -1,24 +1,24 @@
 import { describe, expect, it } from "vitest";
-import { BackupService, MAX_BACKUP_BYTES } from "../../../src/app/services/backup-service";
-import type { ControllerCore } from "../../../src/app/services/context";
-import { CoverageService } from "../../../src/app/services/coverage-service";
-import { DecisionService } from "../../../src/app/services/decision-service";
-import { MiningQueueService } from "../../../src/app/services/mining-queue-service";
-import { ReviewSession } from "../../../src/app/services/review-session";
+import type { CoverageStats, Entry, QueryResult } from "../../../src/domain/types";
+import { BackupService, MAX_BACKUP_BYTES } from "../../../src/miner/services/backup-service";
+import type { ControllerCore } from "../../../src/miner/services/context";
+import { CoverageService } from "../../../src/miner/services/coverage-service";
+import { DecisionService } from "../../../src/miner/services/decision-service";
+import { MiningQueueService } from "../../../src/miner/services/mining-queue-service";
+import { ReviewSession } from "../../../src/miner/services/review-session";
 import {
   type AppState,
   createInitialAppState,
   DEFAULT_QUERY,
   DEFAULT_VIEW,
   EMPTY_REVIEW,
-} from "../../../src/app/state";
+} from "../../../src/miner/state";
 import type {
   WorkerAnkiPreviewInput,
   WorkerClient,
   WorkerCoverageInput,
   WorkerQueryInput,
-} from "../../../src/app/worker-client";
-import type { CoverageStats, Entry, QueryResult } from "../../../src/domain/types";
+} from "../../../src/miner/worker-client";
 
 function entry(id: string, word: string, originalIndex = 0): Entry {
   return {

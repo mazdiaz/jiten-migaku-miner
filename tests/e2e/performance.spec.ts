@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 
 test.describe("large dataset performance", () => {
   test("imports 100,000 rows and keeps the mounted DOM bounded while scrolling", async ({
@@ -19,6 +19,7 @@ test.describe("large dataset performance", () => {
 
       const importStarted = Date.now();
       await page.goto("/");
+      await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
       await page.locator("#jitenInput").setInputFiles(csvPath);
 
       await expect(page.locator("#resultStats")).toContainText("Loaded 100,000", {

@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AppState, MinerController } from "../../src/app/state";
-import { createInitialAppState } from "../../src/app/state";
 import type { WordDecision, WordDecisionStatus } from "../../src/domain/types";
+import type { AppState, MinerController } from "../../src/miner/state";
+import { createInitialAppState } from "../../src/miner/state";
 import type { DomMap } from "../../src/ui/dom";
 import { getDomMap } from "../../src/ui/dom";
 import type { Renderer } from "../../src/ui/renderer";
@@ -376,7 +376,7 @@ describe("decision summary counts", () => {
     });
     try {
       expect(harness.dom.decisionSummary.textContent).toBe(
-        `Decisions: 12 known · 3 mined · 2 later · 1 skip · Migaku-known: ${(8614).toLocaleString()}`,
+        `Decisions: 12 known · 3 mined · 2 later · 1 skip · Migaku-known: 8,614`,
       );
     } finally {
       harness.dispose();
@@ -393,7 +393,7 @@ describe("decision summary counts", () => {
     });
     try {
       expect(harness.dom.decisionSummary.textContent).toBe(
-        `Decisions: ${(1234).toLocaleString()} known · 0 mined · 0 later · 0 skip · Migaku-known: 0`,
+        `Decisions: 1,234 known · 0 mined · 0 later · 0 skip · Migaku-known: 0`,
       );
     } finally {
       harness.dispose();

@@ -1,14 +1,13 @@
 // @vitest-environment happy-dom
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AppState, FileSource, MinerController } from "../../src/app/state";
-import { createInitialAppState } from "../../src/app/state";
 import type { CoverageStats, QueryState } from "../../src/domain/types";
+import type { AppState, FileSource, MinerController } from "../../src/miner/state";
+import { createInitialAppState } from "../../src/miner/state";
 import { bindControls } from "../../src/ui/controls";
 import type { DomMap } from "../../src/ui/dom";
 import { getDomMap } from "../../src/ui/dom";
 import { createRenderer } from "../../src/ui/renderer";
+import { renderMinerShell } from "../support/shell";
 
 type Listener = (state: Readonly<AppState>) => void;
 
@@ -378,7 +377,7 @@ describe("coverage panel", () => {
   });
 
   it("ships the panel above the results list with the verbatim note in index.html", () => {
-    const html = readFileSync(resolve(process.cwd(), "index.html"), "utf8");
+    const html = renderMinerShell();
     expect(html).toContain('id="coveragePanel"');
     expect(html.indexOf('id="coveragePanel"')).toBeGreaterThan(html.indexOf('id="resultsHeading"'));
     expect(html.indexOf('id="coveragePanel"')).toBeLessThan(html.indexOf('id="resultsList"'));

@@ -1,4 +1,4 @@
-import { expect, type Page, test } from "@playwright/test";
+import { expect, type Page, test } from "./fixtures";
 
 const SMALL_CSV = "tests/fixtures/jiten-small.csv";
 const FOLLOWUP_CSV = "tests/fixtures/jiten-followup.csv";
@@ -57,6 +57,7 @@ test.describe("persistent word decisions", () => {
     page,
   }) => {
     await page.goto("/");
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
     await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
 
@@ -72,6 +73,7 @@ test.describe("persistent word decisions", () => {
 
     await expect(page.locator("#hideKnown")).toBeEnabled();
 
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
     await page.reload();
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
 
@@ -98,6 +100,7 @@ test.describe("persistent word decisions", () => {
   test("follows a mined decision into a new import, resets it, and clears it", async ({ page }) => {
     await acceptDialogs(page);
     await page.goto("/");
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
     await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
     await markDecision(page, "プール", "mined");
@@ -115,7 +118,9 @@ test.describe("persistent word decisions", () => {
       "Load a Jiten CSV above.",
     );
 
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
     await page.reload();
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
     await expect(page.locator("#resultsList .empty-state")).toBeVisible();
 
     await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
@@ -128,6 +133,7 @@ test.describe("persistent word decisions", () => {
 
   test("keyboard focus survives decisions and review", async ({ page }) => {
     await page.goto("/");
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
     await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
 
@@ -161,6 +167,7 @@ test.describe("persistent word decisions", () => {
 
   test("one-step undo restores a decision and its queue membership", async ({ page }) => {
     await page.goto("/");
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
     await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
 

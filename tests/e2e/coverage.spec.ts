@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, type Page, test } from "@playwright/test";
+import { expect, type Page, test } from "./fixtures";
 
 // Deterministic weighted fixture — hand-computed arithmetic (documented):
 //
@@ -83,6 +83,7 @@ test.describe("coverage analysis", () => {
 
       // Step 1: import CSV.
       await page.goto("/");
+      await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
       await page.locator("#jitenInput").setInputFiles(csvPath);
       await expect(page.locator("#resultsList .mining-entry")).toHaveCount(8);
 
@@ -172,6 +173,7 @@ test.describe("coverage analysis", () => {
 
       // Step 11: reload; coverage derives from persisted state (known list +
       // mined decision) and comes back as 90.00% with the Mined word intact.
+      await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
       await page.reload();
       await expect(page.locator("#resultsList .mining-entry")).toHaveCount(6);
       await expect(page.locator("#coveragePanel")).toBeVisible();

@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it } from "vitest";
-import type { AppState } from "../../src/app/state";
-import { createInitialAppState, DEFAULT_VIEW } from "../../src/app/state";
 import type { EntryWithKnown, QueryResult } from "../../src/domain/types";
+import type { AppState } from "../../src/miner/state";
+import { createInitialAppState, DEFAULT_VIEW } from "../../src/miner/state";
 import type { DomMap } from "../../src/ui/dom";
 import { getDomMap } from "../../src/ui/dom";
 import { createRenderer, renderEntryNode } from "../../src/ui/renderer";

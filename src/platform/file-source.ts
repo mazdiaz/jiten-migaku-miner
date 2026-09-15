@@ -1,4 +1,4 @@
-import type { FileSource } from "../app/state";
+import type { FileSource } from "../miner/state";
 
 export class BrowserFileSource implements FileSource {
   constructor(private readonly file: Pick<File, "name" | "text">) {}

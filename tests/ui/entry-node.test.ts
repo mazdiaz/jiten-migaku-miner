@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it } from "vitest";
-import { createInitialAppState } from "../../src/app/state";
 import type { EntryWithKnown } from "../../src/domain/types";
+import { createInitialAppState } from "../../src/miner/state";
 import { renderEntryNode, renderReviewEntryNode } from "../../src/ui/renderer";
 
 function makeEntry(overrides: Partial<EntryWithKnown> = {}): EntryWithKnown {

@@ -1,8 +1,8 @@
-import type { AppState, MinerController } from "../app/state";
-import { DEFAULT_QUERY } from "../app/state";
 import type { AnkiSyncConfig } from "../domain/anki";
 import { canonicalWord } from "../domain/text";
 import type { QueryState, ViewState, WordDecisionStatus } from "../domain/types";
+import type { AppState, MinerController } from "../miner/state";
+import { DEFAULT_QUERY } from "../miner/state";
 import { createFileSource } from "../platform/file-source";
 import { bindBackupControls, RESTORE_CONFIRM_MESSAGE } from "./controls/backup-controls";
 import type { DomMap } from "./dom";

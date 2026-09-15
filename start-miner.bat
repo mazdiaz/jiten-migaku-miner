@@ -1,19 +1,21 @@
 @echo off
 setlocal
-chcp 65001 >nul
 cd /d "%~dp0"
 where npm >nul 2>nul
 if errorlevel 1 (
-  echo Node.js/npm not found. Install Node.js 22.12 or newer.
+  echo Node.js 22.12 or newer is required.
+  pause
+  exit /b 1
+)
+if not exist .env.local (
+  echo Copy .env.example to .env.local and configure PostgreSQL and GitHub login first.
   pause
   exit /b 1
 )
 call npm run build
 if errorlevel 1 (
-  echo Build failed. Fix reported errors before starting server.
   pause
   exit /b 1
 )
-start "" "http://127.0.0.1:8920/dist/"
-echo Serving repository root - vocabulary folders are discoverable; browser access is loopback only.
-call npm run serve:root -- --port 8920
+echo Open http://127.0.0.1:8920 after the server is ready.
+call npm start

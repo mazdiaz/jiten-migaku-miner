@@ -2,7 +2,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
-import type { AppState } from "../../src/app/state";
+import type { AppState } from "../../src/miner/state";
 import type { DomMap } from "../../src/ui/dom";
 import { syncStickyToolbarClarity } from "../../src/ui/sticky-toolbar-clarity";
 

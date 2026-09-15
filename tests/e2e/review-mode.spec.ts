@@ -1,4 +1,4 @@
-import { expect, type Page, test } from "@playwright/test";
+import { expect, type Page, test } from "./fixtures";
 
 const SMALL_CSV = "tests/fixtures/jiten-small.csv";
 
@@ -22,6 +22,7 @@ test.describe("review mode", () => {
 
   test("triages the queue with the keyboard and persists every decision", async ({ page }) => {
     await page.goto("/");
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
     await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
     await expect(page.locator("#reviewButton")).toBeEnabled();
@@ -110,6 +111,7 @@ test.describe("review mode", () => {
 
   test("keeps reviewed words out of a reopened session after reload", async ({ page }) => {
     await page.goto("/");
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
     await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
 
@@ -120,6 +122,7 @@ test.describe("review mode", () => {
     await page.keyboard.press("Escape");
     await expect(page.locator("#reviewOverlay")).toBeHidden();
 
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
     await page.reload();
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
 
@@ -147,6 +150,7 @@ test.describe("review mode", () => {
 
   test("list shortcuts stay suppressed while the overlay is open", async ({ page }) => {
     await page.goto("/");
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
     await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
 
@@ -165,6 +169,7 @@ test.describe("review mode", () => {
 
   test("button clicks apply the same decisions as shortcuts", async ({ page }) => {
     await page.goto("/");
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
     await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
 

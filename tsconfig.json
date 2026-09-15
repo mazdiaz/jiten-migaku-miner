@@ -8,14 +8,34 @@
     "exactOptionalPropertyTypes": true,
     "noEmit": true,
     "skipLibCheck": true,
-    "lib": ["ES2022", "DOM", "WebWorker"]
+    "lib": [
+      "ES2022",
+      "DOM",
+      "WebWorker"
+    ],
+    "jsx": "react-jsx",
+    "allowJs": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "incremental": true,
+    "esModuleInterop": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ]
   },
   "include": [
+    "next-env.d.ts",
     "src/**/*.ts",
+    "src/**/*.tsx",
+    ".next/types/**/*.ts",
+    ".next/dev/types/**/*.ts",
     "tests/**/*.ts",
-    "vite.config.ts",
     "vitest.config.ts",
-    "playwright.config.ts",
-    "playwright.prod.config.ts"
+    "playwright*.config.ts"
+  ],
+  "exclude": [
+    "node_modules"
   ]
 }

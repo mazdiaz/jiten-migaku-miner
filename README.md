@@ -1,122 +1,143 @@
 # Jiten → Migaku Miner
 
-A local-first, offline-capable miner for Jiten vocabulary exports and Migaku known-word lists. Drop a Jiten CSV (and optionally a Migaku known-words TXT), then filter, sort, page, and mine cleanly isolated target sentences. Review unreviewed words in a focused one-card mode, queue words to mine, and optionally derive `Known`/`Mined` decisions from your Anki collection. Everything runs in your browser tab; no server, no account, no telemetry.
+A private Japanese vocabulary workspace built with **Next.js 16, React 19, and PostgreSQL**. Import Jiten CSV and Migaku known-word TXT files, review and practice vocabulary, build a mining queue, and keep progress across devices.
 
-## Requirements
+This is the existing repository migrated from Vite. Vocabulary parsing, study rules, Web Worker processing, and Migaku-compatible sentence highlighting retain their tested behavior.
 
-- Node.js 22.12 or newer (development, build, tests, and the bundled loopback file server)
-- A browser with Web Workers, IndexedDB, and `:has()` CSS support (current Chrome, Edge, Firefox, Safari). The CSS Custom Highlight API is used when available for sentence highlighting; unsupported browsers fall back to wrapper spans.
-- Optional: Anki Desktop with AnkiConnect listening on `http://127.0.0.1:8765` (for Anki sync only; the app works fully without it)
+## Deploy to Vercel
 
-## Quick start (development)
+1. Import this existing GitHub repository into Vercel. Select **Next.js** and use the repository root as the Root Directory. Keep the build command `npm run build`; leave Output Directory at the framework default. Use Node.js 22 or 24.
+2. Create/connect a PostgreSQL database, such as [Neon through Vercel Marketplace](https://vercel.com/integrations/neon). Set `DATABASE_URL` to its pooled connection string, including the provider's TLS settings. Keep production and preview databases separate.
+3. Register a [GitHub OAuth App](https://github.com/settings/developers). Set its homepage to your production origin and callback URL to `https://YOUR-DOMAIN/api/auth/callback/github`. Use a separate OAuth app for local development.
+4. Configure these **server-only** Vercel environment variables:
 
-```text
-npm install
+   | Variable | Value |
+   | --- | --- |
+   | `DATABASE_URL` | PostgreSQL connection string |
+   | `AUTH_SECRET` | Random secret, generated with the command below |
+   | `AUTH_GITHUB_ID` | GitHub OAuth client ID |
+   | `AUTH_GITHUB_SECRET` | GitHub OAuth client secret |
+   | `OWNER_GITHUB_ID` | Your numeric GitHub account ID; `46370875` for mazdiaz |
+   | `AUTH_URL` | Exact public origin, such as `https://miner.example.com` |
+   | `AUTH_TRUST_HOST` | `true` on Vercel |
+
+5. Apply the migrations to that database **before using the deployed app**. From a trusted terminal, set `DATABASE_URL` to the deployment database and run `npm run db:migrate`. On a local machine you can put it in the ignored `.env.local`. The migration command also works with environment variables alone. It is safe to rerun and refuses changes to previously applied migration files.
+6. Deploy/redeploy, open the site, and sign in with the allowed GitHub account. All other accounts are rejected. Database access is checked again on every API request.
+
+Generate a secret:
+
+```sh
+node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
+```
+
+No database, OAuth application, or live Vercel deployment is provisioned by this repository. Do not put secrets in `NEXT_PUBLIC_*` variables. Use a stable domain for the OAuth callback; random preview URLs need their own correctly configured callback and database.
+
+## Run locally
+
+Requires Node.js **22.12+** and PostgreSQL 17+ (or the Docker configuration included here).
+
+```sh
+npm ci
+```
+
+Copy `.env.example` to `.env.local`, then fill in the authentication values. Start a local database:
+
+```sh
+docker compose up -d
+npm run db:migrate
 npm run dev
 ```
 
-Open `http://127.0.0.1:8920/`.
+Open [http://127.0.0.1:8920](http://127.0.0.1:8920). Set the local OAuth callback to `http://127.0.0.1:8920/api/auth/callback/github`. Use that exact address consistently; `localhost` is a different origin.
 
-## Quick start (end user, Windows)
+For a local production build:
 
-Run `start-miner.bat`. It verifies `npm` is installed, builds the production bundle (`npm run build`), serves the repository root on loopback with the bundled Node file server (`npm run serve:root`), and opens `http://127.0.0.1:8920/dist/`. The server provides the directory listings and `Last-Modified` headers the optional `WORDS TO MINE` / `MIGAKU KNOWN WORDS` folder discovery needs, so vocabulary files work without copying them anywhere; the built app in `dist/` stays free of them. Browser access is loopback only. If the build fails, the launcher stops before opening the browser.
-
-Manual equivalent on any platform:
-
-```text
+```sh
 npm run build
-npm run serve:root -- --port 8920
+npm start
 ```
 
-Then open `http://127.0.0.1:8920/dist/`.
+Windows users can run `start-miner.bat` after setting up `.env.local` and PostgreSQL. It builds and starts Next.js. It does not initialize or replace database contents.
 
-## Commands
+## Move existing local data
 
-| Command | Purpose |
-| --- | --- |
-| `npm run dev` | Vite development server on `127.0.0.1:8920` |
-| `npm run build` | Strict typecheck plus production build into `dist/` |
-| `npm run typecheck` | `tsc --noEmit` only |
-| `npm test` | Vitest unit/repository suites (domain, storage, worker, app, UI) |
-| `npm run test:e2e` | Playwright browser suites (`tests/e2e`) |
-| `npm run test:e2e:prod` | Playwright production-serving suite against the real build output |
-| `npm run lint` | Biome check over `src` and `tests` |
-| `npm run check` | Typecheck + full unit suite + production build |
+The deployed site cannot read IndexedDB belonging to your old local site.
 
-Playwright browsers: run `npx playwright install chromium firefox webkit` once after installing dependencies.
+1. In the **old app**, export a backup and retain your original Jiten CSV and Migaku TXT files. Do this before switching your local launcher to this version. If already switched, the old app can be recovered from Git history without deleting browser data.
+2. Sign in to the new app, import the original Jiten CSV, and restore the old backup.
+3. Version 1/2 backups restore known words, decisions, preferences, and supported Anki data. They do **not** contain Jiten datasets or the old session queue. Recreate that queue manually if needed.
+4. Compare the visible counts and decisions, then export a **new complete backup**. Version 3 includes saved datasets, the active dataset, mining queues, known words, decisions, preferences, and Anki state.
 
-## Compatibility
+Old browser storage is not deleted by this migration. Keep the old backup until you have verified the new data. A complete restore replaces the application's saved state atomically; export first if you want to preserve the current state.
 
-`index.html` is the canonical application. The legacy path `/jiten-migaku-miner-v1.html` now serves a small redirect shell that immediately moves to `index.html` (with a normal link fallback), so old bookmarks keep working.
+## Features and behavior
 
-## Word decisions and review
+- Jiten CSV import and optional Migaku known-word TXT import.
+- Search, occurrence sorting, known/kana/sentence/decision filters, paging, and windowed all-results mode.
+- One-card review with K/M/S/L, undo, practice/reveal mode, and a mining queue saved in PostgreSQL.
+- Vocabulary coverage and target estimates, reading size/density, definitions, furigana, and target highlighting.
+- Manual decisions take precedence over Anki-derived decisions. Migaku knownness remains independent.
+- Read-only Anki scan, preview, apply, and persisted snapshot; no Anki card-editing operations.
+- Legacy bookmark paths redirect to the new root page.
 
-- Manual decisions (`Known`, `Mined`, `Skip`, `Later`) are stored per word and always win over Anki-derived statuses. The Migaku known-word list stays an independent knownness source.
-- Review mode walks the unreviewed words for the current filters one card at a time (keyboard: K/M/S/L, Z undo, Esc exit). It reuses the normal results surface so Migaku's in-page parsing and shortcuts keep working.
-- A mining queue collects words to mine; queue mode shows just those words. Applying an Anki sync removes queued words it classifies, unless a manual decision protects them.
-- Tracked vocabulary coverage summarizes how much of the dataset is known (Migaku list, manual `Known`, or Anki `Known`).
+The cloud app requires a connection for persistence. Wait for **Saved to PostgreSQL** before closing the page. Pending operations show a syncing state; leaving during a pending save prompts for confirmation. A lost connection or stale tab shows an error and requires a reload rather than silently switching to temporary storage. If a network failure occurs during a save/restore, reload to see whether it committed before retrying.
 
-## Anki sync (read-only)
+Local folder discovery has been replaced by explicit uploads. Private vocabulary folders, repository files, and secrets are not served by Next.js.
 
-Derives `Known`/`Mined` from an Anki Desktop collection through AnkiConnect (API v6, `http://127.0.0.1:8765`). The adapter is structurally read-only: it exposes only `requestPermission`, `deckNames`, `modelNames`, `modelFieldNames`, `findCards`, and `cardsInfo` — no add/edit/suspend/reschedule operations exist anywhere in the codebase.
+## AnkiConnect
 
-- Cards that are New and not suspended map to `Mined`; every other selected card maps to `Known`. Duplicate words merge with `Known` winning.
-- Configure a deck scope (one deck or all decks for a note type), note type, and target word field. Sync shows a preview (cards scanned, matched words, protected manual decisions, queue removals) before anything is stored; Apply replaces the stored snapshot atomically and refreshes query/coverage once.
-- The last applied snapshot persists (IndexedDB + backups), so the app stays useful while Anki is closed. Manual decisions always override; a word absent from the snapshot simply has no Anki status.
-- "Clear Anki sync data…" (Settings → danger zone) removes the config and snapshot only.
+Anki Desktop must be running on the **same computer as your browser**, with AnkiConnect at `http://127.0.0.1:8765`. The browser calls it directly; Vercel never connects to localhost on your behalf.
 
-## Storage and privacy
+Allow the exact app origin in AnkiConnect's `webCorsOriginList`, and grant browser local-network permission if requested. HTTPS-to-loopback access depends on browser settings and policy. If your browser blocks it, use the saved Anki snapshot or a supported local-browser setup. The app remains usable with Anki closed. Never expose AnkiConnect to the public internet.
 
-- All imported data stays in the browser. The only network access beyond the page origin is optional same-origin folder discovery (`/WORDS TO MINE/*.csv`, `/MIGAKU KNOWN WORDS/*.txt` at the server root) and, when you explicitly run it, read-only calls to local AnkiConnect on `127.0.0.1:8765`. Discovery never reads anything outside the serving root; `dist/` contains no vocabulary files.
-- Datasets, known-word sets, word decisions, preferences, and Anki sync config/snapshot are stored in IndexedDB (database `jiten-migaku-miner`, schema version 3). If IndexedDB is unavailable, the app falls back to an in-memory store (transferring known words, decisions, preferences, and Anki state) and shows a visible warning that data will be lost on reload.
-- Backup export produces a version 2 JSON document (known words, decisions, preferences, Anki sync state); the parser still accepts version 1 backups. Restores are atomic where the store supports it, with rollback otherwise.
-- "Clear saved data…" (import panel) asks for confirmation, then removes all stored datasets, known-word sets, decisions, preferences, Anki sync data, legacy `jitenMiner.v1` / `jitenMiner.page` keys, and the migration marker from this browser.
-- Migration from the old single-file app is automatic: on first launch, `jitenMiner.v1` and `jitenMiner.page` are read (never deleted), migrated into versioned IndexedDB records, and a `jitenMiner.migration` marker is written. If migration fails, legacy keys are preserved and a warning is shown.
+## Database and operational limits
 
-## Architecture
+Drizzle defines the schema; parameterized SQL and transactions implement storage. Numbered SQL migrations in `migrations/` are applied with a checksum ledger and an advisory lock. Add a new numbered SQL file for future schema changes; never edit an applied migration.
 
-```text
-src/domain/    Pure types, CSV/known-word parsing, text helpers, query/coverage math,
-               Anki status rules and decision resolution. No browser APIs.
-src/worker/    Typed message protocol (version 3), query engine, module worker entry point.
-               Parses, filters, sorts, pages, and computes coverage for datasets up to
-               100,000 rows; never touches storage.
-src/storage/   Storage ports (DatasetStore, KnownWordStore, WordDecisionStore,
-               PreferencesStore, AnkiSyncStore, AppStore) with memory and IndexedDB
-               implementations plus the legacy localStorage reader.
-src/platform/  Browser file and same-origin folder source adapters; strict read-only
-               AnkiConnect adapter.
-src/app/       Application state, worker client, controller orchestration, query controller
-               (search debounce + viewport windows), legacy migration, and feature services
-               (decisions, review session, mining queue, coverage, Anki sync, backups).
-src/ui/        Typed DOM map, controls, renderer with per-feature views, virtual list,
-               Migaku highlight adapter (CSS Custom Highlight API with legacy wrapper
-               fallback and parsed-token baseline normalization).
-src/styles/    Design tokens, layout, entry styles, and highlight styles.
-src/main.ts    Bootstrap: wires storage, worker, controller, UI, and folder discovery.
+Dataset and state uploads are staged in bounded requests below 750 KB. Dataset rows are validated, ordered, and verified before activation. The prior active dataset remains available on a failed import. Reads are chunked as well. Complete restores commit in one transaction, and revision checks reject stale writes and mixed-version exports.
+
+Limits: up to 1,000,000 rows per dataset, 400 KB per individual row, and 256 MiB per staged state upload/complete backup file. The browser's practical memory budget may be lower. The automated performance scenario exercises 100,000 rows. Complete exports exceeding the restore limit fail visibly instead of producing an unusable backup.
+
+Run this occasionally to remove abandoned uploads older than 24 hours:
+
+```sh
+npm run db:cleanup
 ```
 
-Key behaviors:
+It retains ready datasets and active data. Database backups and provider restore points are also useful before deployments. Preview deployments must not share the production database. The app intentionally supports one owner per deployment.
 
-- Import work (CSV parsing, filtering, sorting, coverage) runs in a Web Worker through a versioned protocol (`WORKER_PROTOCOL_VERSION = 3`) with request IDs and cancellation; Anki statuses travel through the same protocol so query, coverage, and preview matching resolve one consistent decision layer. Persistence stays on the app side of the boundary.
-- Imports are staged and verified before activation. A malformed replacement import can never remove or replace a working dataset.
-- "All" results are rendered through a windowed virtual list (100-row windows, at most 120 mounted entry nodes), so a 100,000-row dataset never creates 100,000 DOM nodes. The worker caches filtered/sorted indexes for all-results queries and invalidates them when the dataset, known words, or any filter/sort field changes.
-- Effective decisions resolve as manual → Anki → unreviewed, and entries show their source (`Known · Anki` badges for Anki-derived statuses). Anki `Known` hidden under a manual override never leaks into knownness.
-- Sentence highlighting paints target ranges through the CSS Custom Highlight API without inserting wrapper nodes into Migaku-parsed DOM; a MutationObserver-backed adapter re-marks after external DOM changes, and browsers without the API fall back to the legacy `th-wrap` spans.
-- Anki sync scans are read-only and build a full candidate in memory before the preview; Apply commits one snapshot atomically under the user-state lock, and failed scans/applies leave the previous snapshot intact.
+## Verification
 
-## Testing
+```sh
+npm run lint
+npm run typecheck
+npm test
+npm run build
+```
 
-- `tests/domain`, `tests/storage`, `tests/worker`, `tests/app`, `tests/ui` — Vitest suites. UI adapter/list tests run under `happy-dom`; IndexedDB tests use `fake-indexeddb`.
-- `tests/e2e/miner.spec.ts` — import, filters, toggles, pagination, known words, reload restoration, clear-data, folder auto-load, non-mutating highlight behavior.
-- `tests/e2e/review-mode.spec.ts` — one-card review workflow, keyboard decisions, shared results surface, shortcut scoping.
-- `tests/e2e/anki-sync.spec.ts` — AnkiConnect mocked over HTTP: configure, preview, apply, read-only action enforcement, connection-failure behavior.
-- `tests/e2e/backup-restore.spec.ts`, `tests/e2e/display-controls.spec.ts`, `tests/e2e/migaku-baseline.spec.ts` — backup round-trip, reading display preferences, and Migaku token baseline normalization.
-- `tests/e2e/performance.spec.ts` — generates a deterministic 100,000-row CSV via `node tests/fixtures/generate-100k.mjs` into a temp directory, imports it, and asserts bounded DOM while scrolling.
-- `tests/e2e/compatibility.spec.ts` — legacy-path redirect and root launcher behavior.
-- `tests/e2e/production.spec.ts` — production-serving smoke suite (`npm run test:e2e:prod`): boots the real build output, verifies assets, and asserts vocabulary folders are neither bundled into `dist/` nor fetched from it (discovery resolves against the repository root).
+Unit tests include real PostgreSQL execution through PGlite for storage, revision conflicts, staging, Unicode boundaries, and atomic restore. Browser tests use a **disposable PostgreSQL database** and real authenticated sessions. They clear application data in that database before each test, so never point them at your personal or production database.
 
-## Adding adapters
+Set `TEST_DATABASE_URL` to the disposable database, apply migrations with `DATABASE_URL` pointing to it, then run:
 
-- **New data source:** implement `FileSource { name; text() }` (see `src/platform/file-source.ts`) and pass it to `controller.importJiten` / `controller.importKnown`. Folder and future remote sources plug in the same way; keep discovery failure non-destructive.
-- **New storage backend:** implement the ports in `src/storage/contracts.ts` (`DatasetStore`, `KnownWordStore`, `WordDecisionStore`, `PreferencesStore`, `AnkiSyncStore`, `AppStore`) and construct the controller with `store` or `indexedDbStoreFactory`. The controller already handles memory fallback, staging, activation, and rollback generically.
+```sh
+npx playwright install chromium firefox webkit
+npm run test:e2e
+npm run build
+npm run test:e2e:prod
+```
+
+Browser tests mint sessions with a test-only secret passed to their own server; there is no authentication bypass in the application. CI starts its own PostgreSQL service. GitHub's external authorization flow and an actual Anki Desktop installation still require validation with your configured accounts and browser.
+
+## Structure
+
+- `src/app/`: Next.js pages, authentication endpoint, authenticated storage endpoint.
+- `src/components/`: React feature shells and browser study lifecycle. The study adapter owns mutable descendants so Migaku parsing survives React updates.
+- `src/miner/`: study state, controllers, review/practice/queue/backup coordination.
+- `src/domain/`, `src/worker/`: pure vocabulary logic and background parsing/querying.
+- `src/server/`: validated operations, Drizzle schema, PostgreSQL transactions.
+- `src/storage/remote-store.ts`: bounded, serialized cloud storage adapter.
+- `src/storage/`: shared ports plus retained legacy/in-memory adapters for compatibility tests.
+- `src/ui/`, `src/platform/`: study views, highlighting, file adapters, read-only Anki access.
+- `migrations/`, `scripts/`: database migrations and staging cleanup.
+
+The approved design and implementation record live in `docs/superpowers/`.

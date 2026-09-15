@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { AnkiSyncService } from "../../../src/app/services/anki-sync-service";
-import type { ControllerCore } from "../../../src/app/services/context";
-import type { AppState } from "../../../src/app/state";
-import { createInitialAppState } from "../../../src/app/state";
 import type { AnkiSyncSnapshot } from "../../../src/domain/anki";
 import type { WordDecisionStatus } from "../../../src/domain/types";
+import { AnkiSyncService } from "../../../src/miner/services/anki-sync-service";
+import type { ControllerCore } from "../../../src/miner/services/context";
+import type { AppState } from "../../../src/miner/state";
+import { createInitialAppState } from "../../../src/miner/state";
 import { AnkiConnectError, type AnkiConnectPort } from "../../../src/platform/anki-connect";
 import type { AppStore } from "../../../src/storage/contracts";
 import { createMemoryAppStore } from "../../../src/storage/memory-store";

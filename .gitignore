@@ -16,3 +16,9 @@ dist/
 playwright-report/
 test-results/
 coverage/
+.next/
+.env*
+!.env.example
+*.tsbuildinfo
+.vercel/
+.test-db/

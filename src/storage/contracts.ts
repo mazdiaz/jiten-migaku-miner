@@ -60,6 +60,8 @@ export interface RestoreUserStateSnapshot {
 }
 
 export interface AppStore {
+  exportCompleteBackup?(): Promise<string>;
+  restoreCompleteBackup?(text: string): Promise<void>;
   datasets: DatasetStore;
   knownWords: KnownWordStore;
   wordDecisions: WordDecisionStore;

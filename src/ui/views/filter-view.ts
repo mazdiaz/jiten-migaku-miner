@@ -1,5 +1,5 @@
-import type { AppState } from "../../app/state";
 import type { QueryState, WordDecision, WordDecisionStatus } from "../../domain/types";
+import type { AppState } from "../../miner/state";
 import type { DomMap } from "../dom";
 
 const SEARCH_CHIP_MAX_CHARS = 20;
@@ -83,9 +83,9 @@ export function formatDecisionSummary(
     counts.set(decision.status, (counts.get(decision.status) ?? 0) + 1);
   }
   const parts = DECISION_SUMMARY_STATUSES.map(
-    (status) => `${(counts.get(status) ?? 0).toLocaleString()} ${status}`,
+    (status) => `${(counts.get(status) ?? 0).toLocaleString("en-US")} ${status}`,
   );
-  return `Decisions: ${parts.join(" · ")} · Migaku-known: ${knownWordsCount.toLocaleString()}`;
+  return `Decisions: ${parts.join(" · ")} · Migaku-known: ${knownWordsCount.toLocaleString("en-US")}`;
 }
 
 // Active-filter chips row: rebuilt from state.query on every publish (the

@@ -1,4 +1,4 @@
-import type { AppState } from "../../app/state";
+import type { AppState } from "../../miner/state";
 import type { DomMap } from "../dom";
 
 export const QUEUE_COMPLETE_MESSAGE = "Mining queue complete.";

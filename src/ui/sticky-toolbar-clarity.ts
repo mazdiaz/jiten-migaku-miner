@@ -1,5 +1,5 @@
-import type { AppState } from "../app/state";
 import type { WordDecisionStatus } from "../domain/types";
+import type { AppState } from "../miner/state";
 import type { DomMap } from "./dom";
 
 const QUICK_TOGGLES: readonly [
@@ -63,10 +63,10 @@ function compactDecisionSummary(dom: DomMap, state: Readonly<AppState>): void {
   const parts: string[] = [];
   for (const status of SUMMARY_ORDER) {
     const count = counts.get(status) ?? 0;
-    if (count > 0) parts.push(`${count.toLocaleString()} ${SUMMARY_LABELS[status]}`);
+    if (count > 0) parts.push(`${count.toLocaleString("en-US")} ${SUMMARY_LABELS[status]}`);
   }
   if (state.knownWords.size > 0) {
-    parts.push(`${state.knownWords.size.toLocaleString()} Migaku-known`);
+    parts.push(`${state.knownWords.size.toLocaleString("en-US")} Migaku-known`);
   }
 
   dom.decisionSummary.hidden = parts.length === 0;

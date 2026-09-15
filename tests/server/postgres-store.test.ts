@@ -1,0 +1,362 @@
+import { readFile } from "node:fs/promises";
+import { PGlite } from "@electric-sql/pglite";
+import { drizzle } from "drizzle-orm/pglite";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import type { Entry } from "../../src/domain/types";
+import { createPostgresStore } from "../../src/server/store";
+import { createRemoteAppStore } from "../../src/storage/remote-store";
+
+const metadata = (id = "one", entryCount = 1) => ({
+  id,
+  name: id,
+  sourceType: "file" as const,
+  sourceName: "words.csv",
+  headers: ["Word"],
+  entryCount,
+  createdAt: "2026-09-14T00:00:00.000Z",
+  updatedAt: "2026-09-14T00:00:00.000Z",
+  schemaVersion: 1,
+});
+const entry = (id = "1"): Entry => ({
+  id,
+  originalIndex: Number(id),
+  word: "猫",
+  normalizedWord: "猫",
+  occurrences: 4,
+  sentenceRaw: "猫がいる",
+  hasSentence: true,
+  definitions: "cat",
+  furiganaRuns: [],
+});
+const preferences = {
+  query: {
+    search: "",
+    hideKnown: false,
+    hideKanaOnly: false,
+    sentence: "any" as const,
+    minOccurrences: 1,
+    sort: "occ-desc" as const,
+    pageSize: 50,
+    page: 1,
+    decision: "all" as const,
+  },
+  view: {
+    showFurigana: false,
+    pillHighlight: false,
+    showHighlight: false,
+    showDefinitions: true,
+    sentenceSize: "medium" as const,
+    density: "comfortable" as const,
+  },
+  page: 1,
+};
+async function* chunks(...values: Entry[][]) {
+  yield* values;
+}
+
+describe("PostgreSQL store over the real HTTP adapter", () => {
+  let pg: PGlite;
+  let dispatch: ReturnType<typeof createPostgresStore>;
+  let requestSizes: number[];
+  let responseSizes: number[];
+  const remote = () =>
+    createRemoteAppStore({
+      fetch: (async (_url, init) => {
+        const body = String(init?.body);
+        requestSizes.push(new TextEncoder().encode(body).length);
+        try {
+          const value = await dispatch(JSON.parse(body));
+          const json = JSON.stringify(value);
+          responseSizes.push(new TextEncoder().encode(json).length);
+          return new Response(json, { status: 200 });
+        } catch (error) {
+          const fault = error as Error & { status?: number; code?: string };
+          return new Response(JSON.stringify({ error: fault.message, code: fault.code }), {
+            status: fault.status ?? 500,
+          });
+        }
+      }) as typeof fetch,
+    });
+
+  beforeAll(async () => {
+    pg = new PGlite();
+    await pg.exec(
+      await readFile(new URL("../../migrations/0000_postgres_store.sql", import.meta.url), "utf8"),
+    );
+    dispatch = createPostgresStore(drizzle(pg));
+  }, 60_000);
+  afterAll(async () => {
+    await pg?.close();
+  });
+  beforeEach(async () => {
+    await pg.exec(
+      "TRUNCATE app_state, datasets, state_uploads, known_words, word_decisions, anki_statuses RESTART IDENTITY CASCADE",
+    );
+    requestSizes = [];
+    responseSizes = [];
+  });
+
+  it("persists ordered datasets, decisions, known words, preferences and Anki state across clients", async () => {
+    const store = remote();
+    await store.initialize();
+    await store.datasets.stage(metadata("one", 2), chunks([entry("1"), entry("2")]));
+    await store.datasets.activate("one");
+    await store.knownWords.save("known", "Migaku", ["猫", "犬", "猫"]);
+    await store.wordDecisions.set({
+      normalizedWord: "犬",
+      status: "later",
+      updatedAt: "2026-09-14",
+    });
+    await store.preferences.save(preferences);
+    await store.ankiSync.saveConfig({
+      deckScope: { kind: "all-decks" },
+      noteType: "Japanese",
+      targetField: "Word",
+    });
+    await store.ankiSync.replaceSnapshot({ syncedAt: "2026-09-14", statuses: [["猫", "known"]] });
+    const reloaded = remote();
+    await reloaded.initialize();
+    expect((await reloaded.datasets.getActive())?.id).toBe("one");
+    const rows: Entry[] = [];
+    for await (const chunk of reloaded.datasets.readChunks("one", 1)) rows.push(...chunk);
+    expect(rows.map((row) => row.id)).toEqual(["1", "2"]);
+    expect((await reloaded.knownWords.getActive())?.words).toEqual(new Set(["猫", "犬"]));
+    expect((await reloaded.wordDecisions.get("犬"))?.status).toBe("later");
+    expect(await reloaded.preferences.load()).toEqual(preferences);
+    expect((await reloaded.ankiSync.loadConfig())?.targetField).toBe("Word");
+    expect((await reloaded.ankiSync.loadSnapshot())?.statuses).toEqual([["猫", "known"]]);
+  });
+
+  it("keeps the previous active dataset when a staged import is incomplete", async () => {
+    const store = remote();
+    await store.initialize();
+    await store.datasets.stage(metadata(), chunks([entry()]));
+    await store.datasets.activate("one");
+    await expect(store.datasets.stage(metadata("bad", 2), chunks([entry()]))).rejects.toThrow(
+      /count|incomplete/i,
+    );
+    expect((await store.datasets.getActive())?.id).toBe("one");
+    expect((await store.datasets.list()).map((item) => item.id)).toEqual(["one"]);
+    await expect(store.datasets.activate("bad")).rejects.toThrow(/ready|found|incomplete/i);
+  });
+
+  it("rejects stale writes and reads without silently replacing newer data", async () => {
+    const a = remote(),
+      b = remote();
+    await a.initialize();
+    await b.initialize();
+    await a.preferences.save(preferences);
+    await expect(b.preferences.save({ ...preferences, page: 8 })).rejects.toThrow(
+      /another|reload|conflict/i,
+    );
+    await expect(b.preferences.load()).rejects.toThrow(/another|reload|conflict/i);
+    expect((await a.preferences.load())?.page).toBe(1);
+  });
+
+  it("restores user state atomically and rejects duplicate manual decisions", async () => {
+    const store = remote();
+    await store.initialize();
+    await store.knownWords.save("old", "Old", ["前"]);
+    const decision = { normalizedWord: "猫", status: "known" as const, updatedAt: "2026-09-14" };
+    await expect(
+      store.restoreUserState!({ knownWords: null, decisions: [decision, decision], preferences }),
+    ).rejects.toThrow(/duplicate/i);
+    expect((await store.knownWords.getActive())?.id).toBe("old");
+    await store.restoreUserState!({
+      knownWords: { id: "new", name: "New", words: new Set(["後"]) },
+      decisions: [decision],
+      preferences,
+    });
+    expect((await store.knownWords.getActive())?.id).toBe("new");
+    expect(await store.wordDecisions.list()).toEqual([decision]);
+  });
+
+  it("stores a queue per dataset and removes it with its dataset", async () => {
+    const store = remote();
+    await store.initialize();
+    await store.datasets.stage(metadata(), chunks([entry()]));
+    await store.datasets.activate("one");
+    await store.queue.save({ version: 1, datasetId: "one", normalizedWords: ["猫"] });
+    const reloaded = remote();
+    await reloaded.initialize();
+    expect(await reloaded.queue.load()).toEqual({
+      version: 1,
+      datasetId: "one",
+      normalizedWords: ["猫"],
+    });
+    await reloaded.datasets.remove("one");
+    expect(await reloaded.queue.load()).toBeNull();
+  });
+
+  it("uploads and reads Japanese datasets and large state in sub-megabyte requests", async () => {
+    const store = remote();
+    await store.initialize();
+    const rows = Array.from({ length: 900 }, (_, index) => ({
+      ...entry(String(index)),
+      definitions: "日本語".repeat(1600),
+    }));
+    await store.datasets.stage(metadata("large", rows.length), chunks(rows));
+    await store.datasets.activate("large");
+    const read: Entry[] = [];
+    for await (const chunk of store.datasets.readChunks("large", 51)) read.push(...chunk);
+    expect(read.map((row) => row.id)).toEqual(rows.map((row) => row.id));
+    await store.knownWords.save(
+      "many",
+      "Many",
+      Array.from({ length: 20_000 }, (_, i) => `言葉${i}`),
+    );
+    expect((await store.knownWords.getActive())?.words.size).toBe(20_000);
+    expect(Math.max(...requestSizes)).toBeLessThan(1_000_000);
+    expect(Math.max(...responseSizes)).toBeLessThan(1_000_000);
+  }, 60_000);
+
+  it.each(["😀", "𠮷"])(
+    "preserves %s across a PostgreSQL staged-text chunk boundary",
+    async (character) => {
+      const store = remote();
+      await store.initialize();
+      const prefixLength =
+        JSON.stringify({ id: "known", name: "", words: [] }).indexOf('"name":"') + 8;
+      const name = "a".repeat(59_999 - prefixLength) + character;
+      await store.knownWords.save("known", name, ["猫"]);
+      expect((await store.knownWords.getActive())?.name === name).toBe(true);
+      expect(Math.max(...requestSizes)).toBeLessThan(750_000);
+    },
+  );
+
+  it("rejects complete exports above the UTF-8 restore byte limit", async () => {
+    // Isolate the client export limit from storage: a valid, bounded page is repeated
+    // until individually admissible data exceeds the aggregate restore limit.
+    const largeEntry = { ...entry(), definitions: "猫".repeat(90_000) };
+    const store = createRemoteAppStore({
+      fetch: (async (_url, init) => {
+        const request = JSON.parse(String(init?.body));
+        let value: unknown = null;
+        if (request.operation === "dataset.list")
+          value = { items: [metadata("large", 1000)], nextCursor: null };
+        if (request.operation === "dataset.read")
+          value = {
+            items: [{ ...largeEntry, id: String(request.cursor) }],
+            nextCursor: request.cursor < 999 ? request.cursor + 1 : null,
+          };
+        if (
+          request.operation === "state.read" &&
+          ["decisions", "queues"].includes(request.resource)
+        )
+          value = { items: [], nextCursor: null };
+        // The HTTP response fixture retains repeated source strings to keep this
+        // boundary test small; production export still serializes and counts bytes.
+        return { ok: true, status: 200, json: async () => ({ revision: 0, value }) } as Response;
+      }) as typeof fetch,
+    });
+    await expect(store.exportCompleteBackup().then(() => "exported")).rejects.toMatchObject({
+      status: 413,
+      code: "PAYLOAD_TOO_LARGE",
+    });
+  }, 60_000);
+
+  it("round trips a complete backup and leaves all data intact on invalid restore", async () => {
+    const store = remote();
+    await store.initialize();
+    await store.datasets.stage(metadata(), chunks([entry()]));
+    await store.datasets.activate("one");
+    await store.queue.save({ version: 1, datasetId: "one", normalizedWords: ["猫"] });
+    await store.knownWords.save("known", "Known", ["猫"]);
+    const backup = await store.exportCompleteBackup();
+    await expect(
+      store.restoreCompleteBackup(
+        JSON.stringify({ ...JSON.parse(backup), activeDatasetId: "missing" }),
+      ),
+    ).rejects.toThrow();
+    expect((await store.datasets.getActive())?.id).toBe("one");
+    await store.clearAll();
+    expect(await store.datasets.list()).toEqual([]);
+    await store.restoreCompleteBackup(backup);
+    expect((await store.datasets.getActive())?.id).toBe("one");
+    expect((await store.queue.load())?.normalizedWords).toEqual(["猫"]);
+    expect((await store.knownWords.getActive())?.words.has("猫")).toBe(true);
+  });
+
+  it("rejects malformed and oversized wire operations", async () => {
+    await expect(dispatch({ operation: "unknown" })).rejects.toThrow();
+    await expect(dispatch({ operation: "initialize", unexpected: true })).rejects.toThrow();
+    await expect(
+      dispatch({ operation: "initialize", payload: "あ".repeat(400_000) }),
+    ).rejects.toThrow(/large|size|limit/i);
+  });
+
+  it("captures values when a save is requested, even while earlier writes are queued", async () => {
+    const store = remote();
+    await store.initialize();
+    const first = store.knownWords.save("known", "Known", ["猫"]);
+    const draft = structuredClone(preferences);
+    const saved = store.preferences.save(draft);
+    draft.query.search = "unsaved edits";
+    await Promise.all([first, saved]);
+    expect((await store.preferences.load())?.query.search).toBe("");
+  });
+
+  it("rolls back every dataset and queue when complete restore fails after deleting old data", async () => {
+    const store = remote();
+    await store.initialize();
+    await store.datasets.stage(metadata(), chunks([entry()]));
+    await store.datasets.activate("one");
+    await store.queue.save({ version: 1, datasetId: "one", normalizedWords: ["猫"] });
+    const backup = JSON.parse(await store.exportCompleteBackup());
+    const duplicate = { normalizedWord: "猫", status: "later", updatedAt: "2026-09-14" };
+    backup.datasets = [{ metadata: metadata("replacement"), entries: [entry()] }];
+    backup.activeDatasetId = "replacement";
+    backup.queues = [];
+    backup.decisions = [duplicate, duplicate];
+    await expect(store.restoreCompleteBackup(JSON.stringify(backup))).rejects.toThrow(/duplicate/i);
+    expect((await store.datasets.list()).map((item) => item.id)).toEqual(["one"]);
+    expect((await store.queue.load())?.normalizedWords).toEqual(["猫"]);
+  });
+
+  it("keeps separate queues when switching active datasets", async () => {
+    const store = remote();
+    await store.initialize();
+    await store.datasets.stage(metadata(), chunks([entry()]));
+    await store.datasets.activate("one");
+    await store.queue.save({ version: 1, datasetId: "one", normalizedWords: ["猫"] });
+    await store.datasets.stage(metadata("two"), chunks([entry()]));
+    await store.datasets.activate("two");
+    expect(await store.queue.load()).toBeNull();
+    await store.queue.save({ version: 1, datasetId: "two", normalizedWords: ["犬"] });
+    await store.datasets.activate("one");
+    expect((await store.queue.load())?.normalizedWords).toEqual(["猫"]);
+    const backup = JSON.parse(await store.exportCompleteBackup());
+    expect(backup.queues).toEqual([
+      { version: 1, datasetId: "one", normalizedWords: ["猫"] },
+      { version: 1, datasetId: "two", normalizedWords: ["犬"] },
+    ]);
+  });
+
+  it("never activates datasets with duplicate entry IDs", async () => {
+    const store = remote();
+    await store.initialize();
+    await expect(
+      store.datasets.stage(metadata("duplicates", 2), chunks([entry(), entry()])),
+    ).rejects.toThrow(/duplicate/i);
+    expect(await store.datasets.list()).toEqual([]);
+  });
+
+  it("accepts identical staged chunk retries but rejects conflicting retries and gaps", async () => {
+    const { revision } = await dispatch({ operation: "initialize" });
+    const begin = await dispatch({ operation: "dataset.begin", revision, metadata: metadata() });
+    const uploadId = (begin.value as { uploadId: string }).uploadId;
+    const part = { operation: "dataset.chunk", revision, uploadId, index: 0, entries: [entry()] };
+    await dispatch(part);
+    await dispatch(part);
+    await expect(dispatch({ ...part, entries: [{ ...entry(), word: "犬" }] })).rejects.toThrow(
+      /different|conflict/i,
+    );
+    await expect(
+      dispatch({ operation: "dataset.finish", revision, uploadId, chunkCount: 2 }),
+    ).rejects.toThrow(/incomplete|chunk/i);
+    await dispatch({ operation: "dataset.finish", revision, uploadId, chunkCount: 1 });
+    expect(
+      (await dispatch({ operation: "dataset.list", revision: revision + 1, cursor: 0 })).value,
+    ).toMatchObject({ items: [metadata()] });
+  });
+});

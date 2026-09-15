@@ -1,6 +1,6 @@
-import type { AppState } from "../app/state";
 import { canonicalWord } from "../domain/text";
 import type { QueryResult } from "../domain/types";
+import type { AppState } from "../miner/state";
 import type { DomMap } from "./dom";
 import { renderAnkiSection } from "./views/anki-view";
 import { createCoveragePanelView } from "./views/coverage-view";
@@ -70,7 +70,7 @@ export function formatBackupFreshness(
   const stamp = sameDay
     ? time
     : `${exported.toLocaleDateString("en-US", { month: "short", day: "numeric" })}, ${time}`;
-  const changes = `${changesSinceExport.toLocaleString()} ${changesSinceExport === 1 ? "change" : "changes"}`;
+  const changes = `${changesSinceExport.toLocaleString("en-US")} ${changesSinceExport === 1 ? "change" : "changes"}`;
   return `Last export: ${stamp} · ${changes} since export`;
 }
 
@@ -303,13 +303,13 @@ export function createRenderer(dom: DomMap): Renderer {
       const datasetLine = dom.importSummary.querySelector<HTMLElement>(".import-dataset-line");
       const knownLineEl = dom.importSummary.querySelector<HTMLElement>(".import-known-line");
       if (datasetLine !== null) {
-        datasetLine.textContent = `${state.dataset.sourceName} · ${state.dataset.entryCount.toLocaleString()} entries`;
+        datasetLine.textContent = `${state.dataset.sourceName} · ${state.dataset.entryCount.toLocaleString("en-US")} entries`;
       }
       if (knownLineEl !== null) {
         knownLineEl.textContent =
           state.knownWordsName === null
             ? "No known list"
-            : `${state.knownWordsName} · ${state.knownWords.size.toLocaleString()} entries`;
+            : `${state.knownWordsName} · ${state.knownWords.size.toLocaleString("en-US")} entries`;
       }
     }
     dom.changeFiles.hidden = state.dataset === null;
@@ -341,7 +341,7 @@ export function createRenderer(dom: DomMap): Renderer {
     dom.knownStatus.textContent =
       state.knownWordsName === null
         ? "Optional · no list loaded"
-        : `${state.knownWordsName} ✓ · ${state.knownWords.size.toLocaleString()} entries`;
+        : `${state.knownWordsName} ✓ · ${state.knownWords.size.toLocaleString("en-US")} entries`;
     dom.knownStatus.classList.toggle("optional", state.knownWordsName === null);
 
     // Backup freshness line in the Data area: session-only signal, always
@@ -356,7 +356,7 @@ export function createRenderer(dom: DomMap): Renderer {
 
     dom.resultStats.textContent = !hasData
       ? "Load a Jiten CSV to begin."
-      : `Loaded ${state.dataset.entryCount.toLocaleString()} · ${(state.result?.totalEntries ?? 0).toLocaleString()} currently shown${state.knownWords.size > 0 ? ` · ${(state.result?.knownCount ?? 0).toLocaleString()} match Migaku known words` : ""}`;
+      : `Loaded ${state.dataset.entryCount.toLocaleString("en-US")} · ${(state.result?.totalEntries ?? 0).toLocaleString("en-US")} currently shown${state.knownWords.size > 0 ? ` · ${(state.result?.knownCount ?? 0).toLocaleString("en-US")} match Migaku known words` : ""}`;
 
     // Compact decision summary under the stats line: hidden only when there
     // is nothing to summarize at all (no dataset, no decisions, no known

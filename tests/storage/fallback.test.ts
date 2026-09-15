@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
-import type { MinerControllerOptions } from "../../src/app/controller";
-import { createMinerController } from "../../src/app/controller";
-import type { AppState } from "../../src/app/state";
+import type { Entry, QueryResult } from "../../src/domain/types";
+import type { MinerControllerOptions } from "../../src/miner/controller";
+import { createMinerController } from "../../src/miner/controller";
+import type { AppState } from "../../src/miner/state";
 import type {
   WorkerClient,
   WorkerCoverageInput,
   WorkerQueryInput,
-} from "../../src/app/worker-client";
-import type { Entry, QueryResult } from "../../src/domain/types";
+} from "../../src/miner/worker-client";
 import { createSessionQueueStore } from "../../src/platform/session-queue";
 import type { AppStore } from "../../src/storage/contracts";
 import { isStorageUnavailableError, StorageUnavailableError } from "../../src/storage/fallback";

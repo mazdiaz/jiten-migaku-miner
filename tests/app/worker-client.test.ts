@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
+import type { CoverageStats, Entry, QueryResult, QueryState } from "../../src/domain/types";
 import {
   createWorkerClient,
   type WorkerAnkiPreviewInput,
   type WorkerClientEvent,
   type WorkerLike,
   type WorkerQueryInput,
-} from "../../src/app/worker-client";
-import type { CoverageStats, Entry, QueryResult, QueryState } from "../../src/domain/types";
+} from "../../src/miner/worker-client";
 import type {
   ImportCompleteResponse,
   WorkerRequest,

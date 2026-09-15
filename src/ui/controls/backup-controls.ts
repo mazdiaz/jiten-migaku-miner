@@ -1,4 +1,4 @@
-import type { AppState, MinerController } from "../../app/state";
+import type { AppState, MinerController } from "../../miner/state";
 import type { DomMap } from "../dom";
 
 export const RESTORE_CONFIRM_MESSAGE = [
@@ -69,14 +69,23 @@ export function bindBackupControls(
     void (async () => {
       try {
         const text = await file.text();
-        if (!confirmRestore(RESTORE_CONFIRM_MESSAGE)) {
+        let message = RESTORE_CONFIRM_MESSAGE;
+        try {
+          if ((JSON.parse(text) as { version?: number } | null)?.version === 3) {
+            message =
+              "Restore this complete backup?\n\nThis will replace all saved datasets and mining queues, known words, decisions, preferences, and Anki sync data. Export the current workspace first if you want to keep it.";
+          }
+        } catch {
+          // The controller validates the file and reports malformed backups.
+        }
+        if (!confirmRestore(message)) {
           dom.backupStatus.textContent = "Restore cancelled.";
           return;
         }
         await controller.restoreBackup(text);
         const latest = options.getLatestState();
         if (latest === null || latest.errorMessage !== null) return;
-        dom.backupStatus.textContent = `Backup restored: ${latest.knownWords.size.toLocaleString()} Migaku-known words · ${latest.wordDecisions.size.toLocaleString()} decisions.`;
+        dom.backupStatus.textContent = `Backup restored: ${latest.knownWords.size.toLocaleString("en-US")} Migaku-known words · ${latest.wordDecisions.size.toLocaleString("en-US")} decisions.`;
       } catch {
         dom.backupStatus.textContent = "";
       }

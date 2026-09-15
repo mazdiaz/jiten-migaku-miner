@@ -229,7 +229,7 @@ function validateQuery(value: unknown): QueryState {
 // Display preferences are additive-optional: backups written before the
 // reading display controls shipped omit sentenceSize/density, and those
 // missing keys restore to the DEFAULT_VIEW values (medium/comfortable —
-// kept in sync with DEFAULT_VIEW in src/app/state.ts by round-trip tests).
+// kept in sync with DEFAULT_VIEW in src/miner/state.ts by round-trip tests).
 function validateView(value: unknown): ViewState {
   if (!isRecord(value)) fail("invalid-shape", "preferences.view must be an object");
   const sentenceSize = value.sentenceSize;

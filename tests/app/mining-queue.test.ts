@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import type { MinerControllerOptions } from "../../src/app/controller";
-import { createMinerController } from "../../src/app/controller";
-import type { AppState, FileSource } from "../../src/app/state";
-import type { WorkerClient, WorkerQueryInput } from "../../src/app/worker-client";
 import type { Entry, EntryWithKnown, QueryResult, QueryState } from "../../src/domain/types";
+import type { MinerControllerOptions } from "../../src/miner/controller";
+import { createMinerController } from "../../src/miner/controller";
+import type { AppState, FileSource } from "../../src/miner/state";
+import type { WorkerClient, WorkerQueryInput } from "../../src/miner/worker-client";
 import {
   createSessionQueueStore,
   SESSION_QUEUE_STORAGE_KEY,

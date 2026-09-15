@@ -48,7 +48,7 @@ export class BackupService {
       }));
       const knownWords = known === null ? null : { name: known.name, words: [...known.words] };
       const exportedAt = this.core.now();
-      const json = serializeBackup({
+      const legacyJson = serializeBackup({
         exportedAt,
         knownWords,
         wordDecisions: state.wordDecisions.values(),
@@ -59,6 +59,9 @@ export class BackupService {
         },
         ankiSync,
       });
+      const json = await this.core.storageOperation(async (store) =>
+        store.exportCompleteBackup ? store.exportCompleteBackup() : legacyJson,
+      );
       // A completed export resets the freshness signal. Publish inside the
       // existing lock so the Data area line updates immediately.
       state.lastExportAt = exportedAt;

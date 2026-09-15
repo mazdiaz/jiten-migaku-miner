@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AppState, FileSource, MinerController } from "../../src/app/state";
-import { createInitialAppState } from "../../src/app/state";
 import type { EntryWithKnown, QueryState, WordDecision } from "../../src/domain/types";
+import type { AppState, FileSource, MinerController } from "../../src/miner/state";
+import { createInitialAppState } from "../../src/miner/state";
 import { bindControls } from "../../src/ui/controls";
 import type { DomMap } from "../../src/ui/dom";
 import { getDomMap } from "../../src/ui/dom";

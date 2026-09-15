@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createQueryController, type QueryController } from "../../src/app/query-controller";
-import type { AppState, MinerController } from "../../src/app/state";
+import { createQueryController, type QueryController } from "../../src/miner/query-controller";
+import type { AppState, MinerController } from "../../src/miner/state";
 import type { VirtualList } from "../../src/ui/virtual-list";
 
 class FakeMinerController implements Pick<MinerController, "updateQuery" | "updateViewport"> {

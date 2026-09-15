@@ -1,4 +1,4 @@
-import type { AnkiPreviewState, AppState } from "../../app/state";
+import type { AnkiPreviewState, AppState } from "../../miner/state";
 import type { DomMap } from "../dom";
 
 export type AnkiDom = Pick<
@@ -29,9 +29,9 @@ const ANKI_DESCRIPTION = "Automatically classify words from your Anki collection
 function formatAnkiSummary(state: Readonly<AppState>): string {
   const { anki } = state;
   const details = [
-    `${anki.wordCount.toLocaleString()} words`,
-    `${anki.knownCount.toLocaleString()} Known`,
-    `${anki.minedCount.toLocaleString()} Mined`,
+    `${anki.wordCount.toLocaleString("en-US")} words`,
+    `${anki.knownCount.toLocaleString("en-US")} Known`,
+    `${anki.minedCount.toLocaleString("en-US")} Mined`,
   ];
   if (anki.deckScopeLabel !== null) details.push(`Scope: ${anki.deckScopeLabel}`);
   if (anki.noteType !== null) details.push(`Note type: ${anki.noteType}`);
@@ -42,19 +42,21 @@ function formatAnkiSummary(state: Readonly<AppState>): string {
 
 function formatPreviewCounts(preview: AnkiPreviewState): string {
   const counts = [
-    `${preview.scannedCards.toLocaleString()} cards scanned`,
-    `${preview.uniqueWords.toLocaleString()} unique words`,
+    `${preview.scannedCards.toLocaleString("en-US")} cards scanned`,
+    `${preview.uniqueWords.toLocaleString("en-US")} unique words`,
   ];
   if (preview.matchedWords !== null) {
-    counts.push(`${preview.matchedWords.toLocaleString()} matched`);
+    counts.push(`${preview.matchedWords.toLocaleString("en-US")} matched`);
   }
-  if (preview.knownCount !== null) counts.push(`${preview.knownCount.toLocaleString()} Known`);
-  if (preview.minedCount !== null) counts.push(`${preview.minedCount.toLocaleString()} Mined`);
+  if (preview.knownCount !== null)
+    counts.push(`${preview.knownCount.toLocaleString("en-US")} Known`);
+  if (preview.minedCount !== null)
+    counts.push(`${preview.minedCount.toLocaleString("en-US")} Mined`);
   if (preview.manualProtected !== null && preview.manualProtected > 0) {
-    counts.push(`${preview.manualProtected.toLocaleString()} manual decisions protected`);
+    counts.push(`${preview.manualProtected.toLocaleString("en-US")} manual decisions protected`);
   }
   if (preview.queueRemovals > 0) {
-    counts.push(`${preview.queueRemovals.toLocaleString()} queue removals`);
+    counts.push(`${preview.queueRemovals.toLocaleString("en-US")} queue removals`);
   }
   return counts.join(" · ");
 }
@@ -69,7 +71,7 @@ function formatPreviewWarnings(preview: AnkiPreviewState): string[] {
   }
   if (preview.emptyTargetFields > 0) {
     warnings.push(
-      `${preview.emptyTargetFields.toLocaleString()} cards skipped because target field was empty.`,
+      `${preview.emptyTargetFields.toLocaleString("en-US")} cards skipped because target field was empty.`,
     );
   }
   if (!preview.datasetAvailable) {

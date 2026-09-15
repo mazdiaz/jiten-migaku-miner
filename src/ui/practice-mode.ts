@@ -1,5 +1,5 @@
-import type { AppState, MinerController } from "../app/state";
 import type { EntryWithKnown } from "../domain/types";
+import type { AppState, MinerController } from "../miner/state";
 import { renderReviewEntryNode } from "./views/entry-view";
 
 export function shuffleIndexes(length: number, random: () => number = Math.random): number[] {
@@ -20,6 +20,7 @@ export function shuffleIndexes(length: number, random: () => number = Math.rando
 export interface PracticeMode {
   isActive(): boolean;
   sync(state: Readonly<AppState>): void;
+  destroy(): void;
 }
 
 interface PracticeModeOptions {
@@ -357,6 +358,7 @@ export function createPracticeMode(options: PracticeModeOptions): PracticeMode {
   elements.returnButton.addEventListener("click", () => stop());
   elements.reveal.addEventListener("click", revealOrAdvance);
 
+  const lifecycle = new AbortController();
   document.addEventListener(
     "keydown",
     (event) => {
@@ -395,10 +397,16 @@ export function createPracticeMode(options: PracticeModeOptions): PracticeMode {
         event.stopImmediatePropagation();
       }
     },
-    true,
+    { capture: true, signal: lifecycle.signal },
   );
 
   return {
+    destroy(): void {
+      active = false;
+      lifecycle.abort();
+      elements.button.remove();
+      elements.overlay.remove();
+    },
     isActive: () => active,
     sync(state: Readonly<AppState>): void {
       latest = state;

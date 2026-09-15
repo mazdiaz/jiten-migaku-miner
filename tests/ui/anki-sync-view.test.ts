@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it } from "vitest";
-import type { AnkiPreviewState, AnkiUiState, AppState } from "../../src/app/state";
-import { createInitialAppState } from "../../src/app/state";
+import type { AnkiPreviewState, AnkiUiState, AppState } from "../../src/miner/state";
+import { createInitialAppState } from "../../src/miner/state";
 import type { DomMap } from "../../src/ui/dom";
 import { renderAnkiSection } from "../../src/ui/views/anki-view";
 

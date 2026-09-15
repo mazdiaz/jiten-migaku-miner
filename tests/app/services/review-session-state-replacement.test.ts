@@ -1,17 +1,17 @@
 import { describe, expect, it } from "vitest";
-import type { ControllerCore } from "../../../src/app/services/context";
-import { CoverageService } from "../../../src/app/services/coverage-service";
-import { DecisionService } from "../../../src/app/services/decision-service";
-import { MiningQueueService } from "../../../src/app/services/mining-queue-service";
-import { ReviewSession } from "../../../src/app/services/review-session";
-import { createInitialAppState, EMPTY_REVIEW } from "../../../src/app/state";
+import type { Entry, QueryResult } from "../../../src/domain/types";
+import type { ControllerCore } from "../../../src/miner/services/context";
+import { CoverageService } from "../../../src/miner/services/coverage-service";
+import { DecisionService } from "../../../src/miner/services/decision-service";
+import { MiningQueueService } from "../../../src/miner/services/mining-queue-service";
+import { ReviewSession } from "../../../src/miner/services/review-session";
+import { createInitialAppState, EMPTY_REVIEW } from "../../../src/miner/state";
 import type {
   WorkerAnkiPreviewInput,
   WorkerClient,
   WorkerCoverageInput,
   WorkerQueryInput,
-} from "../../../src/app/worker-client";
-import type { Entry, QueryResult } from "../../../src/domain/types";
+} from "../../../src/miner/worker-client";
 
 function item(word: string): QueryResult["items"][number] {
   return {

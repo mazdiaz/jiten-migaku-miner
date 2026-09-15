@@ -1,4 +1,4 @@
-import { expect, type Page, test } from "@playwright/test";
+import { expect, type Page, test } from "./fixtures";
 
 const SMALL_CSV = "tests/fixtures/jiten-small.csv";
 
@@ -11,6 +11,7 @@ function entryByWord(page: Page, word: string): ReturnType<Page["locator"]> {
 test.describe("active filter chips", () => {
   test("hides the chips row on a default query and after load", async ({ page }) => {
     await page.goto("/");
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
     await expect(page.locator("#filterChips")).toBeHidden();
 
     await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
@@ -20,6 +21,7 @@ test.describe("active filter chips", () => {
 
   test("shows chips for search and decision, removes one filter, resets all", async ({ page }) => {
     await page.goto("/");
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
     await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
 
@@ -61,6 +63,7 @@ test.describe("active filter chips", () => {
     page,
   }) => {
     await page.goto("/");
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
     await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
 
@@ -82,6 +85,7 @@ test.describe("active filter chips", () => {
 
   test("hides the chips row in queue mode and restores it on exit", async ({ page }) => {
     await page.goto("/");
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
     await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
 

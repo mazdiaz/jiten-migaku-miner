@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 
 const SIXTY_CSV = "tests/fixtures/jiten-60.csv";
 
@@ -12,6 +12,7 @@ test.describe("accessibility remainder", () => {
     page,
   }) => {
     await page.goto("/");
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
 
     await expect(page.locator("#stickySearch")).toHaveAttribute(
       "aria-label",
@@ -28,6 +29,7 @@ test.describe("accessibility remainder", () => {
 
   test("keyboard pagination focuses the results heading clear of the toolbar", async ({ page }) => {
     await page.goto("/");
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
     await page.locator("#jitenInput").setInputFiles(SIXTY_CSV);
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(50);
 
@@ -61,6 +63,7 @@ test.describe("accessibility remainder", () => {
 
   test("pager click focuses the results heading clear of the toolbar", async ({ page }) => {
     await page.goto("/");
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
     await page.locator("#jitenInput").setInputFiles(SIXTY_CSV);
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(50);
 
@@ -94,6 +97,7 @@ test.describe("accessibility remainder", () => {
     page,
   }) => {
     await page.goto("/");
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
     await page.locator("#jitenInput").setInputFiles(SIXTY_CSV);
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(50);
 
@@ -130,6 +134,7 @@ test.describe("accessibility remainder", () => {
 
   test("definitions disclosure opens via keyboard", async ({ page }) => {
     await page.goto("/");
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
     await page.locator("#jitenInput").setInputFiles({
       name: "long-defs.csv",
       mimeType: "text/csv",
@@ -157,6 +162,7 @@ test.describe("accessibility remainder", () => {
     page,
   }) => {
     await page.goto("/");
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
     await page.locator("#jitenInput").setInputFiles(SIXTY_CSV);
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(50);
 

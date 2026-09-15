@@ -1,4 +1,4 @@
-import type { AppState } from "../../app/state";
+import type { AppState } from "../../miner/state";
 import type { DomMap } from "../dom";
 
 /**
@@ -39,11 +39,11 @@ export function createCoveragePanelView(dom: DomMap) {
       dom.coverageUniqueWords.textContent =
         stats === null
           ? "—"
-          : `${stats.knownUniqueWords.toLocaleString()} / ${stats.totalUniqueWords.toLocaleString()}`;
+          : `${stats.knownUniqueWords.toLocaleString("en-US")} / ${stats.totalUniqueWords.toLocaleString("en-US")}`;
       dom.coverageKnownOccurrences.textContent =
         stats === null
           ? "—"
-          : `${stats.knownTrackedOccurrences.toLocaleString()} / ${stats.totalTrackedOccurrences.toLocaleString()}`;
+          : `${stats.knownTrackedOccurrences.toLocaleString("en-US")} / ${stats.totalTrackedOccurrences.toLocaleString("en-US")}`;
       dom.coveragePercent.textContent = formatCoveragePercent(stats?.coveragePercent ?? null);
 
       dom.coverageTargets.textContent = "";
@@ -57,7 +57,7 @@ export function createCoveragePanelView(dom: DomMap) {
         value.className = "coverage-target-value";
         value.textContent = target.reached
           ? "reached"
-          : `+${target.additionalWords.toLocaleString()} ${target.additionalWords === 1 ? "word" : "words"}`;
+          : `+${target.additionalWords.toLocaleString("en-US")} ${target.additionalWords === 1 ? "word" : "words"}`;
         row.append(label, value);
         dom.coverageTargets.appendChild(row);
       }

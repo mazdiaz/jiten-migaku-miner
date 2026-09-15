@@ -1,17 +1,18 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { QueryState, ViewState } from "../../src/domain/types";
 import {
   type AppState,
   createInitialAppState,
   DEFAULT_VIEW,
   type FileSource,
   type MinerController,
-} from "../../src/app/state";
-import type { QueryState, ViewState } from "../../src/domain/types";
+} from "../../src/miner/state";
 import { bindControls } from "../../src/ui/controls";
 import type { DomMap } from "../../src/ui/dom";
 import { getDomMap } from "../../src/ui/dom";
 import { createRenderer } from "../../src/ui/renderer";
+import { renderMinerShell } from "../support/shell";
 
 type Listener = (state: Readonly<AppState>) => void;
 
@@ -392,9 +393,7 @@ describe("reading display controls binding", () => {
 
 describe("reading display controls markup", () => {
   it("ships both selects in the Display group with default-selected options", async () => {
-    const { readFileSync } = await import("node:fs");
-    const { resolve } = await import("node:path");
-    const html = readFileSync(resolve(process.cwd(), "index.html"), "utf8");
+    const html = renderMinerShell();
     const displayStart = html.indexOf("<legend>Display</legend>");
     const displayEnd = html.indexOf("</fieldset>", displayStart);
     expect(displayStart).toBeGreaterThan(-1);

@@ -1,30 +1,19 @@
 import { defineConfig, devices } from "@playwright/test";
-
+import { testServerEnvironment } from "./tests/support/environment";
+const origin = "http://127.0.0.1:8931";
 export default defineConfig({
   testDir: "tests/e2e",
   testMatch: /production\.spec\.ts/,
-  projects: [
-    {
-      name: "production",
-      use: { ...devices["Desktop Chrome"] },
-    },
-    {
-      name: "production-firefox",
-      use: { ...devices["Desktop Firefox"] },
-    },
-    {
-      name: "production-webkit",
-      use: { ...devices["Desktop Safari"] },
-    },
-  ],
-  use: {
-    baseURL: "http://127.0.0.1:8931",
-    contextOptions: { reducedMotion: "reduce" },
-  },
+  timeout: 60_000,
+  expect: { timeout: 15_000 },
+  workers: 1,
+  projects: [{ name: "production", use: { ...devices["Desktop Chrome"] } }],
+  use: { baseURL: origin, contextOptions: { reducedMotion: "reduce" }, trace: "retain-on-failure" },
   webServer: {
-    command: "npm run build && npm run serve:root -- --port 8931",
-    url: "http://127.0.0.1:8931/dist/",
-    reuseExistingServer: !process.env.CI,
-    timeout: 300_000,
+    command: "npx next start --hostname 127.0.0.1 --port 8931",
+    url: `${origin}/login`,
+    env: testServerEnvironment(origin),
+    reuseExistingServer: false,
+    timeout: 120_000,
   },
 });

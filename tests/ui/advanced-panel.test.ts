@@ -1,14 +1,13 @@
 // @vitest-environment happy-dom
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AppState, FileSource, MinerController } from "../../src/app/state";
-import { createInitialAppState } from "../../src/app/state";
 import type { QueryState } from "../../src/domain/types";
+import type { AppState, FileSource, MinerController } from "../../src/miner/state";
+import { createInitialAppState } from "../../src/miner/state";
 import { bindControls } from "../../src/ui/controls";
 import type { DomMap } from "../../src/ui/dom";
 import { getDomMap } from "../../src/ui/dom";
 import { createRenderer } from "../../src/ui/renderer";
+import { renderMinerShell } from "../support/shell";
 
 type Listener = (state: Readonly<AppState>) => void;
 
@@ -402,7 +401,7 @@ describe("advanced panel disclosure", () => {
   });
 
   it("ships the advanced panel without the legacy sticky-row-2 class", () => {
-    const html = readFileSync(resolve(process.cwd(), "index.html"), "utf8");
+    const html = renderMinerShell();
     expect(html).not.toContain("sticky-row-2");
   });
 });

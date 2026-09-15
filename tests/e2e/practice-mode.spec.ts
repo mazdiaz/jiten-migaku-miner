@@ -1,4 +1,4 @@
-import { expect, type Page, test } from "@playwright/test";
+import { expect, type Page, test } from "./fixtures";
 
 const SMALL_CSV = "tests/fixtures/jiten-small.csv";
 
@@ -14,6 +14,7 @@ async function openPractice(page: Page): Promise<void> {
 test.describe("practice mode", () => {
   test("reveals the answer before advancing", async ({ page }) => {
     await page.goto("/");
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
     await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
 
@@ -33,6 +34,7 @@ test.describe("practice mode", () => {
     page,
   }) => {
     await page.goto("/");
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
     await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
 

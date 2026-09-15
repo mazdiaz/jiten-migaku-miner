@@ -72,7 +72,7 @@ export interface AppState {
   result: QueryResult | null;
   status: "empty" | "loading" | "ready" | "error";
   errorMessage: string | null;
-  persistence: "indexeddb" | "memory";
+  persistence: "indexeddb" | "memory" | "postgresql";
   review: ReviewState;
   queue: MiningQueueState;
   undo: UndoState;

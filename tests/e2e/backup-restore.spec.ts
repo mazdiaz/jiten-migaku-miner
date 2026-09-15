@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { expect, type Page, test } from "@playwright/test";
+import { expect, type Page, test } from "./fixtures";
 
 const SMALL_CSV = "tests/fixtures/jiten-small.csv";
 const SMALL_KNOWN = "tests/fixtures/known-small.txt";
@@ -15,6 +15,7 @@ test.describe("backup and restore", () => {
     test.setTimeout(60_000);
     await acceptDialogs(page);
     await page.goto("/");
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
 
     await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
@@ -50,21 +51,21 @@ test.describe("backup and restore", () => {
     const download = await downloadPromise;
     const backupPath = await download.path();
     const backup = JSON.parse(readFileSync(backupPath!, "utf-8")) as {
-      format: string;
+      datasets: unknown[];
       version: number;
       knownWords: { name: string; words: string[] } | null;
-      wordDecisions: Array<{ normalizedWord: string; status: string }>;
+      decisions: Array<{ normalizedWord: string; status: string }>;
       preferences: {
         query: { sort: string; pageSize: number; hideKanaOnly: boolean };
       };
     };
-    expect(backup.format).toBe("jiten-migaku-miner-backup");
-    expect(backup.version).toBe(2);
-    expect(backup.knownWords).toEqual({
+    expect(backup.datasets).toHaveLength(1);
+    expect(backup.version).toBe(3);
+    expect(backup.knownWords).toMatchObject({
       name: "known-small.txt",
       words: ["プール"],
     });
-    expect(backup.wordDecisions).toMatchObject([
+    expect(backup.decisions).toMatchObject([
       { normalizedWord: "気になる", status: "mined" },
       { normalizedWord: "静か", status: "later" },
     ]);
@@ -122,10 +123,9 @@ test.describe("backup and restore", () => {
     ).toHaveCount(0);
     await expect(page.locator("#resultStats")).toContainText("Loaded 3");
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(2);
-    await expect(page.locator("#backupStatus")).toContainText(
-      "Backup restored: 1 Migaku-known words · 2 decisions.",
-    );
+    await expect(page.locator("#backupStatus")).toContainText("Complete backup restored.");
 
+    await page.locator("#advancedToggle").click();
     await page.locator("#hideKnown").uncheck();
     await expect(
       page
@@ -149,6 +149,7 @@ test.describe("backup and restore", () => {
     test.setTimeout(60_000);
     await acceptDialogs(page);
     await page.goto("/");
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
 
     await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
@@ -172,6 +173,7 @@ test.describe("backup and restore", () => {
     test.setTimeout(60_000);
     await acceptDialogs(page);
     await page.goto("/");
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
 
     await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);

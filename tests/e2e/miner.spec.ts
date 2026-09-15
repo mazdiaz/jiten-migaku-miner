@@ -1,13 +1,8 @@
-import { expect, type Page, test } from "@playwright/test";
+import { expect, type Page, test } from "./fixtures";
 
 const SMALL_CSV = "tests/fixtures/jiten-small.csv";
 const SMALL_KNOWN = "tests/fixtures/known-small.txt";
 const SIXTY_CSV = "tests/fixtures/jiten-60.csv";
-
-const AUTO_CSV = [
-  "Word,Occurences,ExampleSentence,Definitions,ReadingFurigana",
-  '自動,5,"これは**自動**の例文です。",automatic,自動[じどう]',
-].join("\n");
 
 async function acceptDialogs(page: Page): Promise<void> {
   page.on("dialog", (dialog) => dialog.accept());
@@ -23,8 +18,9 @@ test.describe("canonical miner", () => {
     page,
   }) => {
     await page.goto("/");
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
 
-    await expect(page.locator(".eyebrow")).toHaveText("Local · Offline · Migaku-friendly");
+    await expect(page.locator(".eyebrow")).toHaveText("Private · Synced · Migaku-friendly");
     await expect(page.locator("h1")).toHaveText("JITEN → MIGAKU MINER");
     await expect(page.locator("#jitenDropzone .dropzone-title")).toHaveText("Jiten CSV");
     await expect(page.locator("#knownDropzone .dropzone-title")).toHaveText("Migaku Known Words");
@@ -42,15 +38,16 @@ test.describe("canonical miner", () => {
 
   test("shows clear labels, scope hints, and honest persistence copy", async ({ page }) => {
     await page.goto("/");
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
 
     const dataArea = page.locator("fieldset.data-area");
     await expect(dataArea.locator("legend")).toHaveText("Data");
     await expect(dataArea.locator("#clearData")).toBeVisible();
     await expect(dataArea.locator("#exportBackup")).toBeVisible();
     await expect(dataArea.locator("#restoreBackup")).toBeVisible();
-    await expect(dataArea).toContainText("Saved locally in this browser.");
-    await expect(dataArea).toContainText("not Jiten datasets or the session queue.");
-    await expect(dataArea).toContainText("Keep your original CSV files");
+    await expect(dataArea).toContainText("Saved privately in PostgreSQL.");
+    await expect(dataArea).toContainText("Complete backups include datasets");
+    await expect(dataArea).toContainText("restore backups from the old local app");
 
     await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
@@ -69,6 +66,7 @@ test.describe("canonical miner", () => {
 
   test("imports the fixture, numbers entries, and shows stats", async ({ page }) => {
     await page.goto("/");
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
     await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
 
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
@@ -90,6 +88,7 @@ test.describe("canonical miner", () => {
     page,
   }) => {
     await page.goto("/");
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
     await expect(page.locator("#importGrid")).toBeVisible();
     await expect(page.locator("#importSummary")).toBeHidden();
     await expect(page.locator("#changeFiles")).toBeHidden();
@@ -118,6 +117,7 @@ test.describe("canonical miner", () => {
 
   test("exposes one search input and collapses filters behind the disclosure", async ({ page }) => {
     await page.goto("/");
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
     await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
 
@@ -146,6 +146,7 @@ test.describe("canonical miner", () => {
 
   test("searches words from the single toolbar search box", async ({ page }) => {
     await page.goto("/");
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
     await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
 
@@ -162,6 +163,7 @@ test.describe("canonical miner", () => {
 
   test("paginates a larger import with buttons and keyboard shortcuts", async ({ page }) => {
     await page.goto("/");
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
     await page.locator("#jitenInput").setInputFiles(SIXTY_CSV);
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(50);
     await expect(page.locator("#resultStats")).toContainText("Loaded 60");
@@ -204,6 +206,7 @@ test.describe("canonical miner", () => {
 
   test("imports known words, hides known entries, and re-enables them", async ({ page }) => {
     await page.goto("/");
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
     await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
 
@@ -221,6 +224,7 @@ test.describe("canonical miner", () => {
 
   test("filters by sentence presence and kana-only words", async ({ page }) => {
     await page.goto("/");
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
     await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
 
@@ -243,6 +247,7 @@ test.describe("canonical miner", () => {
 
   test("sorts by occurrences and original order", async ({ page }) => {
     await page.goto("/");
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
     await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
     await openFilters(page);
 
@@ -255,6 +260,7 @@ test.describe("canonical miner", () => {
 
   test("toggles definitions, furigana, highlight, and pill modes", async ({ page }) => {
     await page.goto("/");
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
     await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
     await expect(page.locator(".mining-entry .entry-definitions").first()).toBeVisible();
 
@@ -280,6 +286,7 @@ test.describe("canonical miner", () => {
     page,
   }) => {
     await page.goto("/");
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
     await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
     await openFilters(page);
     await page.locator("#showHighlight").check();
@@ -330,10 +337,11 @@ test.describe("canonical miner", () => {
     await expect(page.locator("#resultsList span.th-wrap")).toHaveCount(0);
   });
 
-  test("restores dataset, page, and preferences after reload through IndexedDB", async ({
+  test("restores dataset, page, and preferences after reload through PostgreSQL", async ({
     page,
   }) => {
     await page.goto("/");
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
     await page.locator("#jitenInput").setInputFiles(SIXTY_CSV);
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(50);
     await page.locator("#stickyNext").click();
@@ -341,6 +349,7 @@ test.describe("canonical miner", () => {
     await page.locator("#stickySearch").fill("語59");
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(1);
 
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
     await page.reload();
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(1);
     await expect(page.locator("#resultStats")).toContainText("Loaded 60");
@@ -351,6 +360,7 @@ test.describe("canonical miner", () => {
   test("clears saved data after confirmation", async ({ page }) => {
     await acceptDialogs(page);
     await page.goto("/");
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
     await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
 
@@ -364,43 +374,35 @@ test.describe("canonical miner", () => {
     await expect(page.locator("#advancedToggle")).toBeDisabled();
     await expect(page.locator("#advancedPanel")).toBeHidden();
 
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
     await page.reload();
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
     await expect(page.locator("#resultsList .empty-state")).toBeVisible();
   });
 
-  test("auto-loads the newest same-origin folder files over http", async ({ page }) => {
-    await page.route("**/WORDS%20TO%20MINE/", async (route) => {
-      await route.fulfill({
-        contentType: "text/html",
-        body: '<a href="auto.csv">auto.csv</a>',
-      });
+  test("does not discover private local folders on the cloud origin", async ({ page }) => {
+    const folderRequests: string[] = [];
+    page.on("request", (request) => {
+      if (/WORDS(?:%20| )TO(?:%20| )MINE|MIGAKU(?:%20| )KNOWN/.test(request.url()))
+        folderRequests.push(request.url());
     });
-    await page.route("**/auto.csv", async (route) => {
-      if (route.request().method() === "HEAD") {
-        await route.fulfill({
-          headers: { "Last-Modified": "Thu, 03 Sep 2026 00:00:00 GMT" },
-        });
-        return;
-      }
-      await route.fulfill({ contentType: "text/csv", body: AUTO_CSV });
-    });
-
     await page.goto("/");
-
-    await expect(page.locator("#resultsList .mining-entry")).toHaveCount(1);
-    await expect(page.locator(".mining-entry .target-word").first()).toHaveText("自動");
-    await expect(page.locator("#jitenStatus")).toContainText("auto.csv");
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
+    await expect(page.locator("#resultsList .empty-state")).toBeVisible();
+    expect(folderRequests).toEqual([]);
   });
-
   test("keeps loaded data when automatic discovery fails", async ({ page }) => {
     await page.route("**/WORDS%20TO%20MINE/", async (route) => {
       await route.fulfill({ status: 404 });
     });
 
     await page.goto("/");
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
     await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
 
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
     await page.reload();
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
     await expect(page.locator("#resultStats")).toContainText("Loaded 3");

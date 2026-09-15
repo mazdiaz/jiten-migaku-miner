@@ -42,6 +42,7 @@ import {
 export { MAX_BACKUP_BYTES };
 
 export interface MinerControllerOptions {
+  persistence?: AppState["persistence"];
   store?: AppStore;
   indexedDbStoreFactory?: () => AppStore;
   worker?: WorkerClient;
@@ -79,7 +80,7 @@ interface ImportSnapshot {
 }
 
 /**
- * Public façade. Feature logic lives in src/app/services/*:
+ * Public façade. Feature logic lives in src/miner/services/*:
  * BackupService, CoverageService, DecisionService, MiningQueueService, and
  * ReviewSession. The controller owns the shared infrastructure those
  * services reach through ControllerCore: the AppState, the import/user-state
@@ -133,7 +134,9 @@ class MinerControllerImpl implements MinerController {
     this.sessionQueue = options.sessionQueueStore ?? createSessionQueueStore();
     this.now = options.now ?? (() => new Date().toISOString());
     this.createId = options.createId ?? defaultId;
-    this.state = createInitialAppState(this.storeWasProvided ? "memory" : "indexeddb");
+    this.state = createInitialAppState(
+      options.persistence ?? (this.storeWasProvided ? "memory" : "indexeddb"),
+    );
 
     const impl = this;
     let ankiSyncService: AnkiSyncService;
@@ -222,6 +225,7 @@ class MinerControllerImpl implements MinerController {
     let candidateResult: QueryResult | null = null;
     let activationAttempted = false;
     let committed = false;
+    let committedQueryGeneration = -1;
     this.setState({ status: "loading", errorMessage: null });
 
     try {
@@ -296,6 +300,7 @@ class MinerControllerImpl implements MinerController {
           this.decisionService.clearUndo();
           this.viewportStart = 0;
           this.queryGeneration += 1;
+          committedQueryGeneration = this.queryGeneration;
           // Dataset identity changed: stale coverage responses are dead and the
           // old dataset's stats no longer describe the active dataset.
           this.coverageService.reset();
@@ -308,6 +313,9 @@ class MinerControllerImpl implements MinerController {
         }),
       );
       if (committed) {
+        // A newer query or backup error owns the visible state now. Do not
+        // overwrite it with a refresh delayed by the import's preference save.
+        if (this.queryGeneration !== committedQueryGeneration) return;
         await this.runQuery();
         await this.requestCoverage();
         return;
@@ -539,6 +547,32 @@ class MinerControllerImpl implements MinerController {
   }
 
   restoreBackup(text: string): Promise<void> {
+    let complete = false;
+    try {
+      complete = (JSON.parse(text) as { version?: number } | null)?.version === 3;
+    } catch {
+      /* Legacy parser reports the error. */
+    }
+    if (complete && this.store.restoreCompleteBackup) {
+      // Cancel continuations captured from the old world before acquiring the
+      // locks. Invalidate again on exit to drop actions queued during restore.
+      this.importGeneration += 1;
+      this.userStateEpoch += 1;
+      this.queryGeneration += 1;
+      this.reviewSession.invalidate();
+      this.coverageService.invalidate();
+      return this.withImportLock(() =>
+        this.withUserStateLock(async () => {
+          try {
+            await this.store.restoreCompleteBackup!(text);
+            this.decisionService.clearUndo();
+          } finally {
+            this.userStateEpoch += 1;
+            this.queryGeneration += 1;
+          }
+        }),
+      );
+    }
     return this.backupService.restoreBackup(text);
   }
 

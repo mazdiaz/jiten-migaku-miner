@@ -1,47 +1,16 @@
-import { expect, type Page, test } from "@playwright/test";
+import { expect, type Page, test } from "./fixtures";
 
 const SMALL_CSV = "tests/fixtures/jiten-small.csv";
 
-// Preference persistence is fire-and-forget (updateView → void persist), so
-// polling the IndexedDB record is the deterministic settle signal before a
-// reload — mirrors the app's store (jiten-migaku-miner / preferences / current).
+// Wait for the cloud operation queue to drain before exercising reload.
 async function waitForStoredView(
   page: Page,
   expected: { sentenceSize: string; density: string },
 ): Promise<void> {
-  await page.waitForFunction(
-    (want) => {
-      return new Promise<boolean>((resolve) => {
-        const open = indexedDB.open("jiten-migaku-miner");
-        open.onsuccess = () => {
-          const db = open.result;
-          const tx = db.transaction("preferences", "readonly");
-          const get = tx.objectStore("preferences").get("current");
-          let matches = false;
-          get.onsuccess = () => {
-            const record = get.result as
-              | { view?: { sentenceSize?: string; density?: string } }
-              | undefined;
-            matches =
-              record?.view?.sentenceSize === want.sentenceSize &&
-              record?.view?.density === want.density;
-          };
-          get.onerror = () => {
-            matches = false;
-          };
-          tx.oncomplete = () => {
-            db.close();
-            resolve(matches);
-          };
-        };
-        open.onerror = () => resolve(false);
-      });
-    },
-    expected,
-    { timeout: 10_000 },
-  );
+  await expect(page.locator("#sentenceSize")).toHaveValue(expected.sentenceSize);
+  await expect(page.locator("#density")).toHaveValue(expected.density);
+  await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
 }
-
 async function openFilters(page: Page): Promise<void> {
   await page.locator("#advancedToggle").click();
   await expect(page.locator("#advancedPanel")).toBeVisible();
@@ -50,6 +19,7 @@ async function openFilters(page: Page): Promise<void> {
 test.describe("reading display controls", () => {
   test("defaults keep the current look: no body classes, base sentence size", async ({ page }) => {
     await page.goto("/");
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
     await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
     await openFilters(page);
@@ -64,6 +34,7 @@ test.describe("reading display controls", () => {
     page,
   }) => {
     await page.goto("/");
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
     await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
     await openFilters(page);
@@ -94,6 +65,7 @@ test.describe("reading display controls", () => {
 
   test("persists both display preferences across reload", async ({ page }) => {
     await page.goto("/");
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
     await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
     await openFilters(page);
@@ -107,6 +79,7 @@ test.describe("reading display controls", () => {
       density: "compact",
     });
 
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
     await page.reload();
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
     await expect(page.locator("#sentenceSize")).toHaveValue("large");

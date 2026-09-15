@@ -1,4 +1,4 @@
-import type { FileSource, FolderSource } from "../app/state";
+import type { FileSource, FolderSource } from "../miner/state";
 
 type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 

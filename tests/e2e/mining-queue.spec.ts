@@ -1,4 +1,4 @@
-import { expect, type Page, test } from "@playwright/test";
+import { expect, type Page, test } from "./fixtures";
 
 const SMALL_CSV = "tests/fixtures/jiten-small.csv";
 const FOLLOWUP_CSV = "tests/fixtures/jiten-followup.csv";
@@ -25,6 +25,7 @@ test.describe("session mining queue", () => {
   }) => {
     // 1. Import fixture.
     await page.goto("/");
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
     await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
     await expect(page.locator("#queueToggle")).toHaveText("Queue (0)");
@@ -37,6 +38,7 @@ test.describe("session mining queue", () => {
     await expect(page.locator("#queueToggle")).toHaveText("Queue (3)");
 
     // 3. Reload.
+    await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
     await page.reload();
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
 

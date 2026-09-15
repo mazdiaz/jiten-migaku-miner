@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { migrateLegacy } from "../../src/app/migrate-legacy";
-import type { WorkerClient } from "../../src/app/worker-client";
 import type { Entry, QueryState, ViewState } from "../../src/domain/types";
+import { migrateLegacy } from "../../src/miner/migrate-legacy";
+import type { WorkerClient } from "../../src/miner/worker-client";
 import type { AppStore, DatasetMetadata } from "../../src/storage/contracts";
 import { createMemoryAppStore } from "../../src/storage/memory-store";
 import type {

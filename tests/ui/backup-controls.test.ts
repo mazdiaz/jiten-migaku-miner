@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AppState, FileSource, MinerController } from "../../src/app/state";
-import { createInitialAppState } from "../../src/app/state";
 import type { QueryState } from "../../src/domain/types";
+import type { AppState, FileSource, MinerController } from "../../src/miner/state";
+import { createInitialAppState } from "../../src/miner/state";
 import { bindControls, RESTORE_CONFIRM_MESSAGE } from "../../src/ui/controls";
 import { type DomMap, getDomMap } from "../../src/ui/dom";
 
@@ -335,6 +335,21 @@ describe("backup and restore controls", () => {
     await vi.waitFor(() => expect(dom.backupStatus.textContent).toBe("Restore cancelled."));
 
     expect(confirmations).toEqual([RESTORE_CONFIRM_MESSAGE]);
+    expect(controller.calls.restoreBackup).toHaveLength(0);
+  });
+
+  it("warns that a complete restore replaces datasets and queues", async () => {
+    const controller = createFakeController();
+    const confirmRestore = vi.fn((_message: string) => false);
+    bindControls(dom, controller, { confirmRestore });
+    Object.defineProperty(dom.restoreBackupInput, "files", {
+      value: [backupFile(JSON.stringify({ version: 3 }))],
+      configurable: true,
+    });
+    dom.restoreBackupInput.dispatchEvent(new Event("change"));
+    await vi.waitFor(() => expect(confirmRestore).toHaveBeenCalled());
+    expect(confirmRestore.mock.calls[0]?.[0]).toContain("datasets and mining queues");
+    expect(confirmRestore.mock.calls[0]?.[0]).not.toContain("will not be deleted");
     expect(controller.calls.restoreBackup).toHaveLength(0);
   });
 
