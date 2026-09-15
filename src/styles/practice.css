@@ -23,3 +23,7 @@ body.practice-open {
 .practice-reveal {
   min-height: 44px;
 }
+
+.practice-controls {
+  padding: 2px 0;
+}
