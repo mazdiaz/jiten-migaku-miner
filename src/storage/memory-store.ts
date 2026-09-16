@@ -6,6 +6,7 @@ import type {
   DatasetMetadata,
   DatasetStore,
   KnownWordStore,
+  KnownWordsSaveReceipt,
   PreferencesStore,
   RestoreUserStateSnapshot,
   WordDecisionStore,
@@ -181,8 +182,10 @@ class MemoryDatasetStore implements DatasetStore {
 class MemoryKnownWordStore implements KnownWordStore {
   private active: StoredKnownWords | null = null;
 
-  async save(id: string, name: string, words: Iterable<string>): Promise<void> {
-    this.active = { id, name, words: new Set(words) };
+  async save(id: string, name: string, words: Iterable<string>): Promise<KnownWordsSaveReceipt> {
+    const uniqueWords = new Set(words);
+    this.active = { id, name, words: uniqueWords };
+    return { id, name, wordCount: uniqueWords.size };
   }
 
   async getActive(): Promise<{

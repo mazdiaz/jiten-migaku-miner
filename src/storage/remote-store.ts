@@ -1,7 +1,7 @@
 import type { AnkiSyncConfig, AnkiSyncSnapshot } from "../domain/anki";
 import type { Entry, WordDecision } from "../domain/types";
 import type { SessionQueueSnapshot } from "../platform/session-queue";
-import type { AppStore, DatasetMetadata, RestoreUserStateSnapshot } from "./contracts";
+import type { AppStore, DatasetMetadata, KnownWordsSaveReceipt, RestoreUserStateSnapshot } from "./contracts";
 
 type Preferences = NonNullable<Awaited<ReturnType<AppStore["preferences"]["load"]>>>;
 type KnownWords = { id: string; name: string; words: string[] };
@@ -194,7 +194,7 @@ export function createRemoteAppStore(
   async function mutate(operation: string, fields: Record<string, unknown> = {}) {
     await request(operation, fields);
   }
-  async function upload(target: string, value: unknown) {
+  async function upload<T = void>(target: string, value: unknown): Promise<T> {
     const text = JSON.stringify(value);
     if (new TextEncoder().encode(text).length > MAX_BACKUP_BYTES)
       throw new RemoteStoreError(
@@ -208,7 +208,7 @@ export function createRemoteAppStore(
     for (const chunk of chunks) {
       await mutate("state.chunk", { uploadId, index: chunkCount++, text: chunk });
     }
-    await mutate("state.finish", { uploadId, chunkCount });
+    return request<T>("state.finish", { uploadId, chunkCount });
   }
   function savedMutation(operation: string, fields: Record<string, unknown>) {
     const captured = structuredClone(fields);
@@ -367,7 +367,7 @@ export function createRemoteAppStore(
     knownWords: {
       save: (id, name, words) => {
         const value = { id, name, words: [...new Set(words)] };
-        return run(() => upload("knownWords", value));
+        return run(() => upload<KnownWordsSaveReceipt>("knownWords", value));
       },
       getActive: () =>
         run(async () => {

@@ -176,7 +176,7 @@ function setup(): Harness {
         },
         knownWords: {
           getActive: async () => null,
-          save: async () => {},
+          save: async (id, name, words) => ({ id, name, wordCount: [...words].length }),
           remove: async () => {},
         },
         wordDecisions: {

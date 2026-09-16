@@ -138,7 +138,11 @@ describe("ReviewSession state replacement", () => {
             remove: async () => {},
             readChunks: async function* () {},
           },
-          knownWords: { getActive: async () => null, save: async () => {}, remove: async () => {} },
+          knownWords: {
+            getActive: async () => null,
+            save: async (id, name, words) => ({ id, name, wordCount: [...words].length }),
+            remove: async () => {},
+          },
           wordDecisions: {
             get: async () => null,
             list: async () => [],
