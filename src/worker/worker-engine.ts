@@ -178,6 +178,7 @@ function windowCacheSignature(
 export class WorkerEngine {
   private readonly datasets = new Map<string, DatasetState>();
   private readonly staging = new Map<string, DatasetState>();
+  private readonly provisionalDatasets = new Map<string, DatasetState>();
   private readonly loadRequests = new Map<string, string>();
   private readonly activeOperations = new Set<string>();
   private readonly cancelledRequests = new Set<string>();
@@ -194,12 +195,33 @@ export class WorkerEngine {
     name: string,
     text: string,
     send: SendResponse,
+    datasetId?: string,
   ): Promise<void> {
     this.ensureUsable();
     this.activeOperations.add(requestId);
+    if (datasetId !== undefined && datasetId.length > 0) {
+      this.provisionalDatasets.delete(datasetId);
+    }
     try {
       if (this.isCancelled(requestId)) return;
       const parsed = parseJitenCsv(text);
+      if (datasetId !== undefined && datasetId.length > 0) {
+        const searchFields = parsed.entries.map((entry) => cacheSearchFields(entry));
+        const sortIndexes = {
+          "occ-desc": sortedIndexes(parsed.entries, "occ-desc"),
+          "occ-asc": sortedIndexes(parsed.entries, "occ-asc"),
+          original: sortedIndexes(parsed.entries, "original"),
+        };
+        this.provisionalDatasets.set(datasetId, {
+          loadRequestId: requestId,
+          entries: parsed.entries,
+          searchFields,
+          sortIndexes,
+          nextChunkIndex: 0,
+          complete: true,
+        });
+      }
+
       const completed = await this.emitChunks(requestId, parsed.entries, (chunkIndex, entries) => {
         const response: WorkerResponse = {
           protocolVersion: WORKER_PROTOCOL_VERSION,
@@ -212,7 +234,10 @@ export class WorkerEngine {
         };
         send(response);
       });
-      if (!completed || this.isCancelled(requestId)) return;
+      if (!completed || this.isCancelled(requestId)) {
+        if (datasetId !== undefined) this.provisionalDatasets.delete(datasetId);
+        return;
+      }
 
       send({
         protocolVersion: WORKER_PROTOCOL_VERSION,
@@ -224,6 +249,9 @@ export class WorkerEngine {
         entryCount: parsed.entries.length,
         skippedRows: parsed.skippedRows,
       });
+    } catch (error) {
+      if (datasetId !== undefined) this.provisionalDatasets.delete(datasetId);
+      throw error;
     } finally {
       this.activeOperations.delete(requestId);
       this.cancelledRequests.delete(requestId);
@@ -342,6 +370,41 @@ export class WorkerEngine {
     this.windowCache = null;
     this.datasetGeneration += 1;
     this.evictStaleDatasets();
+  }
+
+  commitImportedDataset(datasetId: string): void {
+    this.ensureUsable();
+    const dataset = this.provisionalDatasets.get(datasetId);
+    if (dataset === undefined) {
+      throw new WorkerEngineError(
+        "dataset-not-found",
+        `Provisional dataset not found: ${datasetId}`,
+      );
+    }
+    this.provisionalDatasets.delete(datasetId);
+    this.datasets.delete(datasetId);
+    this.datasets.set(datasetId, dataset);
+    this.activeDatasetId = datasetId;
+    this.windowCache = null;
+    this.datasetGeneration += 1;
+    this.evictStaleDatasets();
+  }
+
+  discardImportedDataset(datasetId: string): void {
+    this.ensureUsable();
+    this.provisionalDatasets.delete(datasetId);
+    if (this.datasets.has(datasetId)) {
+      this.datasets.delete(datasetId);
+      if (this.activeDatasetId === datasetId) {
+        this.activeDatasetId = null;
+      }
+      this.windowCache = null;
+      this.datasetGeneration += 1;
+    }
+  }
+
+  getActiveDatasetId(): string | null {
+    return this.activeDatasetId;
   }
 
   getDatasetEntryCount(datasetId: string): number {
@@ -724,6 +787,11 @@ export class WorkerEngine {
       this.cancelledRequests.delete(requestId);
       return;
     }
+    for (const [provisionalId, state] of this.provisionalDatasets) {
+      if (state.loadRequestId === requestId) {
+        this.provisionalDatasets.delete(provisionalId);
+      }
+    }
     if (!this.activeOperations.has(requestId)) return;
     this.cancelledRequests.add(requestId);
   }
@@ -736,6 +804,7 @@ export class WorkerEngine {
     this.loadRequests.clear();
     this.datasets.clear();
     this.staging.clear();
+    this.provisionalDatasets.clear();
     this.activeDatasetId = null;
     this.windowCache = null;
   }

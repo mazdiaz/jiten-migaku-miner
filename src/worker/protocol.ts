@@ -17,34 +17,47 @@ import type {
  * materially - the schema now covers word decisions, queue include lists,
  * and coverage request/response beyond the original import/query surface.
  */
-export const WORKER_PROTOCOL_VERSION = 3 as const;
+export const WORKER_PROTOCOL_VERSION = 4 as const;
 export const WORKER_IMPORT_CHUNK_SIZE = 2_000 as const;
 
 const DECISION_STATUSES: readonly WordDecisionStatus[] = ["known", "mined", "skip", "later"];
 
 export type WorkerRequest =
   | {
-      protocolVersion: 3;
+      protocolVersion: 4;
       type: "import-jiten";
       requestId: string;
       name: string;
       text: string;
+      datasetId?: string;
     }
   | {
-      protocolVersion: 3;
+      protocolVersion: 4;
+      type: "commit-imported-dataset";
+      requestId: string;
+      datasetId: string;
+    }
+  | {
+      protocolVersion: 4;
+      type: "discard-imported-dataset";
+      requestId: string;
+      datasetId: string;
+    }
+  | {
+      protocolVersion: 4;
       type: "import-known";
       requestId: string;
       name: string;
       text: string;
     }
   | {
-      protocolVersion: 3;
+      protocolVersion: 4;
       type: "load-start";
       requestId: string;
       datasetId: string;
     }
   | {
-      protocolVersion: 3;
+      protocolVersion: 4;
       type: "load-chunk";
       requestId: string;
       datasetId: string;
@@ -52,13 +65,13 @@ export type WorkerRequest =
       entries: Entry[];
     }
   | {
-      protocolVersion: 3;
+      protocolVersion: 4;
       type: "load-complete";
       requestId: string;
       datasetId: string;
     }
   | {
-      protocolVersion: 3;
+      protocolVersion: 4;
       type: "query";
       requestId: string;
       datasetId: string;
@@ -70,7 +83,7 @@ export type WorkerRequest =
       window?: QueryWindow;
     }
   | {
-      protocolVersion: 3;
+      protocolVersion: 4;
       type: "coverage";
       requestId: string;
       datasetId: string;
@@ -80,11 +93,11 @@ export type WorkerRequest =
       targets?: number[];
     }
   | AnkiPreviewMatchRequest
-  | { protocolVersion: 3; type: "cancel"; requestId: string }
-  | { protocolVersion: 3; type: "dispose"; requestId: string };
+  | { protocolVersion: 4; type: "cancel"; requestId: string }
+  | { protocolVersion: 4; type: "dispose"; requestId: string };
 
 export type AnkiPreviewMatchRequest = {
-  protocolVersion: 3;
+  protocolVersion: 4;
   type: "anki-preview-match";
   requestId: string;
   datasetId: string;
@@ -98,7 +111,7 @@ export type CoverageRequest = Extract<WorkerRequest, { type: "coverage" }>;
 
 export type ImportChunkResponse =
   | {
-      protocolVersion: 3;
+      protocolVersion: 4;
       type: "import-chunk";
       requestId: string;
       kind: "jiten";
@@ -107,7 +120,7 @@ export type ImportChunkResponse =
       entries: Entry[];
     }
   | {
-      protocolVersion: 3;
+      protocolVersion: 4;
       type: "import-chunk";
       requestId: string;
       kind: "known";
@@ -118,7 +131,7 @@ export type ImportChunkResponse =
 
 export type ImportCompleteResponse =
   | {
-      protocolVersion: 3;
+      protocolVersion: 4;
       type: "import-complete";
       requestId: string;
       kind: "jiten";
@@ -128,7 +141,7 @@ export type ImportCompleteResponse =
       skippedRows: number;
     }
   | {
-      protocolVersion: 3;
+      protocolVersion: 4;
       type: "import-complete";
       requestId: string;
       kind: "known";
@@ -137,15 +150,30 @@ export type ImportCompleteResponse =
     };
 
 export type LoadCompleteResponse = {
-  protocolVersion: 3;
+  protocolVersion: 4;
   type: "load-complete";
   requestId: string;
   datasetId: string;
   entryCount: number;
 };
 
+export type CommitImportedDatasetResponse = {
+  protocolVersion: 4;
+  type: "commit-imported-dataset-complete";
+  requestId: string;
+  datasetId: string;
+  entryCount: number;
+};
+
+export type DiscardImportedDatasetResponse = {
+  protocolVersion: 4;
+  type: "discard-imported-dataset-complete";
+  requestId: string;
+  datasetId: string;
+};
+
 export type AnkiPreviewMatchResponse = {
-  protocolVersion: 3;
+  protocolVersion: 4;
   type: "anki-preview-result";
   requestId: string;
   datasetId: string;
@@ -156,23 +184,25 @@ export type WorkerResponse =
   | ImportChunkResponse
   | ImportCompleteResponse
   | LoadCompleteResponse
+  | CommitImportedDatasetResponse
+  | DiscardImportedDatasetResponse
   | AnkiPreviewMatchResponse
   | {
-      protocolVersion: 3;
+      protocolVersion: 4;
       type: "query-result";
       requestId: string;
       datasetId: string;
       result: QueryResult;
     }
   | {
-      protocolVersion: 3;
+      protocolVersion: 4;
       type: "coverage-result";
       requestId: string;
       datasetId: string;
       result: CoverageStats;
     }
   | {
-      protocolVersion: 3;
+      protocolVersion: 4;
       type: "error";
       requestId: string;
       code: string;
@@ -431,6 +461,8 @@ export function parseWorkerRequest(value: unknown): WorkerRequest {
     type !== "load-start" &&
     type !== "load-chunk" &&
     type !== "load-complete" &&
+    type !== "commit-imported-dataset" &&
+    type !== "discard-imported-dataset" &&
     type !== "query" &&
     type !== "coverage" &&
     type !== "anki-preview-match" &&
@@ -444,13 +476,36 @@ export function parseWorkerRequest(value: unknown): WorkerRequest {
   }
   const requestId = requiredString(value, "requestId");
 
-  if (type === "import-jiten" || type === "import-known") {
+  if (type === "import-jiten") {
+    const request: Extract<WorkerRequest, { type: "import-jiten" }> = {
+      protocolVersion: WORKER_PROTOCOL_VERSION,
+      type,
+      requestId,
+      name: requiredString(value, "name"),
+      text: stringValue(value, "text"),
+    };
+    if (typeof value.datasetId === "string" && value.datasetId.length > 0) {
+      request.datasetId = value.datasetId;
+    }
+    return request;
+  }
+
+  if (type === "import-known") {
     return {
       protocolVersion: WORKER_PROTOCOL_VERSION,
       type,
       requestId,
       name: requiredString(value, "name"),
       text: stringValue(value, "text"),
+    };
+  }
+
+  if (type === "commit-imported-dataset" || type === "discard-imported-dataset") {
+    return {
+      protocolVersion: WORKER_PROTOCOL_VERSION,
+      type,
+      requestId,
+      datasetId: requiredString(value, "datasetId"),
     };
   }
 

@@ -11,7 +11,7 @@ import {
 import { WorkerEngine } from "../../src/worker/worker-engine";
 
 const validQueryRequest: WorkerRequest = {
-  protocolVersion: 3,
+  protocolVersion: 4,
   type: "query",
   requestId: "query-1",
   datasetId: "dataset-1",
@@ -60,7 +60,7 @@ describe("worker protocol", () => {
 
   it("accepts valid Anki tuples in query and preview requests", () => {
     const request = parseWorkerRequest({
-      protocolVersion: 3,
+      protocolVersion: 4,
       type: "anki-preview-match",
       requestId: "preview-1",
       datasetId: "dataset-1",
@@ -72,7 +72,7 @@ describe("worker protocol", () => {
 
     const query = parseWorkerRequest({
       ...validQueryRequest,
-      protocolVersion: 3,
+      protocolVersion: 4,
       ankiStatuses: [["word", "mined"]],
     });
     expect(query.type).toBe("query");
@@ -83,7 +83,7 @@ describe("worker protocol", () => {
     (ankiStatuses) => {
       expect(() =>
         parseWorkerRequest({
-          protocolVersion: 3,
+          protocolVersion: 4,
           type: "anki-preview-match",
           requestId: "preview-1",
           datasetId: "dataset-1",
@@ -98,7 +98,7 @@ describe("worker protocol", () => {
   it("rejects whitespace-only Anki tuple keys", () => {
     expect(() =>
       parseWorkerRequest({
-        protocolVersion: 3,
+        protocolVersion: 4,
         type: "anki-preview-match",
         requestId: "preview-1",
         datasetId: "dataset-1",
@@ -244,7 +244,7 @@ describe("worker protocol", () => {
       message: "bad source",
     });
     expect(createErrorResponse("request-7", error)).toEqual({
-      protocolVersion: 3,
+      protocolVersion: 4,
       type: "error",
       requestId: "request-7",
       code: "source-failed",
@@ -257,7 +257,7 @@ describe("worker protocol", () => {
 
     await dispatchWorkerRequest(
       {
-        protocolVersion: 3,
+        protocolVersion: 4,
         type: "load-complete",
         requestId: "load-7",
         datasetId: "missing",
@@ -268,7 +268,7 @@ describe("worker protocol", () => {
 
     expect(responses).toEqual([
       {
-        protocolVersion: 3,
+        protocolVersion: 4,
         type: "error",
         requestId: "load-7",
         code: "dataset-not-ready",
@@ -294,7 +294,7 @@ describe("worker protocol", () => {
 
     await dispatchWorkerRequest(
       {
-        protocolVersion: 3,
+        protocolVersion: 4,
         type: "load-start",
         requestId: "load-1",
         datasetId: "dataset-1",
@@ -304,7 +304,7 @@ describe("worker protocol", () => {
     );
     await dispatchWorkerRequest(
       {
-        protocolVersion: 3,
+        protocolVersion: 4,
         type: "load-chunk",
         requestId: "load-1",
         datasetId: "dataset-1",
@@ -316,7 +316,7 @@ describe("worker protocol", () => {
     );
     await dispatchWorkerRequest(
       {
-        protocolVersion: 3,
+        protocolVersion: 4,
         type: "load-complete",
         requestId: "load-1",
         datasetId: "dataset-1",
@@ -327,7 +327,7 @@ describe("worker protocol", () => {
 
     expect(responses).toEqual([
       {
-        protocolVersion: 3,
+        protocolVersion: 4,
         type: "load-complete",
         requestId: "load-1",
         datasetId: "dataset-1",
@@ -342,7 +342,7 @@ describe("worker protocol", () => {
 
     await dispatchWorkerRequest(
       {
-        protocolVersion: 3,
+        protocolVersion: 4,
         type: "load-start",
         requestId: "load-1",
         datasetId: "dataset-1",
@@ -352,7 +352,7 @@ describe("worker protocol", () => {
     );
     await dispatchWorkerRequest(
       {
-        protocolVersion: 3,
+        protocolVersion: 4,
         type: "load-chunk",
         requestId: "load-1",
         datasetId: "dataset-1",
@@ -363,13 +363,13 @@ describe("worker protocol", () => {
       (response) => responses.push(response),
     );
     await dispatchWorkerRequest(
-      { protocolVersion: 3, type: "cancel", requestId: "load-1" },
+      { protocolVersion: 4, type: "cancel", requestId: "load-1" },
       engine,
       (response) => responses.push(response),
     );
     await dispatchWorkerRequest(
       {
-        protocolVersion: 3,
+        protocolVersion: 4,
         type: "load-complete",
         requestId: "load-1",
         datasetId: "dataset-1",
@@ -380,7 +380,7 @@ describe("worker protocol", () => {
 
     expect(responses).toEqual([
       {
-        protocolVersion: 3,
+        protocolVersion: 4,
         type: "error",
         requestId: "load-1",
         code: "dataset-not-ready",
@@ -404,7 +404,7 @@ describe("worker protocol", () => {
 
     await dispatchWorkerRequest(
       {
-        protocolVersion: 3,
+        protocolVersion: 4,
         type: "load-start",
         requestId: "load-2",
         datasetId: "dataset-2",
@@ -414,7 +414,7 @@ describe("worker protocol", () => {
     );
     await dispatchWorkerRequest(
       {
-        protocolVersion: 3,
+        protocolVersion: 4,
         type: "load-chunk",
         requestId: "load-2",
         datasetId: "dataset-2",
@@ -426,7 +426,7 @@ describe("worker protocol", () => {
     );
     await dispatchWorkerRequest(
       {
-        protocolVersion: 3,
+        protocolVersion: 4,
         type: "load-complete",
         requestId: "load-2",
         datasetId: "dataset-2",
@@ -437,19 +437,78 @@ describe("worker protocol", () => {
 
     expect(responses).toEqual([
       {
-        protocolVersion: 3,
+        protocolVersion: 4,
         type: "error",
         requestId: "load-2",
         code: "invalid-chunk",
         message: "Unexpected dataset chunk index: 1",
       },
       {
-        protocolVersion: 3,
+        protocolVersion: 4,
         type: "error",
         requestId: "load-2",
         code: "dataset-not-ready",
         message: "Dataset has not been started: dataset-2",
       },
     ]);
+  });
+
+  it("parses and dispatches commit-imported-dataset and discard-imported-dataset requests", async () => {
+    const engine = new WorkerEngine();
+    const responses: WorkerResponse[] = [];
+
+    // Parse import-jiten with datasetId
+    const importReq = parseWorkerRequest({
+      protocolVersion: 4,
+      type: "import-jiten",
+      requestId: "import-1",
+      name: "jiten.csv",
+      text: "Word,Occurences,ExampleSentence,Definitions,ReadingFurigana\n猫,1,,,",
+      datasetId: "ds-1",
+    });
+    expect(importReq).toMatchObject({
+      type: "import-jiten",
+      datasetId: "ds-1",
+    });
+
+    await dispatchWorkerRequest(importReq, engine, (res) => responses.push(res));
+
+    // Dispatch commit-imported-dataset
+    const commitReq = parseWorkerRequest({
+      protocolVersion: 4,
+      type: "commit-imported-dataset",
+      requestId: "commit-1",
+      datasetId: "ds-1",
+    });
+    expect(commitReq).toEqual({
+      protocolVersion: 4,
+      type: "commit-imported-dataset",
+      requestId: "commit-1",
+      datasetId: "ds-1",
+    });
+
+    await dispatchWorkerRequest(commitReq, engine, (res) => responses.push(res));
+    expect(responses.at(-1)).toEqual({
+      protocolVersion: 4,
+      type: "commit-imported-dataset-complete",
+      requestId: "commit-1",
+      datasetId: "ds-1",
+      entryCount: 1,
+    });
+
+    // Dispatch discard-imported-dataset
+    const discardReq = parseWorkerRequest({
+      protocolVersion: 4,
+      type: "discard-imported-dataset",
+      requestId: "discard-1",
+      datasetId: "ds-1",
+    });
+    await dispatchWorkerRequest(discardReq, engine, (res) => responses.push(res));
+    expect(responses.at(-1)).toEqual({
+      protocolVersion: 4,
+      type: "discard-imported-dataset-complete",
+      requestId: "discard-1",
+      datasetId: "ds-1",
+    });
   });
 });

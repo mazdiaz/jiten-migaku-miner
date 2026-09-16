@@ -50,7 +50,7 @@ class DeferredWorker implements WorkerClient {
 
   async importJiten(name: string) {
     return {
-      protocolVersion: 3 as const,
+      protocolVersion: 4 as const,
       type: "import-complete" as const,
       requestId: "jiten",
       kind: "jiten" as const,
@@ -63,7 +63,7 @@ class DeferredWorker implements WorkerClient {
 
   async importKnown(name: string) {
     return {
-      protocolVersion: 3 as const,
+      protocolVersion: 4 as const,
       type: "import-complete" as const,
       requestId: "known",
       kind: "known" as const,
@@ -73,6 +73,10 @@ class DeferredWorker implements WorkerClient {
   }
 
   async loadDataset(_datasetId: string, _chunks: AsyncIterable<readonly Entry[]>): Promise<void> {}
+
+  async commitImportedDataset(_datasetId: string): Promise<void> {}
+
+  async discardImportedDataset(_datasetId: string): Promise<void> {}
 
   query(_request: WorkerQueryInput): Promise<QueryResult> {
     return new Promise((resolve) => {

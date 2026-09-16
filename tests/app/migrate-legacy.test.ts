@@ -73,7 +73,7 @@ class FakeWorkerClient implements WorkerClient {
     onChunk?: (chunk: Extract<ImportChunkResponse, { kind: "jiten" }>) => void,
   ): Promise<Extract<ImportCompleteResponse, { kind: "jiten" }>> {
     onChunk?.({
-      protocolVersion: 3,
+      protocolVersion: 4,
       type: "import-chunk",
       requestId: "legacy-jiten",
       kind: "jiten",
@@ -82,7 +82,7 @@ class FakeWorkerClient implements WorkerClient {
       entries: [oldEntry],
     });
     return {
-      protocolVersion: 3,
+      protocolVersion: 4,
       type: "import-complete",
       requestId: "legacy-jiten",
       kind: "jiten",
@@ -99,7 +99,7 @@ class FakeWorkerClient implements WorkerClient {
     onChunk?: (chunk: Extract<ImportChunkResponse, { kind: "known" }>) => void,
   ): Promise<Extract<ImportCompleteResponse, { kind: "known" }>> {
     onChunk?.({
-      protocolVersion: 3,
+      protocolVersion: 4,
       type: "import-chunk",
       requestId: "legacy-known",
       kind: "known",
@@ -108,7 +108,7 @@ class FakeWorkerClient implements WorkerClient {
       words: ["猫"],
     });
     return {
-      protocolVersion: 3,
+      protocolVersion: 4,
       type: "import-complete",
       requestId: "legacy-known",
       kind: "known",
@@ -118,6 +118,8 @@ class FakeWorkerClient implements WorkerClient {
   }
 
   async loadDataset(_datasetId: string, _chunks: AsyncIterable<readonly Entry[]>): Promise<void> {}
+  async commitImportedDataset(_datasetId: string): Promise<void> {}
+  async discardImportedDataset(_datasetId: string): Promise<void> {}
   async query(_request: QueryRequest): Promise<never> {
     throw new Error("not used");
   }

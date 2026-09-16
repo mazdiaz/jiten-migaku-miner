@@ -72,6 +72,7 @@ export interface WorkerClient {
     name: string,
     text: string,
     onChunk?: (chunk: JitenImportChunk) => void,
+    datasetId?: string,
   ): Promise<JitenImportComplete>;
   importKnown(
     name: string,
@@ -79,6 +80,8 @@ export interface WorkerClient {
     onChunk?: (chunk: KnownImportChunk) => void,
   ): Promise<KnownImportComplete>;
   loadDataset(datasetId: string, chunks: AsyncIterable<readonly Entry[]>): Promise<void>;
+  commitImportedDataset(datasetId: string): Promise<void>;
+  discardImportedDataset(datasetId: string): Promise<void>;
   query(input: WorkerQueryInput): Promise<QueryResult>;
   coverage(input: WorkerCoverageInput): Promise<CoverageStats>;
   previewAnkiMatch(input: WorkerAnkiPreviewInput): Promise<AnkiPreviewMatchStats>;
@@ -99,6 +102,8 @@ type OperationKind =
   | "import-jiten"
   | "import-known"
   | "load"
+  | "commit-imported-dataset"
+  | "discard-imported-dataset"
   | "query"
   | "coverage"
   | "anki-preview";
@@ -134,6 +139,8 @@ function isWorkerResponse(value: unknown): value is WorkerResponse {
     value.type === "import-chunk" ||
     value.type === "import-complete" ||
     value.type === "load-complete" ||
+    value.type === "commit-imported-dataset-complete" ||
+    value.type === "discard-imported-dataset-complete" ||
     value.type === "query-result" ||
     value.type === "coverage-result" ||
     value.type === "anki-preview-result" ||
@@ -250,6 +257,20 @@ class BrowserWorkerClient implements WorkerClient {
       return;
     }
 
+    if (response.type === "commit-imported-dataset-complete") {
+      if (pending.kind !== "commit-imported-dataset") return;
+      this.removePending(response.requestId);
+      pending.resolve(undefined);
+      return;
+    }
+
+    if (response.type === "discard-imported-dataset-complete") {
+      if (pending.kind !== "discard-imported-dataset") return;
+      this.removePending(response.requestId);
+      pending.resolve(undefined);
+      return;
+    }
+
     if (response.type === "import-chunk") {
       if (
         (pending.kind === "import-jiten" && response.kind !== "jiten") ||
@@ -341,6 +362,7 @@ class BrowserWorkerClient implements WorkerClient {
     name: string,
     text: string,
     onChunk?: (chunk: JitenImportChunk) => void,
+    datasetId?: string,
   ): Promise<JitenImportComplete> {
     const requestId = this.requestId("import");
     const result = this.register<JitenImportComplete>(
@@ -359,6 +381,51 @@ class BrowserWorkerClient implements WorkerClient {
         requestId,
         name,
         text,
+        ...(datasetId === undefined ? {} : { datasetId }),
+      });
+    } catch (error) {
+      this.rejectPending(requestId, error);
+    }
+    return result;
+  }
+
+  async commitImportedDataset(datasetId: string): Promise<void> {
+    const requestId = this.requestId("commit-imported-dataset");
+    const result = this.register<undefined>(
+      requestId,
+      "commit-imported-dataset",
+      undefined,
+      0,
+      datasetId,
+    );
+    try {
+      this.post({
+        protocolVersion: WORKER_PROTOCOL_VERSION,
+        type: "commit-imported-dataset",
+        requestId,
+        datasetId,
+      });
+    } catch (error) {
+      this.rejectPending(requestId, error);
+    }
+    return result;
+  }
+
+  async discardImportedDataset(datasetId: string): Promise<void> {
+    const requestId = this.requestId("discard-imported-dataset");
+    const result = this.register<undefined>(
+      requestId,
+      "discard-imported-dataset",
+      undefined,
+      0,
+      datasetId,
+    );
+    try {
+      this.post({
+        protocolVersion: WORKER_PROTOCOL_VERSION,
+        type: "discard-imported-dataset",
+        requestId,
+        datasetId,
       });
     } catch (error) {
       this.rejectPending(requestId, error);

@@ -36,7 +36,7 @@ function queryState(overrides: Partial<QueryState> = {}): QueryState {
 
 function queryRequest(overrides: Partial<QueryRequest> = {}): QueryRequest {
   return {
-    protocolVersion: 3,
+    protocolVersion: 4,
     type: "query",
     requestId: "query-1",
     datasetId: "dataset-1",
@@ -92,7 +92,7 @@ describe("WorkerEngine", () => {
     );
     expect(chunks).toHaveLength(2);
     expect(chunks[0]).toMatchObject({
-      protocolVersion: 3,
+      protocolVersion: 4,
       requestId: "import-1",
       type: "import-chunk",
       kind: "jiten",
@@ -103,7 +103,7 @@ describe("WorkerEngine", () => {
     expect(chunks[0]?.entries[0]?.id).toBe("entry-0");
     expect(chunks[1]?.entries[0]?.id).toBe("entry-2000");
     expect(responses.at(-1)).toMatchObject({
-      protocolVersion: 3,
+      protocolVersion: 4,
       type: "import-complete",
       requestId: "import-1",
       kind: "jiten",
@@ -159,7 +159,7 @@ describe("WorkerEngine", () => {
         : [],
     ).toEqual(["entry-2", "entry-3"]);
     expect(pageResponses[0]).toMatchObject({
-      protocolVersion: 3,
+      protocolVersion: 4,
       requestId: "page-1",
       type: "query-result",
     });
@@ -179,7 +179,7 @@ describe("WorkerEngine", () => {
         : [],
     ).toEqual(["entry-2", "entry-3"]);
     expect(windowResponses[0]).toMatchObject({
-      protocolVersion: 3,
+      protocolVersion: 4,
       requestId: "window-1",
       type: "query-result",
       result: { totalEntries: 5, windowed: true },
@@ -566,7 +566,7 @@ describe("WorkerEngine", () => {
     const responses: WorkerResponse[] = [];
     await engine.query(
       {
-        protocolVersion: 3,
+        protocolVersion: 4,
         type: "query",
         requestId: "query-1",
         datasetId: "dataset-1",
@@ -636,7 +636,7 @@ describe("WorkerEngine", () => {
     const responses: WorkerResponse[] = [];
     await engine.previewAnkiMatch(
       {
-        protocolVersion: 3,
+        protocolVersion: 4,
         type: "anki-preview-match",
         requestId: "preview-1",
         datasetId: "dataset-1",
@@ -676,7 +676,7 @@ describe("WorkerEngine", () => {
 
       await engine.previewAnkiMatch(
         {
-          protocolVersion: 3,
+          protocolVersion: 4,
           type: "anki-preview-match",
           requestId: `duplicate-preview-${index}`,
           datasetId: "dataset-1",
@@ -747,7 +747,7 @@ describe("WorkerEngine", () => {
 
     await engine.previewAnkiMatch(
       {
-        protocolVersion: 3,
+        protocolVersion: 4,
         type: "anki-preview-match",
         requestId: "cancel-preview",
         datasetId: "dataset-1",
@@ -771,7 +771,7 @@ describe("WorkerEngine", () => {
     const staleResponses: WorkerResponse[] = [];
     const stalePreview = engine.previewAnkiMatch(
       {
-        protocolVersion: 3,
+        protocolVersion: 4,
         type: "anki-preview-match",
         requestId: "stale-preview",
         datasetId: "dataset-1",
@@ -790,7 +790,7 @@ describe("WorkerEngine", () => {
     const freshResponses: WorkerResponse[] = [];
     await engine.previewAnkiMatch(
       {
-        protocolVersion: 3,
+        protocolVersion: 4,
         type: "anki-preview-match",
         requestId: "fresh-preview",
         datasetId: "dataset-1",
@@ -1102,5 +1102,117 @@ describe("WorkerEngine", () => {
       );
       expect(responses).toHaveLength(1);
     }
+  });
+
+  describe("provisional dataset retention", () => {
+    it("import can prepare a provisional dataset that is not treated as committed active dataset", async () => {
+      const engine = new WorkerEngine();
+      const responses: WorkerResponse[] = [];
+      await engine.importJiten(
+        "import-1",
+        "test.csv",
+        jitenCsv(5),
+        (response: WorkerResponse) => responses.push(response),
+        "dataset-provisional-1",
+      );
+
+      // Verify provisional dataset is not treated as committed active dataset:
+      // Querying it directly must fail with dataset-not-found
+      await expect(
+        engine.query(
+          queryRequest({ requestId: "q-1", datasetId: "dataset-provisional-1" }),
+          () => {},
+        ),
+      ).rejects.toMatchObject({ code: "dataset-not-found" });
+    });
+
+    it("commit makes provisional dataset queryable without loadDataset", async () => {
+      const engine = new WorkerEngine();
+      await engine.importJiten(
+        "import-1",
+        "test.csv",
+        jitenCsv(5),
+        () => {},
+        "dataset-provisional-2",
+      );
+
+      engine.commitImportedDataset("dataset-provisional-2");
+
+      const queryResponses: WorkerResponse[] = [];
+      await engine.query(
+        queryRequest({ requestId: "q-2", datasetId: "dataset-provisional-2" }),
+        (response) => queryResponses.push(response),
+      );
+
+      const result = queryResponses[0]?.type === "query-result" ? queryResponses[0].result : null;
+      expect(result).not.toBeNull();
+      expect(result?.totalEntries).toBe(5);
+    });
+
+    it("discard removes provisional data", async () => {
+      const engine = new WorkerEngine();
+      await engine.importJiten(
+        "import-1",
+        "test.csv",
+        jitenCsv(5),
+        () => {},
+        "dataset-provisional-3",
+      );
+
+      engine.discardImportedDataset("dataset-provisional-3");
+
+      expect(() => engine.commitImportedDataset("dataset-provisional-3")).toThrowError(
+        expect.objectContaining({ code: "dataset-not-found" }),
+      );
+    });
+
+    it("failed or cancelled import discards provisional data", async () => {
+      const engine = new WorkerEngine();
+      await engine.importJiten(
+        "import-cancelled",
+        "test.csv",
+        jitenCsv(2001),
+        (response: WorkerResponse) => {
+          if (response.type === "import-chunk" && response.chunkIndex === 0) {
+            engine.cancel("import-cancelled");
+          }
+        },
+        "dataset-cancelled",
+      );
+
+      expect(() => engine.commitImportedDataset("dataset-cancelled")).toThrowError(
+        expect.objectContaining({ code: "dataset-not-found" }),
+      );
+
+      // Also verify failed import (malformed CSV without required columns) throws and cleans up
+      await expect(
+        engine.importJiten(
+          "import-failed",
+          "bad.csv",
+          "NotAValidHeader\nfoo",
+          () => {},
+          "dataset-failed",
+        ),
+      ).rejects.toThrow();
+
+      expect(() => engine.commitImportedDataset("dataset-failed")).toThrowError(
+        expect.objectContaining({ code: "dataset-not-found" }),
+      );
+    });
+
+    it("saved dataset switching still uses loadDataset", async () => {
+      const engine = new WorkerEngine();
+      const entries = [entry(0, "saved-1"), entry(1, "saved-2")];
+      loadDataset(engine, "dataset-saved", entries);
+
+      const queryResponses: WorkerResponse[] = [];
+      await engine.query(
+        queryRequest({ requestId: "q-saved", datasetId: "dataset-saved" }),
+        (response) => queryResponses.push(response),
+      );
+
+      const result = queryResponses[0]?.type === "query-result" ? queryResponses[0].result : null;
+      expect(result?.totalEntries).toBe(2);
+    });
   });
 });
