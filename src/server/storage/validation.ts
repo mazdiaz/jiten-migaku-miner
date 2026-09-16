@@ -156,6 +156,24 @@ export const operationSchema = z.discriminatedUnion("operation", [
     .strict(),
   z
     .object({
+      operation: z.literal("dataset.chunks"),
+      revision,
+      uploadId,
+      chunks: z
+        .array(
+          z
+            .object({
+              index: integer.max(10000),
+              entries: z.array(entrySchema).min(1).max(2500),
+            })
+            .strict(),
+        )
+        .min(1)
+        .max(20),
+    })
+    .strict(),
+  z
+    .object({
       operation: z.literal("dataset.finish"),
       revision,
       uploadId,

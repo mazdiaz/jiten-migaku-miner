@@ -11,6 +11,7 @@ import {
   decisionSchema,
   knownSchema,
   MAX_CHUNK_BYTES,
+  MAX_ROWS,
   MAX_UPLOAD_BYTES,
   type Operation,
   parseOperation,
@@ -387,6 +388,103 @@ export function createPostgresStore(database: StoreDatabase) {
             await transaction.execute(
               sql`INSERT INTO dataset_chunks(dataset_id, ordinal, entries, row_count, byte_count) VALUES (${dataset.id}, ${operation.index}, ${json(operation.entries)}, ${operation.entries.length}, ${byteCount})`,
             );
+          }
+          break;
+        }
+        case "dataset.chunks": {
+          const dataset = (
+            await rows(
+              transaction,
+              sql`SELECT id, base_revision FROM datasets WHERE upload_id = ${operation.uploadId} AND status = 'staging'`,
+            )
+          )[0];
+          if (!dataset) throw notFound("Dataset upload");
+          if (Number(dataset.base_revision) !== revision) throw conflict();
+
+          for (const chunk of operation.chunks) {
+            const byteCount = bytes(chunk.entries);
+            if (byteCount > MAX_CHUNK_BYTES)
+              throw new StoreError("Dataset chunk exceeds size limit", 413, "PAYLOAD_TOO_LARGE");
+          }
+
+          const existingRows = await rows<{ ordinal: number | string }>(
+            transaction,
+            sql`SELECT ordinal FROM dataset_chunks WHERE dataset_id = ${dataset.id} ORDER BY ordinal ASC`,
+          );
+          const existingOrdinals = new Set(existingRows.map((r) => Number(r.ordinal)));
+
+          const seenIndices = new Set<number>();
+          for (const chunk of operation.chunks) {
+            if (seenIndices.has(chunk.index)) {
+              throw new StoreError("Duplicate chunk ordinal in request", 400, "BAD_REQUEST");
+            }
+            seenIndices.add(chunk.index);
+          }
+
+          const sortedChunks = [...operation.chunks].sort((a, b) => a.index - b.index);
+          const retryChunks: typeof operation.chunks = [];
+          const newChunks: typeof operation.chunks = [];
+
+          for (const chunk of sortedChunks) {
+            if (existingOrdinals.has(chunk.index)) {
+              retryChunks.push(chunk);
+            } else {
+              newChunks.push(chunk);
+            }
+          }
+
+          for (const chunk of retryChunks) {
+            const match = (
+              await rows(
+                transaction,
+                sql`SELECT entries = ${json(chunk.entries)} AS equal FROM dataset_chunks WHERE dataset_id = ${dataset.id} AND ordinal = ${chunk.index}`,
+              )
+            )[0];
+            if (!match?.equal)
+              throw new StoreError("Chunk retry contains different data", 409, "CHUNK_CONFLICT");
+          }
+
+          let expectedOrdinal = existingRows.length;
+          for (const chunk of newChunks) {
+            if (chunk.index !== expectedOrdinal) {
+              throw new StoreError(
+                `Non-contiguous chunk ordinal: expected ${expectedOrdinal}, got ${chunk.index}`,
+                400,
+                "BAD_REQUEST",
+              );
+            }
+            expectedOrdinal++;
+          }
+
+          if (newChunks.length > 0) {
+            const totals = (
+              await rows(
+                transaction,
+                sql`SELECT COALESCE(sum(byte_count),0) AS bytes, COALESCE(sum(row_count),0) AS rows FROM dataset_chunks WHERE dataset_id = ${dataset.id}`,
+              )
+            )[0]!;
+            let newBytes = 0;
+            let newRows = 0;
+            for (const chunk of newChunks) {
+              newBytes += bytes(chunk.entries);
+              newRows += chunk.entries.length;
+            }
+            if (
+              Number(totals.bytes) + newBytes > MAX_UPLOAD_BYTES ||
+              Number(totals.rows) + newRows > MAX_ROWS
+            ) {
+              throw new StoreError(
+                "Dataset upload exceeds total size or row limit",
+                413,
+                "PAYLOAD_TOO_LARGE",
+              );
+            }
+            for (const chunk of newChunks) {
+              const chunkBytes = bytes(chunk.entries);
+              await transaction.execute(
+                sql`INSERT INTO dataset_chunks(dataset_id, ordinal, entries, row_count, byte_count) VALUES (${dataset.id}, ${chunk.index}, ${json(chunk.entries)}, ${chunk.entries.length}, ${chunkBytes})`,
+              );
+            }
           }
           break;
         }

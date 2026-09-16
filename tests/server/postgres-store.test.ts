@@ -359,4 +359,192 @@ describe("PostgreSQL store over the real HTTP adapter", () => {
       (await dispatch({ operation: "dataset.list", revision: revision + 1, cursor: 0 })).value,
     ).toMatchObject({ items: [metadata()] });
   });
+
+  it("accepts two valid logical chunks in one dataset.chunks request", async () => {
+    const { revision } = await dispatch({ operation: "initialize" });
+    const begin = await dispatch({
+      operation: "dataset.begin",
+      revision,
+      metadata: metadata("batch-test", 2),
+    });
+    const uploadId = (begin.value as { uploadId: string }).uploadId;
+    await dispatch({
+      operation: "dataset.chunks",
+      revision,
+      uploadId,
+      chunks: [
+        { index: 0, entries: [entry("1")] },
+        { index: 1, entries: [entry("2")] },
+      ],
+    });
+    const finish = await dispatch({
+      operation: "dataset.finish",
+      revision,
+      uploadId,
+      chunkCount: 2,
+    });
+    const activated = await dispatch({
+      operation: "dataset.activate",
+      revision: finish.revision,
+      datasetId: "batch-test",
+    });
+    const active = await dispatch({ operation: "dataset.active", revision: activated.revision });
+    expect(active.value).toMatchObject({ id: "batch-test" });
+    const read0 = await dispatch({
+      operation: "dataset.read",
+      revision: activated.revision,
+      datasetId: "batch-test",
+      cursor: 0,
+    });
+    const read1 = await dispatch({
+      operation: "dataset.read",
+      revision: activated.revision,
+      datasetId: "batch-test",
+      cursor: 1,
+    });
+    const items = [
+      ...(read0.value as { items: Entry[] }).items,
+      ...(read1.value as { items: Entry[] }).items,
+    ];
+    expect(items.map((i) => i.id)).toEqual(["1", "2"]);
+  });
+
+  it("rejects an individual logical chunk above MAX_CHUNK_BYTES in dataset.chunks", async () => {
+    const { revision } = await dispatch({ operation: "initialize" });
+    const begin = await dispatch({
+      operation: "dataset.begin",
+      revision,
+      metadata: metadata("oversized", 5),
+    });
+    const uploadId = (begin.value as { uploadId: string }).uploadId;
+    const entries: Entry[] = Array.from({ length: 5 }, (_, i) => ({
+      ...entry(String(i + 1)),
+      definitions: "x".repeat(80_500),
+    }));
+    await expect(
+      dispatch({
+        operation: "dataset.chunks",
+        revision,
+        uploadId,
+        chunks: [{ index: 0, entries }],
+      }),
+    ).rejects.toThrow(/limit|size/i);
+  });
+
+  it("rejects non-contiguous new ordinals in dataset.chunks", async () => {
+    const { revision } = await dispatch({ operation: "initialize" });
+    const begin = await dispatch({
+      operation: "dataset.begin",
+      revision,
+      metadata: metadata("gap", 2),
+    });
+    const uploadId = (begin.value as { uploadId: string }).uploadId;
+    await expect(
+      dispatch({
+        operation: "dataset.chunks",
+        revision,
+        uploadId,
+        chunks: [
+          { index: 0, entries: [entry("1")] },
+          { index: 2, entries: [entry("2")] },
+        ],
+      }),
+    ).rejects.toThrow(/ordinal|gap|contiguous/i);
+  });
+
+  it("accepts identical retries and rejects conflicting retries in dataset.chunks without advancing totals", async () => {
+    const { revision } = await dispatch({ operation: "initialize" });
+    const begin = await dispatch({
+      operation: "dataset.begin",
+      revision,
+      metadata: metadata("retry-test", 2),
+    });
+    const uploadId = (begin.value as { uploadId: string }).uploadId;
+    const batchOp = {
+      operation: "dataset.chunks",
+      revision,
+      uploadId,
+      chunks: [
+        { index: 0, entries: [entry("1")] },
+        { index: 1, entries: [entry("2")] },
+      ],
+    };
+    await dispatch(batchOp);
+    await dispatch(batchOp);
+    await expect(
+      dispatch({
+        operation: "dataset.chunks",
+        revision,
+        uploadId,
+        chunks: [
+          { index: 0, entries: [entry("1")] },
+          { index: 1, entries: [{ ...entry("2"), word: "犬" }] },
+        ],
+      }),
+    ).rejects.toThrow(/different|conflict/i);
+
+    const finish = await dispatch({
+      operation: "dataset.finish",
+      revision,
+      uploadId,
+      chunkCount: 2,
+    });
+    const activated = await dispatch({
+      operation: "dataset.activate",
+      revision: finish.revision,
+      datasetId: "retry-test",
+    });
+    const active = await dispatch({ operation: "dataset.active", revision: activated.revision });
+    expect(active.value).toMatchObject({ id: "retry-test" });
+  });
+
+  it("keeps active dataset unchanged on batch failure", async () => {
+    const { revision } = await dispatch({ operation: "initialize" });
+    const beginInitial = await dispatch({
+      operation: "dataset.begin",
+      revision,
+      metadata: metadata("initial", 1),
+    });
+    const initialUploadId = (beginInitial.value as { uploadId: string }).uploadId;
+    await dispatch({
+      operation: "dataset.chunk",
+      revision,
+      uploadId: initialUploadId,
+      index: 0,
+      entries: [entry("1")],
+    });
+    const finish = await dispatch({
+      operation: "dataset.finish",
+      revision,
+      uploadId: initialUploadId,
+      chunkCount: 1,
+    });
+    const activated = await dispatch({
+      operation: "dataset.activate",
+      revision: finish.revision,
+      datasetId: "initial",
+    });
+    const currentRev = activated.revision;
+
+    const beginBad = await dispatch({
+      operation: "dataset.begin",
+      revision: currentRev,
+      metadata: metadata("bad-batch", 2),
+    });
+    const badUploadId = (beginBad.value as { uploadId: string }).uploadId;
+    await expect(
+      dispatch({
+        operation: "dataset.chunks",
+        revision: currentRev,
+        uploadId: badUploadId,
+        chunks: [
+          { index: 0, entries: [entry("1")] },
+          { index: 5, entries: [entry("2")] },
+        ],
+      }),
+    ).rejects.toThrow();
+
+    const active = await dispatch({ operation: "dataset.active", revision: currentRev });
+    expect(active.value).toMatchObject({ id: "initial" });
+  });
 });
