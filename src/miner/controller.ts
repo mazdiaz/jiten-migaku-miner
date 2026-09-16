@@ -178,6 +178,9 @@ class MinerControllerImpl implements MinerController {
       decisionTuples: () => impl.decisionTuples(),
       ankiStatusTuples: () => ankiSyncService.ankiStatusTuples(),
       countChangeSinceExport: () => impl.countChangeSinceExport(),
+      setActiveKnownId: (id) => {
+        impl.activeKnownId = id;
+      },
     };
     this.coverageService = new CoverageService(core);
     this.queueService = new MiningQueueService(core);
@@ -466,10 +469,10 @@ class MinerControllerImpl implements MinerController {
                   words: this.state.knownWords,
                 }
               : await this.storageOperation((store) => store.knownWords.getActive());
-          await this.storageOperation((store) =>
-            store.knownWords.save(knownId, source.name, words),
-          );
           try {
+            await this.storageOperation((store) =>
+              store.knownWords.save(knownId, source.name, words),
+            );
             const activeKnown = await this.storageOperation((store) =>
               store.knownWords.getActive(),
             );
@@ -649,7 +652,11 @@ class MinerControllerImpl implements MinerController {
         this.withUserStateLock(async () => {
           try {
             await this.store.restoreCompleteBackup!(text);
+            this.activeKnownId = null;
             this.decisionService.clearUndo();
+          } catch (error) {
+            this.activeKnownId = null;
+            throw error;
           } finally {
             this.userStateEpoch += 1;
             this.queryGeneration += 1;
@@ -936,23 +943,25 @@ class MinerControllerImpl implements MinerController {
   ): Promise<string | null> {
     const failures: string[] = [];
     if (previous !== null) {
-      this.activeKnownId = previous.id;
       try {
         await this.storageOperation((store) =>
           store.knownWords.save(previous.id, previous.name, previous.words),
         );
+        this.activeKnownId = previous.id;
       } catch (error) {
+        this.activeKnownId = null;
         failures.push(`Known-word rollback failed: ${errorMessage(error)}`);
       }
     } else {
-      this.activeKnownId = null;
       try {
         await this.storageOperation(async (store) => {
           if (store.knownWords.remove === undefined)
             throw new Error("Known-word store cannot remove records");
           await store.knownWords.remove(knownId);
         });
+        this.activeKnownId = null;
       } catch (error) {
+        this.activeKnownId = null;
         failures.push(`Known-word cleanup failed: ${errorMessage(error)}`);
       }
     }

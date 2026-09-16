@@ -177,6 +177,7 @@ describe("ReviewSession state replacement", () => {
       decisionTuples: () => [],
       ankiStatusTuples: () => [],
       countChangeSinceExport: () => {},
+      setActiveKnownId: () => {},
     };
 
     const queue = new MiningQueueService(core);

@@ -129,6 +129,7 @@ export class BackupService {
           return true;
         })
         .catch((error: unknown) => {
+          this.core.setActiveKnownId(null);
           // The atomic transaction aborted; the storage engine rolled
           // everything back, so no app-level rollback writes are needed.
           this.invalidateAndReport(`Backup could not be restored: ${errorMessage(error)}`);
@@ -150,6 +151,7 @@ export class BackupService {
           ankiWritten = true;
           await this.writeRestoredAnkiSync(ankiSync);
         } catch (error) {
+          this.core.setActiveKnownId(null);
           const rollbackWarning = await this.rollbackUserState(snapshot, {
             knownWritten: true,
             decisionsWritten,
@@ -165,7 +167,7 @@ export class BackupService {
         }
       }
 
-      this.applyRestoredState(backup);
+      this.applyRestoredState(backup, backup.knownWords === null ? null : knownId);
       this.ankiSync.restoreFromBackup(ankiSync);
       // Queue contents and review session are transient; restore never injects
       // them, and mining/review mode cannot continue over replaced decisions.
@@ -295,14 +297,16 @@ export class BackupService {
     if (section.snapshot !== null) await store.ankiSync.replaceSnapshot(section.snapshot);
   }
 
-  private applyRestoredState(backup: ParsedMinerBackup): void {
+  private applyRestoredState(backup: ParsedMinerBackup, knownId: string | null): void {
     const state = this.core.state;
     if (backup.knownWords === null) {
       state.knownWords = new Set<string>();
       state.knownWordsName = null;
+      this.core.setActiveKnownId(null);
     } else {
       state.knownWords = new Set(backup.knownWords.words);
       state.knownWordsName = backup.knownWords.name;
+      this.core.setActiveKnownId(knownId);
     }
     state.wordDecisions = new Map(
       backup.wordDecisions.map((decision) => [decision.normalizedWord, { ...decision }]),

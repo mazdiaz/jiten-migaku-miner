@@ -58,6 +58,8 @@ export interface ControllerCore {
   ankiStatusTuples(): Array<[string, AnkiWordStatus]>;
   /** Counted user-state mutation (backup freshness counter). */
   countChangeSinceExport(): void;
+  /** Update the active known-word durable record ID cache or invalidate with null. */
+  setActiveKnownId(id: string | null): void;
 }
 
 export function errorMessage(error: unknown): string {
