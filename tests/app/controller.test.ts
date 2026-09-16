@@ -29,7 +29,7 @@ import type { AnkiConnectPort } from "../../src/platform/anki-connect";
 import { createFileSource } from "../../src/platform/file-source";
 import { createFolderSource } from "../../src/platform/folder-source";
 import { createSessionQueueStore } from "../../src/platform/session-queue";
-import type { AppStore, DatasetMetadata } from "../../src/storage/contracts";
+import type { AppStore, DatasetMetadata, KnownWordsSaveReceipt } from "../../src/storage/contracts";
 import { createMemoryAppStore } from "../../src/storage/memory-store";
 import type { ImportChunkResponse, ImportCompleteResponse } from "../../src/worker/protocol";
 
@@ -912,6 +912,106 @@ describe("MinerController", () => {
     expect(states.at(-1)?.query.search).toBe("最新");
   });
 
+  it("does not re-download active known words after a successful import", async () => {
+    const store = createMemoryAppStore();
+    await seedActive(store);
+    const worker = new FakeWorkerClient();
+    worker.nextKnown = {
+      chunks: [["単語", "語彙"]],
+      complete: {
+        protocolVersion: 3,
+        type: "import-complete",
+        requestId: "known-1",
+        kind: "known",
+        name: "known.txt",
+        wordCount: 2,
+      },
+    };
+    const controller = createMinerController(controllerOptions(store, worker));
+    const states: Readonly<AppState>[] = [];
+    controller.subscribe((state) => states.push(state));
+    await controller.init();
+
+    let saveCalled = false;
+    const originalSave = store.knownWords.save.bind(store.knownWords);
+    store.knownWords.save = async (id, name, words) => {
+      saveCalled = true;
+      return originalSave(id, name, words);
+    };
+    const originalGetActive = store.knownWords.getActive.bind(store.knownWords);
+    store.knownWords.getActive = async () => {
+      if (saveCalled) {
+        throw new Error("Redundant getActive() called after save");
+      }
+      return originalGetActive();
+    };
+
+    await controller.importKnown({
+      name: "known.txt",
+      text: async () => "単語\n語彙",
+    });
+
+    expect(states.at(-1)?.status).toBe("ready");
+    expect(states.at(-1)?.knownWords).toEqual(new Set(["単語", "語彙"]));
+  });
+
+  it.each([
+    {
+      mismatch: "wrong id",
+      patch: (receipt: KnownWordsSaveReceipt) => ({ ...receipt, id: "wrong-id" }),
+    },
+    {
+      mismatch: "wrong name",
+      patch: (receipt: KnownWordsSaveReceipt) => ({ ...receipt, name: "wrong-name.txt" }),
+    },
+    {
+      mismatch: "wrong wordCount",
+      patch: (receipt: KnownWordsSaveReceipt) => ({ ...receipt, wordCount: receipt.wordCount + 10 }),
+    },
+  ])("rolls back known-word import when receipt has $mismatch", async ({ patch }) => {
+    const store = createMemoryAppStore();
+    await store.knownWords.save("old-known", "old.txt", ["古い"]);
+    const worker = new FakeWorkerClient();
+    worker.nextKnown = {
+      chunks: [["新しい"]],
+      complete: {
+        protocolVersion: 3,
+        type: "import-complete",
+        requestId: "known-new",
+        kind: "known",
+        name: "new.txt",
+        wordCount: 1,
+      },
+    };
+    const originalSave = store.knownWords.save.bind(store.knownWords);
+    let saveCount = 0;
+    store.knownWords.save = async (id, name, words) => {
+      const receipt = await originalSave(id, name, words);
+      saveCount++;
+      if (saveCount === 1) {
+        return patch(receipt);
+      }
+      return receipt;
+    };
+
+    const controller = createMinerController(controllerOptions(store, worker));
+    const states: Readonly<AppState>[] = [];
+    controller.subscribe((state) => states.push(state));
+    await controller.init();
+
+    await controller.importKnown({
+      name: "new.txt",
+      text: async () => "新しい\n",
+    });
+
+    expect(states.at(-1)?.status).toBe("error");
+    expect(states.at(-1)?.errorMessage).toContain("verification");
+    expect(states.at(-1)?.knownWords).toEqual(new Set(["古い"]));
+    const active = await store.knownWords.getActive();
+    expect(active?.id).toBe("old-known");
+    expect(active?.words).toEqual(new Set(["古い"]));
+  });
+
   it("restores the previous known-word record when verification fails", async () => {
     const store = createMemoryAppStore();
     await seedActive(store);
@@ -921,7 +1021,8 @@ describe("MinerController", () => {
     store.knownWords.save = async (id, name, words) => {
       if (!corrupted) {
         corrupted = true;
-        return originalSave(id, name, ["別の語"]);
+        const receipt = await originalSave(id, name, ["別の語"]);
+        return { ...receipt, wordCount: 999 };
       }
       return originalSave(id, name, words);
     };
@@ -986,7 +1087,8 @@ describe("MinerController", () => {
     store.knownWords.save = async (id, name, words) => {
       if (!corrupted) {
         corrupted = true;
-        return originalSave(id, name, ["破損"]);
+        const receipt = await originalSave(id, name, ["破損"]);
+        return { ...receipt, wordCount: 999 };
       }
       return originalSave(id, name, words);
     };
@@ -1024,7 +1126,8 @@ describe("MinerController", () => {
     store.knownWords.save = async (id, name, words) => {
       saveCount += 1;
       if (saveCount === 1) {
-        return originalSave(id, name, ["不整合"]);
+        const receipt = await originalSave(id, name, ["不整合"]);
+        return { ...receipt, wordCount: 999 };
       }
       if (saveCount === 2) {
         throw new Error("rollback persistence failed");
@@ -1308,12 +1411,15 @@ describe("MinerController", () => {
     expect((await store.knownWords.getActive())?.words).toEqual(new Set(["古い"]));
   });
 
-  it("rejects known-word imports when saved contents differ despite matching size", async () => {
+  it("rejects known-word imports when saved receipt fails verification", async () => {
     const store = createMemoryAppStore();
     await seedActive(store);
     await store.knownWords.save("old-known", "old.txt", ["古い"]);
     const originalSave = store.knownWords.save.bind(store.knownWords);
-    store.knownWords.save = async (id, name) => originalSave(id, name, ["別の語"]);
+    store.knownWords.save = async (id, name, words) => {
+      const receipt = await originalSave(id, name, words);
+      return { ...receipt, wordCount: receipt.wordCount + 1 };
+    };
     const worker = new FakeWorkerClient();
     worker.nextKnown = {
       chunks: [["新しい"]],

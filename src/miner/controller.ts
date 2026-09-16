@@ -506,22 +506,18 @@ class MinerControllerImpl implements MinerController {
               : await this.storageOperation((store) => store.knownWords.getActive());
           try {
             const uploadStart = this.performanceNow();
-            await this.storageOperation((store) =>
+            const receipt = await this.storageOperation((store) =>
               store.knownWords.save(knownId, source.name, words),
             );
             this.recordStage("known_words_upload", uploadStart);
             const verifyStart = this.performanceNow();
-            const activeKnown = await this.storageOperation((store) =>
-              store.knownWords.getActive(),
-            );
             if (
-              activeKnown === null ||
-              activeKnown.id !== knownId ||
-              activeKnown.words.size !== words.size ||
-              [...words].some((word) => !activeKnown.words.has(word))
+              receipt.id !== knownId ||
+              receipt.name !== source.name ||
+              receipt.wordCount !== words.size
             ) {
               throw new Error(
-                "Known-word import verification failed: saved words differ from the imported set",
+                "Known-word import verification failed: saved receipt differs from the imported set",
               );
             }
             this.recordStage("save_verification", verifyStart);
