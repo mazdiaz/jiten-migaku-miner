@@ -3,7 +3,7 @@ import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { Entry } from "../../src/domain/types";
-import { createPostgresStore } from "../../src/server/store";
+import { createPostgresStore, KNOWN_WORD_INSERT_BATCH_SIZE } from "../../src/server/store";
 import { createRemoteAppStore } from "../../src/storage/remote-store";
 
 const metadata = (id = "one", entryCount = 1) => ({
@@ -283,6 +283,22 @@ describe("PostgreSQL store over the real HTTP adapter", () => {
     expect(chunkRequests.length).toBeLessThan(3);
     expect(chunkRequests.length).toBeGreaterThan(0);
     expect(Math.max(...requestSizes)).toBeLessThan(750_000);
+  }, 60_000);
+
+  it("persists 20,000 known words in 5,000-word insert batches and verifies exact set equality on a fresh client", async () => {
+    expect(KNOWN_WORD_INSERT_BATCH_SIZE).toBe(5_000);
+    const store = remote();
+    await store.initialize();
+    const words = Array.from({ length: 20_000 }, (_, index) => `言葉${index}`);
+    await store.knownWords.save("large-known", "LargeKnown", words);
+
+    // Verify fresh client reads exact set equality
+    const freshStore = remote();
+    const active = await freshStore.knownWords.getActive();
+    expect(active?.id).toBe("large-known");
+    expect(active?.name).toBe("LargeKnown");
+    expect(active?.words.size).toBe(20_000);
+    expect(active?.words).toEqual(new Set(words));
   }, 60_000);
 
   it("rejects complete exports above the UTF-8 restore byte limit", async () => {

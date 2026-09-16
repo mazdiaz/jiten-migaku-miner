@@ -109,17 +109,22 @@ async function saveDatasetChunks(
     await database.execute(sql`INSERT INTO dataset_chunks(dataset_id, ordinal, entries, row_count, byte_count)
     VALUES (${datasetId}, ${index}, ${json(values)}, ${values.length}, ${bytes(values)})`);
 }
+export const KNOWN_WORD_INSERT_BATCH_SIZE = 5_000;
+
 async function replaceKnown(database: StoreDatabase, value: z.infer<typeof knownSchema> | null) {
   await database.execute(sql`DELETE FROM known_words`);
   await database.execute(
     sql`UPDATE app_state SET known_metadata = ${value === null ? sql`NULL` : json({ id: value.id, name: value.name })} WHERE id = 1`,
   );
-  if (value)
-    await batch([...new Set(value.words)], (chunk) =>
-      database.execute(
+  if (value) {
+    const unique = [...new Set(value.words)];
+    for (let index = 0; index < unique.length; index += KNOWN_WORD_INSERT_BATCH_SIZE) {
+      const chunk = unique.slice(index, index + KNOWN_WORD_INSERT_BATCH_SIZE);
+      await database.execute(
         sql`INSERT INTO known_words(word) SELECT value FROM jsonb_array_elements_text(${json(chunk)}) ON CONFLICT DO NOTHING`,
-      ),
-    );
+      );
+    }
+  }
 }
 async function replaceDecisions(database: StoreDatabase, values: z.infer<typeof decisionSchema>[]) {
   assertUnique(
