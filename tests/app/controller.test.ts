@@ -1201,6 +1201,50 @@ describe("MinerController", () => {
     expect(active?.words).toEqual(new Set(["二回目"]));
   });
 
+  it("rolls back to previous known words when save throws before commit", async () => {
+    const store = createMemoryAppStore();
+    await seedActive(store);
+    await store.knownWords.save("initial-known", "initial.txt", ["初"]);
+    const worker = new FakeWorkerClient();
+    worker.nextKnown = {
+      chunks: [["新"]],
+      complete: {
+        protocolVersion: 3,
+        type: "import-complete",
+        requestId: "known-err",
+        kind: "known",
+        name: "err.txt",
+        wordCount: 1,
+      },
+    };
+    const originalSave = store.knownWords.save.bind(store.knownWords);
+    let saveCount = 0;
+    store.knownWords.save = async (id, name, words) => {
+      saveCount++;
+      if (saveCount === 1) {
+        throw new Error("disk failure before commit");
+      }
+      return originalSave(id, name, words);
+    };
+
+    const controller = createMinerController(controllerOptions(store, worker));
+    const states: Readonly<AppState>[] = [];
+    controller.subscribe((state) => states.push(state));
+    await controller.init();
+
+    await controller.importKnown({
+      name: "err.txt",
+      text: async () => "新\n",
+    });
+
+    expect(states.at(-1)?.status).toBe("error");
+    expect(states.at(-1)?.errorMessage).toContain("disk failure before commit");
+    expect(states.at(-1)?.knownWords).toEqual(new Set(["初"]));
+    const active = await store.knownWords.getActive();
+    expect(active?.id).toBe("initial-known");
+    expect(active?.words).toEqual(new Set(["初"]));
+  });
+
   it("keeps active dataset unchanged when staged replacement cannot load into worker", async () => {
     const store = createMemoryAppStore();
     await seedActive(store);
