@@ -518,7 +518,8 @@ FROM jsonb_array_elements(${json(payload)}) AS value`,
           if (Number(dataset.base_revision) !== revision) throw conflict();
           if (
             Number(dataset.next_ordinal) !== operation.chunkCount ||
-            Number(dataset.uploaded_rows) !== (dataset.metadata as { entryCount: number }).entryCount
+            Number(dataset.uploaded_rows) !==
+              (dataset.metadata as { entryCount: number }).entryCount
           )
             throw new StoreError("Incomplete dataset: chunk or entry count mismatch");
           const duplicates = await rows(
