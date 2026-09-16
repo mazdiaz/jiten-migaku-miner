@@ -17,6 +17,14 @@ test.describe("large dataset performance", () => {
       });
       expect(statSync(csvPath).size).toBeGreaterThan(1_000_000);
 
+      let uploadRequestCount = 0;
+      page.on("request", (req) => {
+        const postData = req.postData();
+        if (postData?.includes('"dataset.chunks"') || postData?.includes('"dataset.chunk"')) {
+          uploadRequestCount++;
+        }
+      });
+
       const importStarted = Date.now();
       await page.goto("/");
       await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
@@ -75,8 +83,22 @@ test.describe("large dataset performance", () => {
       const mountedAfterScroll = await page.locator("#resultsList .mining-entry").count();
       expect(mountedAfterScroll).toBeLessThanOrEqual(120);
 
+      const stageEvents = await page.evaluate(
+        () =>
+          (
+            window as unknown as {
+              __importTimingEvents?: Array<{ stage: string; durationMs: number }>;
+            }
+          ).__importTimingEvents ?? [],
+      );
+      const stageSummary = stageEvents
+        .map((event) => `${event.stage}: ${Math.round(event.durationMs)}ms`)
+        .join(", ");
+
       console.log(
-        `[performance] import: ${importDuration}ms, first page ready: ${firstQueryDuration}ms`,
+        `[performance] import: ${importDuration}ms, upload requests: ${uploadRequestCount}, first page ready: ${firstQueryDuration}ms${
+          stageSummary ? `, stages: [${stageSummary}]` : ""
+        }`,
       );
     } finally {
       rmSync(directory, { recursive: true, force: true });

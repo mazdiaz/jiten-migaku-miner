@@ -13,6 +13,7 @@ import type {
 } from "../../src/domain/types";
 import {
   createMinerController,
+  type ImportTimingEvent,
   MAX_BACKUP_BYTES,
   type MinerControllerOptions,
 } from "../../src/miner/controller";
@@ -807,6 +808,37 @@ describe("MinerController", () => {
       datasetId: active?.id,
       queryChannel: "user",
     });
+  });
+
+  it("reports CSV import stage timing events in order", async () => {
+    const store = createMemoryAppStore();
+    const worker = new FakeWorkerClient();
+    const timingEvents: ImportTimingEvent[] = [];
+    let currentTime = 1000;
+    const controller = createMinerController({
+      ...controllerOptions(store, worker),
+      performanceNow: () => {
+        currentTime += 10;
+        return currentTime;
+      },
+      onImportTiming: (event) => timingEvents.push(event),
+    });
+    await controller.init();
+
+    await controller.importJiten({
+      name: "timing.csv",
+      text: async () => "Word\nテスト",
+    });
+
+    expect(timingEvents.map((e) => e.stage)).toEqual([
+      "worker_parse_and_emit",
+      "remote_dataset_stage",
+      "worker_dataset_load",
+      "candidate_query",
+      "activation_and_metadata_refresh",
+      "post_commit_query",
+    ]);
+    expect(timingEvents.every((e) => e.durationMs >= 0)).toBe(true);
   });
 
   it("refreshes the user query on the activated dataset after committing a replacement", async () => {

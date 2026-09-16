@@ -110,6 +110,15 @@ export function mountStudy(onStatus: (status: CloudStatus) => void) {
       sessionQueueStore,
       legacyStorage: null,
       persistence: "postgresql",
+      onImportTiming: (event) => {
+        if (typeof window !== "undefined") {
+          const target = window as unknown as {
+            __importTimingEvents?: Array<{ stage: string; durationMs: number }>;
+          };
+          target.__importTimingEvents = target.__importTimingEvents ?? [];
+          target.__importTimingEvents.push(event);
+        }
+      },
     });
     const restoreLegacy = controller.restoreBackup.bind(controller);
     controller.restoreBackup = async (text) => {
