@@ -503,24 +503,22 @@ FROM jsonb_array_elements(${json(payload)}) AS value`,
         }
         case "dataset.finish": {
           const dataset = (
-            await rows(
+            await rows<{
+              id: string;
+              metadata: { entryCount: number };
+              base_revision: string | number;
+              uploaded_rows: string | number;
+              next_ordinal: number;
+            }>(
               transaction,
-              sql`SELECT id, metadata, base_revision FROM datasets WHERE upload_id = ${operation.uploadId} AND status = 'staging'`,
+              sql`SELECT id, metadata, base_revision, uploaded_rows, next_ordinal FROM datasets WHERE upload_id = ${operation.uploadId} AND status = 'staging'`,
             )
           )[0];
           if (!dataset) throw notFound("Dataset upload");
           if (Number(dataset.base_revision) !== revision) throw conflict();
-          const counts = (
-            await rows(
-              transaction,
-              sql`SELECT count(*) AS chunks, COALESCE(sum(row_count),0) AS entries, min(ordinal) AS first, max(ordinal) AS last FROM dataset_chunks WHERE dataset_id = ${dataset.id}`,
-            )
-          )[0]!;
           if (
-            Number(counts.chunks) !== operation.chunkCount ||
-            Number(counts.entries) !== (dataset.metadata as { entryCount: number }).entryCount ||
-            (operation.chunkCount > 0 &&
-              (Number(counts.first) !== 0 || Number(counts.last) !== operation.chunkCount - 1))
+            Number(dataset.next_ordinal) !== operation.chunkCount ||
+            Number(dataset.uploaded_rows) !== (dataset.metadata as { entryCount: number }).entryCount
           )
             throw new StoreError("Incomplete dataset: chunk or entry count mismatch");
           const duplicates = await rows(

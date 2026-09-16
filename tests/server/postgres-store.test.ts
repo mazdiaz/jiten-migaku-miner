@@ -742,4 +742,99 @@ describe("PostgreSQL store over the real HTTP adapter", () => {
     expect(Number(counterRow.uploaded_rows)).toBe(6);
     expect(Number(counterRow.next_ordinal)).toBe(3);
   });
+
+  it("validates dataset.finish with upload counters and prevents incomplete activation", async () => {
+    const { revision } = await dispatch({ operation: "initialize" });
+
+    // 1. wrong chunkCount fails
+    const begin1 = await dispatch({
+      operation: "dataset.begin",
+      revision,
+      metadata: metadata("finish-chunk-count", 2),
+    });
+    const uploadId1 = (begin1.value as { uploadId: string }).uploadId;
+    await dispatch({
+      operation: "dataset.chunk",
+      revision,
+      uploadId: uploadId1,
+      index: 0,
+      entries: [entry("1"), entry("2")],
+    });
+    await expect(
+      dispatch({ operation: "dataset.finish", revision, uploadId: uploadId1, chunkCount: 2 }),
+    ).rejects.toThrow(/incomplete|chunk/i);
+
+    // 2. wrong metadata entryCount fails
+    const begin2 = await dispatch({
+      operation: "dataset.begin",
+      revision,
+      metadata: metadata("finish-entry-count", 5),
+    });
+    const uploadId2 = (begin2.value as { uploadId: string }).uploadId;
+    await dispatch({
+      operation: "dataset.chunk",
+      revision,
+      uploadId: uploadId2,
+      index: 0,
+      entries: [entry("1"), entry("2")],
+    });
+    await expect(
+      dispatch({ operation: "dataset.finish", revision, uploadId: uploadId2, chunkCount: 1 }),
+    ).rejects.toThrow(/incomplete|entry/i);
+
+    // 3. duplicate entry IDs still fail
+    const begin3 = await dispatch({
+      operation: "dataset.begin",
+      revision,
+      metadata: metadata("finish-dup", 2),
+    });
+    const uploadId3 = (begin3.value as { uploadId: string }).uploadId;
+    await dispatch({
+      operation: "dataset.chunk",
+      revision,
+      uploadId: uploadId3,
+      index: 0,
+      entries: [entry("1"), { ...entry("2"), id: "1" }],
+    });
+    await expect(
+      dispatch({ operation: "dataset.finish", revision, uploadId: uploadId3, chunkCount: 1 }),
+    ).rejects.toThrow(/duplicate/i);
+
+    // 4. valid complete dataset becomes ready
+    const begin4 = await dispatch({
+      operation: "dataset.begin",
+      revision,
+      metadata: metadata("finish-valid", 2),
+    });
+    const uploadId4 = (begin4.value as { uploadId: string }).uploadId;
+    await dispatch({
+      operation: "dataset.chunk",
+      revision,
+      uploadId: uploadId4,
+      index: 0,
+      entries: [entry("1"), entry("2")],
+    });
+    const finish4 = await dispatch({
+      operation: "dataset.finish",
+      revision,
+      uploadId: uploadId4,
+      chunkCount: 1,
+    });
+    const activated4 = await dispatch({
+      operation: "dataset.activate",
+      revision: finish4.revision,
+      datasetId: "finish-valid",
+    });
+    const active = await dispatch({ operation: "dataset.active", revision: activated4.revision });
+    expect(active.value).toMatchObject({ id: "finish-valid" });
+
+    // 5. incomplete dataset never activates
+    await expect(
+      dispatch({
+        operation: "dataset.activate",
+        revision: activated4.revision,
+        datasetId: "finish-chunk-count",
+      }),
+    ).rejects.toThrow(/not found|ready/i);
+  });
 });
