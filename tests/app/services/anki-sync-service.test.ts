@@ -130,6 +130,7 @@ function coreFor(store: AppStore, port = fakePort()): Harness {
     countChangeSinceExport: () => {
       state.changesSinceExport += 1;
     },
+    setActiveKnownId: vi.fn(),
   };
   return { core, state, port, decisionSpy, coverageSpy, previewSpy, runQuerySpy };
 }

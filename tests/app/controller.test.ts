@@ -893,6 +893,150 @@ describe("MinerController", () => {
     expect(active?.words).toEqual(new Set(["古い"]));
   });
 
+  it("restores the backup-restored known-word record when a subsequent import fails and rolls back", async () => {
+    const store = createMemoryAppStore();
+    await seedActive(store);
+    await store.knownWords.save("old-known", "old.txt", ["古い"]);
+    const worker = new FakeWorkerClient();
+    const controller = createMinerController(controllerOptions(store, worker));
+    const states: Readonly<AppState>[] = [];
+    controller.subscribe((state) => states.push(state));
+    await controller.init();
+
+    await controller.restoreBackup(
+      JSON.stringify({
+        format: "jiten-migaku-miner-backup",
+        version: 2,
+        exportedAt: "2026-09-06T00:00:00.000Z",
+        knownWords: { name: "restored.txt", words: ["復元"] },
+        wordDecisions: [],
+        preferences: null,
+        ankiSync: { config: null, snapshot: null },
+      }),
+    );
+
+    const activeAfterRestore = await store.knownWords.getActive();
+    expect(activeAfterRestore).not.toBeNull();
+    const restoredId = activeAfterRestore!.id;
+    expect(restoredId).not.toBe("old-known");
+
+    const originalSave = store.knownWords.save.bind(store.knownWords);
+    let corrupted = false;
+    store.knownWords.save = async (id, name, words) => {
+      if (!corrupted) {
+        corrupted = true;
+        return originalSave(id, name, ["破損"]);
+      }
+      return originalSave(id, name, words);
+    };
+
+    worker.nextKnown = {
+      chunks: [["新しい"]],
+      complete: {
+        protocolVersion: 3,
+        type: "import-complete",
+        requestId: "known-fail",
+        kind: "known",
+        name: "known.txt",
+        wordCount: 1,
+      },
+    };
+
+    await controller.importKnown({
+      name: "known.txt",
+      text: async () => "新しい\n",
+    });
+
+    expect(states.at(-1)?.status).toBe("error");
+    expect(states.at(-1)?.knownWords).toEqual(new Set(["復元"]));
+    const active = await store.knownWords.getActive();
+    expect(active?.id).toBe(restoredId);
+    expect(active?.words).toEqual(new Set(["復元"]));
+  });
+
+  it("invalidates activeKnownId on rollback failure so subsequent imports read durable active record", async () => {
+    const store = createMemoryAppStore();
+    await seedActive(store);
+    await store.knownWords.save("durable-known", "durable.txt", ["永続"]);
+    const originalSave = store.knownWords.save.bind(store.knownWords);
+    let saveCount = 0;
+    store.knownWords.save = async (id, name, words) => {
+      saveCount += 1;
+      if (saveCount === 1) {
+        return originalSave(id, name, ["不整合"]);
+      }
+      if (saveCount === 2) {
+        throw new Error("rollback persistence failed");
+      }
+      return originalSave(id, name, words);
+    };
+
+    const worker = new FakeWorkerClient();
+    worker.nextKnown = {
+      chunks: [["新しい"]],
+      complete: {
+        protocolVersion: 3,
+        type: "import-complete",
+        requestId: "known-rollback-fail",
+        kind: "known",
+        name: "known.txt",
+        wordCount: 1,
+      },
+    };
+
+    const controller = createMinerController(controllerOptions(store, worker));
+    const states: Readonly<AppState>[] = [];
+    controller.subscribe((state) => states.push(state));
+    await controller.init();
+
+    await controller.importKnown({
+      name: "known.txt",
+      text: async () => "新しい\n",
+    });
+
+    expect(states.at(-1)?.status).toBe("error");
+
+    await store.knownWords.save("repaired-known", "repaired.txt", ["修復済み"]);
+
+    let getActiveCalledBeforeSecondSave = false;
+    let secondSaveAttempted = false;
+    const originalGetActive = store.knownWords.getActive.bind(store.knownWords);
+    store.knownWords.getActive = async () => {
+      if (!secondSaveAttempted) {
+        getActiveCalledBeforeSecondSave = true;
+      }
+      return originalGetActive();
+    };
+
+    store.knownWords.save = async (id, name, words) => {
+      secondSaveAttempted = true;
+      return originalSave(id, name, words);
+    };
+
+    worker.nextKnown = {
+      chunks: [["二回目"]],
+      complete: {
+        protocolVersion: 3,
+        type: "import-complete",
+        requestId: "known-second",
+        kind: "known",
+        name: "second.txt",
+        wordCount: 1,
+      },
+    };
+
+    await controller.importKnown({
+      name: "second.txt",
+      text: async () => "二回目\n",
+    });
+
+    expect(getActiveCalledBeforeSecondSave).toBe(true);
+    expect(states.at(-1)?.status).toBe("ready");
+    expect(states.at(-1)?.knownWords).toEqual(new Set(["二回目"]));
+    const active = await store.knownWords.getActive();
+    expect(active?.words).toEqual(new Set(["二回目"]));
+  });
+
   it("keeps active dataset unchanged when staged replacement cannot load into worker", async () => {
     const store = createMemoryAppStore();
     await seedActive(store);

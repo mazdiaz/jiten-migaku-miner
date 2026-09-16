@@ -122,6 +122,7 @@ class MinerControllerImpl implements MinerController {
   private readonly decisionService: DecisionService;
   private readonly backupService: BackupService;
   private readonly ankiSyncService: AnkiSyncService;
+  private activeKnownId: string | null = null;
 
   constructor(options: MinerControllerOptions) {
     this.storeWasProvided = options.store !== undefined;
@@ -177,6 +178,9 @@ class MinerControllerImpl implements MinerController {
       decisionTuples: () => impl.decisionTuples(),
       ankiStatusTuples: () => ankiSyncService.ankiStatusTuples(),
       countChangeSinceExport: () => impl.countChangeSinceExport(),
+      setActiveKnownId: (id) => {
+        impl.activeKnownId = id;
+      },
     };
     this.coverageService = new CoverageService(core);
     this.queueService = new MiningQueueService(core);
@@ -261,13 +265,7 @@ class MinerControllerImpl implements MinerController {
         return;
       }
 
-      const staged = await this.readDatasetChunks(dataset.id);
-      if (staged.entryCount !== dataset.entryCount) {
-        throw new Error(
-          `Staged dataset entry count did not match metadata: expected ${dataset.entryCount}, found ${staged.entryCount}`,
-        );
-      }
-      await this.worker.loadDataset(dataset.id, copiedEntryChunks(staged.values));
+      await this.worker.loadDataset(dataset.id, copiedEntryChunks(chunks));
       const candidateWindow =
         this.state.query.pageSize === "all" ? { start: 0, size: VIEWPORT_WINDOW_SIZE } : undefined;
       candidateResult = await this.worker.query({
@@ -463,13 +461,18 @@ class MinerControllerImpl implements MinerController {
         const epoch = this.userStateEpoch;
         return this.withUserStateLock(async () => {
           if (epoch !== this.userStateEpoch) return false;
-          const previousKnown = await this.storageOperation((store) =>
-            store.knownWords.getActive(),
-          );
-          await this.storageOperation((store) =>
-            store.knownWords.save(knownId, source.name, words),
-          );
+          const previousKnown =
+            this.activeKnownId !== null && this.state.knownWordsName !== null
+              ? {
+                  id: this.activeKnownId,
+                  name: this.state.knownWordsName,
+                  words: this.state.knownWords,
+                }
+              : await this.storageOperation((store) => store.knownWords.getActive());
           try {
+            await this.storageOperation((store) =>
+              store.knownWords.save(knownId, source.name, words),
+            );
             const activeKnown = await this.storageOperation((store) =>
               store.knownWords.getActive(),
             );
@@ -490,6 +493,7 @@ class MinerControllerImpl implements MinerController {
               : new Error(`${errorMessage(error)} ${rollbackWarning}`);
           }
 
+          this.activeKnownId = knownId;
           this.state.knownWords = words;
           this.state.knownWordsName = source.name;
           this.state.query = { ...this.state.query, hideKnown: true, page: 1 };
@@ -648,7 +652,11 @@ class MinerControllerImpl implements MinerController {
         this.withUserStateLock(async () => {
           try {
             await this.store.restoreCompleteBackup!(text);
+            this.activeKnownId = null;
             this.decisionService.clearUndo();
+          } catch (error) {
+            this.activeKnownId = null;
+            throw error;
           } finally {
             this.userStateEpoch += 1;
             this.queryGeneration += 1;
@@ -694,6 +702,7 @@ class MinerControllerImpl implements MinerController {
         // Fresh initial state nulls lastExportAt and zeroes changesSinceExport:
         // clearing saved data also wipes the export this session referred to.
         this.state = createInitialAppState(this.state.persistence);
+        this.activeKnownId = null;
         this.ankiSyncService.resetLocal();
         // The service-owned undo record described the cleared world; drop it.
         this.decisionService.clearUndo();
@@ -770,8 +779,11 @@ class MinerControllerImpl implements MinerController {
     }
 
     if (known !== null) {
+      this.activeKnownId = known.id;
       this.state.knownWords = new Set(known.words);
       this.state.knownWordsName = known.name;
+    } else {
+      this.activeKnownId = null;
     }
     this.state.wordDecisions = new Map(
       decisions.map((decision) => [decision.normalizedWord, decision]),
@@ -828,11 +840,13 @@ class MinerControllerImpl implements MinerController {
     const transferFailures: string[] = [];
     try {
       if (this.state.knownWords.size > 0) {
+        const id = this.createId("known");
         await replacement.knownWords.save(
-          this.createId("known"),
+          id,
           this.state.knownWordsName ?? "Recovered known words",
           this.state.knownWords,
         );
+        this.activeKnownId = id;
       }
     } catch (transferError) {
       transferFailures.push(`Known-word recovery failed: ${errorMessage(transferError)}`);
@@ -933,7 +947,9 @@ class MinerControllerImpl implements MinerController {
         await this.storageOperation((store) =>
           store.knownWords.save(previous.id, previous.name, previous.words),
         );
+        this.activeKnownId = previous.id;
       } catch (error) {
+        this.activeKnownId = null;
         failures.push(`Known-word rollback failed: ${errorMessage(error)}`);
       }
     } else {
@@ -943,7 +959,9 @@ class MinerControllerImpl implements MinerController {
             throw new Error("Known-word store cannot remove records");
           await store.knownWords.remove(knownId);
         });
+        this.activeKnownId = null;
       } catch (error) {
+        this.activeKnownId = null;
         failures.push(`Known-word cleanup failed: ${errorMessage(error)}`);
       }
     }

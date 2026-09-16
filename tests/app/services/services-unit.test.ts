@@ -228,6 +228,7 @@ function setup(): Harness {
     countChangeSinceExport: () => {
       state.changesSinceExport += 1;
     },
+    setActiveKnownId: () => {},
   };
   return { state, core, worker, events, queryGeneration: () => queryGeneration };
 }
