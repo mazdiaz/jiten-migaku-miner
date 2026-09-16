@@ -22,8 +22,14 @@ export interface DatasetStore {
   remove(datasetId: string): Promise<void>;
 }
 
+export interface KnownWordsSaveReceipt {
+  id: string;
+  name: string;
+  wordCount: number;
+}
+
 export interface KnownWordStore {
-  save(id: string, name: string, words: Iterable<string>): Promise<void>;
+  save(id: string, name: string, words: Iterable<string>): Promise<KnownWordsSaveReceipt>;
   getActive(): Promise<{ id: string; name: string; words: Set<string> } | null>;
   remove?(id: string): Promise<void> | void;
   clear?(): Promise<void> | void;

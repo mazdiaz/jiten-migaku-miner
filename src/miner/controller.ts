@@ -475,6 +475,7 @@ class MinerControllerImpl implements MinerController {
     try {
       const text = await source.text();
       const chunks: string[][] = [];
+      const parseStart = this.performanceNow();
       const complete = await this.worker.importKnown(
         source.name,
         text,
@@ -482,6 +483,7 @@ class MinerControllerImpl implements MinerController {
           chunks.push(chunk.words);
         },
       );
+      this.recordStage("worker_parse_and_emit", parseStart);
       if (generation !== this.importGeneration) return;
 
       const words = new Set<string>();
@@ -503,22 +505,22 @@ class MinerControllerImpl implements MinerController {
                 }
               : await this.storageOperation((store) => store.knownWords.getActive());
           try {
-            await this.storageOperation((store) =>
+            const uploadStart = this.performanceNow();
+            const receipt = await this.storageOperation((store) =>
               store.knownWords.save(knownId, source.name, words),
             );
-            const activeKnown = await this.storageOperation((store) =>
-              store.knownWords.getActive(),
-            );
+            this.recordStage("known_words_upload", uploadStart);
+            const verifyStart = this.performanceNow();
             if (
-              activeKnown === null ||
-              activeKnown.id !== knownId ||
-              activeKnown.words.size !== words.size ||
-              [...words].some((word) => !activeKnown.words.has(word))
+              receipt.id !== knownId ||
+              receipt.name !== source.name ||
+              receipt.wordCount !== words.size
             ) {
               throw new Error(
-                "Known-word import verification failed: saved words differ from the imported set",
+                "Known-word import verification failed: saved receipt differs from the imported set",
               );
             }
+            this.recordStage("save_verification", verifyStart);
           } catch (error) {
             const rollbackWarning = await this.rollbackKnownWords(knownId, previousKnown);
             throw rollbackWarning === null
@@ -542,7 +544,9 @@ class MinerControllerImpl implements MinerController {
       // A committed known-word import is a counted change (post-lock, so a
       // stale/superseded import that returned false never lands here).
       this.countChangeSinceExport();
+      const queryStart = this.performanceNow();
       await this.runQuery();
+      this.recordStage("post_import_query", queryStart);
       await this.requestCoverage();
     } catch (error) {
       if (generation !== this.importGeneration || epoch !== this.userStateEpoch) return;

@@ -6,6 +6,7 @@ import type {
   DatasetMetadata,
   DatasetStore,
   KnownWordStore,
+  KnownWordsSaveReceipt,
   PreferencesStore,
   RestoreUserStateSnapshot,
   WordDecisionStore,
@@ -579,8 +580,9 @@ class IndexedDbDatasetStore implements DatasetStore {
 class IndexedDbKnownWordStore implements KnownWordStore {
   constructor(private readonly databaseName: string) {}
 
-  async save(id: string, name: string, words: Iterable<string>): Promise<void> {
-    const record: KnownWordSetRecord = { id, name, words: [...new Set(words)] };
+  async save(id: string, name: string, words: Iterable<string>): Promise<KnownWordsSaveReceipt> {
+    const uniqueWords = [...new Set(words)];
+    const record: KnownWordSetRecord = { id, name, words: uniqueWords };
     await withDatabase(this.databaseName, async (database) => {
       await runTransaction<void>(
         database,
@@ -596,6 +598,7 @@ class IndexedDbKnownWordStore implements KnownWordStore {
         },
       );
     });
+    return { id, name, wordCount: uniqueWords.length };
   }
 
   async getActive(): Promise<{

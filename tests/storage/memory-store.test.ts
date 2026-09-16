@@ -155,6 +155,16 @@ describe("MemoryAppStore", () => {
     expect(await store.preferences.load()).toEqual({ query, view, page: 3 });
   });
 
+  it("returns a save receipt from knownWords.save", async () => {
+    const store = createMemoryAppStore();
+    const receipt = await store.knownWords.save("known-1", "My Words", ["alpha", "beta", "alpha"]);
+    expect(receipt).toEqual({
+      id: "known-1",
+      name: "My Words",
+      wordCount: 2,
+    });
+  });
+
   it("removes every store on clearAll", async () => {
     const store = createMemoryAppStore();
 

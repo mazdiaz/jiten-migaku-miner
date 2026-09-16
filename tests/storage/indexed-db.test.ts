@@ -370,6 +370,16 @@ describe("IndexedDbAppStore", () => {
     expect(await store.preferences.load()).toEqual({ query, view, page: 3 });
   });
 
+  it("returns a save receipt from knownWords.save", async () => {
+    const store = createIndexedDbAppStore(databaseName);
+    const receipt = await store.knownWords.save("known-1", "My Words", ["alpha", "beta", "alpha"]);
+    expect(receipt).toEqual({
+      id: "known-1",
+      name: "My Words",
+      wordCount: 2,
+    });
+  });
+
   it("round-trips and replaces Anki config and snapshot independently", async () => {
     const store = createIndexedDbAppStore(databaseName);
     const config: AnkiSyncConfig = {

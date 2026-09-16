@@ -1,7 +1,12 @@
 import type { AnkiSyncConfig, AnkiSyncSnapshot } from "../domain/anki";
 import type { Entry, WordDecision } from "../domain/types";
 import type { SessionQueueSnapshot } from "../platform/session-queue";
-import type { AppStore, DatasetMetadata, RestoreUserStateSnapshot } from "./contracts";
+import type {
+  AppStore,
+  DatasetMetadata,
+  KnownWordsSaveReceipt,
+  RestoreUserStateSnapshot,
+} from "./contracts";
 
 type Preferences = NonNullable<Awaited<ReturnType<AppStore["preferences"]["load"]>>>;
 type KnownWords = { id: string; name: string; words: string[] };
@@ -39,6 +44,77 @@ export class RemoteStoreError extends Error {
 const byteLength = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
 const MAX_BACKUP_BYTES = 256 * 1024 * 1024;
 const DATASET_WIRE_BATCH_TARGET = 680_000;
+export const STATE_CHUNK_TARGET_BYTES = 300_000;
+
+export function splitUtf8Chunks(
+  text: string,
+  targetBytes: number = STATE_CHUNK_TARGET_BYTES,
+): string[] {
+  if (text.length === 0) return [];
+  const encoder = new TextEncoder();
+  const chunks: string[] = [];
+  let offset = 0;
+
+  while (offset < text.length) {
+    const remainingLength = text.length - offset;
+    if (remainingLength * 4 <= targetBytes) {
+      chunks.push(text.slice(offset));
+      break;
+    }
+
+    const maxChars = Math.min(targetBytes, remainingLength);
+    let low = Math.min(Math.floor(targetBytes / 4), remainingLength);
+    let high = maxChars;
+    let bestEnd = offset;
+
+    let initialLow = offset + low;
+    if (initialLow < text.length) {
+      const prev = text.charCodeAt(initialLow - 1);
+      const next = text.charCodeAt(initialLow);
+      if (prev >= 0xd800 && prev <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) {
+        initialLow--;
+      }
+    }
+    if (initialLow > offset) bestEnd = initialLow;
+
+    low = Math.max(1, low);
+    while (low <= high) {
+      const mid = (low + high) >> 1;
+      let effectiveEnd = offset + mid;
+      if (effectiveEnd < text.length) {
+        const prev = text.charCodeAt(effectiveEnd - 1);
+        const next = text.charCodeAt(effectiveEnd);
+        if (prev >= 0xd800 && prev <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) {
+          effectiveEnd--;
+        }
+      }
+
+      if (effectiveEnd <= offset) {
+        low = mid + 1;
+        continue;
+      }
+
+      const candidate = text.slice(offset, effectiveEnd);
+      if (encoder.encode(candidate).length <= targetBytes) {
+        if (effectiveEnd > bestEnd) bestEnd = effectiveEnd;
+        low = mid + 1;
+      } else {
+        high = mid - 1;
+      }
+    }
+
+    if (bestEnd <= offset) {
+      const code = text.charCodeAt(offset);
+      const isHighSurrogate = code >= 0xd800 && code <= 0xdbff;
+      bestEnd = isHighSurrogate && offset + 1 < text.length ? offset + 2 : offset + 1;
+    }
+
+    chunks.push(text.slice(offset, bestEnd));
+    offset = bestEnd;
+  }
+
+  return chunks;
+}
 
 /** Calls are serialized across every store area so dependent writes use the last acknowledged revision. */
 export function createRemoteAppStore(
@@ -123,7 +199,7 @@ export function createRemoteAppStore(
   async function mutate(operation: string, fields: Record<string, unknown> = {}) {
     await request(operation, fields);
   }
-  async function upload(target: string, value: unknown) {
+  async function upload<T = void>(target: string, value: unknown): Promise<T> {
     const text = JSON.stringify(value);
     if (new TextEncoder().encode(text).length > MAX_BACKUP_BYTES)
       throw new RemoteStoreError(
@@ -132,18 +208,12 @@ export function createRemoteAppStore(
         "PAYLOAD_TOO_LARGE",
       );
     const { uploadId } = await request<{ uploadId: string }>("state.begin", { target });
-    // Keep each chunk bounded without separating a UTF-16 surrogate pair: the
-    // PostgreSQL UTF-8 text transport would replace either isolated half.
+    const chunks = splitUtf8Chunks(text, STATE_CHUNK_TARGET_BYTES);
     let chunkCount = 0;
-    for (let offset = 0; offset < text.length; ) {
-      let end = Math.min(offset + 60_000, text.length);
-      const previous = text.charCodeAt(end - 1),
-        next = text.charCodeAt(end);
-      if (previous >= 0xd800 && previous <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) end--;
-      await mutate("state.chunk", { uploadId, index: chunkCount++, text: text.slice(offset, end) });
-      offset = end;
+    for (const chunk of chunks) {
+      await mutate("state.chunk", { uploadId, index: chunkCount++, text: chunk });
     }
-    await mutate("state.finish", { uploadId, chunkCount });
+    return request<T>("state.finish", { uploadId, chunkCount });
   }
   function savedMutation(operation: string, fields: Record<string, unknown>) {
     const captured = structuredClone(fields);
@@ -302,7 +372,7 @@ export function createRemoteAppStore(
     knownWords: {
       save: (id, name, words) => {
         const value = { id, name, words: [...new Set(words)] };
-        return run(() => upload("knownWords", value));
+        return run(() => upload<KnownWordsSaveReceipt>("knownWords", value));
       },
       getActive: () =>
         run(async () => {
