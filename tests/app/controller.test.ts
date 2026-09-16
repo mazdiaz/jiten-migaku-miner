@@ -841,6 +841,35 @@ describe("MinerController", () => {
     expect(timingEvents.every((e) => e.durationMs >= 0)).toBe(true);
   });
 
+  it("reports known-word import stage timing events in order", async () => {
+    const store = createMemoryAppStore();
+    const worker = new FakeWorkerClient();
+    const timingEvents: ImportTimingEvent[] = [];
+    let currentTime = 1000;
+    const controller = createMinerController({
+      ...controllerOptions(store, worker),
+      performanceNow: () => {
+        currentTime += 10;
+        return currentTime;
+      },
+      onImportTiming: (event) => timingEvents.push(event),
+    });
+    await controller.init();
+
+    await controller.importKnown({
+      name: "known.txt",
+      text: async () => "単語\nテスト",
+    });
+
+    expect(timingEvents.map((e) => e.stage)).toEqual([
+      "worker_parse_and_emit",
+      "known_words_upload",
+      "save_verification",
+      "post_import_query",
+    ]);
+    expect(timingEvents.every((e) => e.durationMs >= 0)).toBe(true);
+  });
+
   it("refreshes the user query on the activated dataset after committing a replacement", async () => {
     const store = createMemoryAppStore();
     await seedActive(store);
