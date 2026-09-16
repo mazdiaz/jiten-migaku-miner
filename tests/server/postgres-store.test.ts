@@ -86,6 +86,12 @@ describe("PostgreSQL store over the real HTTP adapter", () => {
     await pg.exec(
       await readFile(new URL("../../migrations/0000_postgres_store.sql", import.meta.url), "utf8"),
     );
+    await pg.exec(
+      await readFile(
+        new URL("../../migrations/0001_dataset_upload_counters.sql", import.meta.url),
+        "utf8",
+      ),
+    );
     dispatch = createPostgresStore(drizzle(pg));
   }, 60_000);
   afterAll(async () => {
@@ -581,5 +587,90 @@ describe("PostgreSQL store over the real HTTP adapter", () => {
       read.push(...chunk);
     }
     expect(read.map((r) => r.id)).toEqual(rows.map((r) => r.id));
+  });
+
+  it("tracks dataset upload progress incrementally with counters", async () => {
+    const { revision } = await dispatch({ operation: "initialize" });
+    const begin = await dispatch({
+      operation: "dataset.begin",
+      revision,
+      metadata: metadata("counter-test", 3),
+    });
+    const uploadId = (begin.value as { uploadId: string }).uploadId;
+
+    const getCounters = async () => {
+      const result = await pg.query<{
+        uploaded_rows: string;
+        uploaded_bytes: string;
+        next_ordinal: number;
+      }>("SELECT uploaded_rows, uploaded_bytes, next_ordinal FROM datasets WHERE id = $1", [
+        "counter-test",
+      ]);
+      const row = result.rows[0]!;
+      return {
+        rows: Number(row.uploaded_rows),
+        bytes: Number(row.uploaded_bytes),
+        nextOrdinal: Number(row.next_ordinal),
+      };
+    };
+
+    // new upload starts at zero
+    expect(await getCounters()).toEqual({ rows: 0, bytes: 0, nextOrdinal: 0 });
+
+    const chunk0 = [entry("1")];
+    const chunk0Bytes = new TextEncoder().encode(JSON.stringify(chunk0)).length;
+
+    // new logical chunks advance counters exactly once
+    await dispatch({
+      operation: "dataset.chunk",
+      revision,
+      uploadId,
+      index: 0,
+      entries: chunk0,
+    });
+    expect(await getCounters()).toEqual({ rows: 1, bytes: chunk0Bytes, nextOrdinal: 1 });
+
+    // identical retry does not advance counters
+    await dispatch({
+      operation: "dataset.chunk",
+      revision,
+      uploadId,
+      index: 0,
+      entries: chunk0,
+    });
+    expect(await getCounters()).toEqual({ rows: 1, bytes: chunk0Bytes, nextOrdinal: 1 });
+
+    // failed conflicting retry does not advance counters
+    await expect(
+      dispatch({
+        operation: "dataset.chunk",
+        revision,
+        uploadId,
+        index: 0,
+        entries: [{ ...entry("1"), word: "犬" }],
+      }),
+    ).rejects.toThrow(/different|conflict/i);
+    expect(await getCounters()).toEqual({ rows: 1, bytes: chunk0Bytes, nextOrdinal: 1 });
+
+    // multiple chunks in one request advance counters by combined totals
+    const chunk1 = [entry("2")];
+    const chunk2 = [entry("3")];
+    const chunk1Bytes = new TextEncoder().encode(JSON.stringify(chunk1)).length;
+    const chunk2Bytes = new TextEncoder().encode(JSON.stringify(chunk2)).length;
+
+    await dispatch({
+      operation: "dataset.chunks",
+      revision,
+      uploadId,
+      chunks: [
+        { index: 1, entries: chunk1 },
+        { index: 2, entries: chunk2 },
+      ],
+    });
+    expect(await getCounters()).toEqual({
+      rows: 3,
+      bytes: chunk0Bytes + chunk1Bytes + chunk2Bytes,
+      nextOrdinal: 3,
+    });
   });
 });

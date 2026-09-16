@@ -343,9 +343,15 @@ export function createPostgresStore(database: StoreDatabase) {
         }
         case "dataset.chunk": {
           const dataset = (
-            await rows(
+            await rows<{
+              id: string;
+              base_revision: string | number;
+              uploaded_rows: string | number;
+              uploaded_bytes: string | number;
+              next_ordinal: number;
+            }>(
               transaction,
-              sql`SELECT id, base_revision FROM datasets WHERE upload_id = ${operation.uploadId} AND status = 'staging'`,
+              sql`SELECT id, base_revision, uploaded_rows, uploaded_bytes, next_ordinal FROM datasets WHERE upload_id = ${operation.uploadId} AND status = 'staging'`,
             )
           )[0];
           if (!dataset) throw notFound("Dataset upload");
@@ -353,13 +359,9 @@ export function createPostgresStore(database: StoreDatabase) {
           const byteCount = bytes(operation.entries);
           if (byteCount > MAX_CHUNK_BYTES)
             throw new StoreError("Dataset chunk exceeds size limit", 413, "PAYLOAD_TOO_LARGE");
-          const old = (
-            await rows(
-              transaction,
-              sql`SELECT entries FROM dataset_chunks WHERE dataset_id = ${dataset.id} AND ordinal = ${operation.index}`,
-            )
-          )[0];
-          if (old) {
+
+          const nextOrdinal = Number(dataset.next_ordinal);
+          if (operation.index < nextOrdinal) {
             // PostgreSQL jsonb normalizes object property order; compare values in the database.
             const match = (
               await rows(
@@ -369,16 +371,10 @@ export function createPostgresStore(database: StoreDatabase) {
             )[0];
             if (!match?.equal)
               throw new StoreError("Chunk retry contains different data", 409, "CHUNK_CONFLICT");
-          } else {
-            const totals = (
-              await rows(
-                transaction,
-                sql`SELECT COALESCE(sum(byte_count),0) AS bytes, COALESCE(sum(row_count),0) AS rows FROM dataset_chunks WHERE dataset_id = ${dataset.id}`,
-              )
-            )[0]!;
+          } else if (operation.index === nextOrdinal) {
             if (
-              Number(totals.bytes) + byteCount > MAX_UPLOAD_BYTES ||
-              Number(totals.rows) + operation.entries.length > 1_000_000
+              Number(dataset.uploaded_bytes) + byteCount > MAX_UPLOAD_BYTES ||
+              Number(dataset.uploaded_rows) + operation.entries.length > MAX_ROWS
             )
               throw new StoreError(
                 "Dataset upload exceeds total size or row limit",
@@ -388,14 +384,29 @@ export function createPostgresStore(database: StoreDatabase) {
             await transaction.execute(
               sql`INSERT INTO dataset_chunks(dataset_id, ordinal, entries, row_count, byte_count) VALUES (${dataset.id}, ${operation.index}, ${json(operation.entries)}, ${operation.entries.length}, ${byteCount})`,
             );
+            await transaction.execute(
+              sql`UPDATE datasets SET uploaded_rows = uploaded_rows + ${operation.entries.length}, uploaded_bytes = uploaded_bytes + ${byteCount}, next_ordinal = next_ordinal + 1 WHERE id = ${dataset.id}`,
+            );
+          } else {
+            throw new StoreError(
+              `Non-contiguous chunk ordinal: expected ${nextOrdinal}, got ${operation.index}`,
+              400,
+              "BAD_REQUEST",
+            );
           }
           break;
         }
         case "dataset.chunks": {
           const dataset = (
-            await rows(
+            await rows<{
+              id: string;
+              base_revision: string | number;
+              uploaded_rows: string | number;
+              uploaded_bytes: string | number;
+              next_ordinal: number;
+            }>(
               transaction,
-              sql`SELECT id, base_revision FROM datasets WHERE upload_id = ${operation.uploadId} AND status = 'staging'`,
+              sql`SELECT id, base_revision, uploaded_rows, uploaded_bytes, next_ordinal FROM datasets WHERE upload_id = ${operation.uploadId} AND status = 'staging'`,
             )
           )[0];
           if (!dataset) throw notFound("Dataset upload");
@@ -407,12 +418,6 @@ export function createPostgresStore(database: StoreDatabase) {
               throw new StoreError("Dataset chunk exceeds size limit", 413, "PAYLOAD_TOO_LARGE");
           }
 
-          const existingRows = await rows<{ ordinal: number | string }>(
-            transaction,
-            sql`SELECT ordinal FROM dataset_chunks WHERE dataset_id = ${dataset.id} ORDER BY ordinal ASC`,
-          );
-          const existingOrdinals = new Set(existingRows.map((r) => Number(r.ordinal)));
-
           const seenIndices = new Set<number>();
           for (const chunk of operation.chunks) {
             if (seenIndices.has(chunk.index)) {
@@ -422,11 +427,12 @@ export function createPostgresStore(database: StoreDatabase) {
           }
 
           const sortedChunks = [...operation.chunks].sort((a, b) => a.index - b.index);
+          const nextOrdinal = Number(dataset.next_ordinal);
           const retryChunks: typeof operation.chunks = [];
           const newChunks: typeof operation.chunks = [];
 
           for (const chunk of sortedChunks) {
-            if (existingOrdinals.has(chunk.index)) {
+            if (chunk.index < nextOrdinal) {
               retryChunks.push(chunk);
             } else {
               newChunks.push(chunk);
@@ -444,7 +450,7 @@ export function createPostgresStore(database: StoreDatabase) {
               throw new StoreError("Chunk retry contains different data", 409, "CHUNK_CONFLICT");
           }
 
-          let expectedOrdinal = existingRows.length;
+          let expectedOrdinal = nextOrdinal;
           for (const chunk of newChunks) {
             if (chunk.index !== expectedOrdinal) {
               throw new StoreError(
@@ -457,12 +463,6 @@ export function createPostgresStore(database: StoreDatabase) {
           }
 
           if (newChunks.length > 0) {
-            const totals = (
-              await rows(
-                transaction,
-                sql`SELECT COALESCE(sum(byte_count),0) AS bytes, COALESCE(sum(row_count),0) AS rows FROM dataset_chunks WHERE dataset_id = ${dataset.id}`,
-              )
-            )[0]!;
             let newBytes = 0;
             let newRows = 0;
             for (const chunk of newChunks) {
@@ -470,8 +470,8 @@ export function createPostgresStore(database: StoreDatabase) {
               newRows += chunk.entries.length;
             }
             if (
-              Number(totals.bytes) + newBytes > MAX_UPLOAD_BYTES ||
-              Number(totals.rows) + newRows > MAX_ROWS
+              Number(dataset.uploaded_bytes) + newBytes > MAX_UPLOAD_BYTES ||
+              Number(dataset.uploaded_rows) + newRows > MAX_ROWS
             ) {
               throw new StoreError(
                 "Dataset upload exceeds total size or row limit",
@@ -485,6 +485,9 @@ export function createPostgresStore(database: StoreDatabase) {
                 sql`INSERT INTO dataset_chunks(dataset_id, ordinal, entries, row_count, byte_count) VALUES (${dataset.id}, ${chunk.index}, ${json(chunk.entries)}, ${chunk.entries.length}, ${chunkBytes})`,
               );
             }
+            await transaction.execute(
+              sql`UPDATE datasets SET uploaded_rows = uploaded_rows + ${newRows}, uploaded_bytes = uploaded_bytes + ${newBytes}, next_ordinal = next_ordinal + ${newChunks.length} WHERE id = ${dataset.id}`,
+            );
           }
           break;
         }
