@@ -479,12 +479,22 @@ export function createPostgresStore(database: StoreDatabase) {
                 "PAYLOAD_TOO_LARGE",
               );
             }
-            for (const chunk of newChunks) {
-              const chunkBytes = bytes(chunk.entries);
-              await transaction.execute(
-                sql`INSERT INTO dataset_chunks(dataset_id, ordinal, entries, row_count, byte_count) VALUES (${dataset.id}, ${chunk.index}, ${json(chunk.entries)}, ${chunk.entries.length}, ${chunkBytes})`,
-              );
-            }
+            const payload = newChunks.map(({ index, entries }) => ({
+              ordinal: index,
+              entries,
+              rowCount: entries.length,
+              byteCount: bytes(entries),
+            }));
+            await transaction.execute(
+              sql`INSERT INTO dataset_chunks(dataset_id, ordinal, entries, row_count, byte_count)
+SELECT
+  ${dataset.id},
+  (value->>'ordinal')::integer,
+  value->'entries',
+  (value->>'rowCount')::integer,
+  (value->>'byteCount')::integer
+FROM jsonb_array_elements(${json(payload)}) AS value`,
+            );
             await transaction.execute(
               sql`UPDATE datasets SET uploaded_rows = uploaded_rows + ${newRows}, uploaded_bytes = uploaded_bytes + ${newBytes}, next_ordinal = next_ordinal + ${newChunks.length} WHERE id = ${dataset.id}`,
             );

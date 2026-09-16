@@ -673,4 +673,73 @@ describe("PostgreSQL store over the real HTTP adapter", () => {
       nextOrdinal: 3,
     });
   });
+
+  it("bulk inserts several logical chunks in one request preserving ordinals and order", async () => {
+    const { revision } = await dispatch({ operation: "initialize" });
+    const begin = await dispatch({
+      operation: "dataset.begin",
+      revision,
+      metadata: metadata("bulk-test", 6),
+    });
+    const uploadId = (begin.value as { uploadId: string }).uploadId;
+
+    const chunk0 = [entry("1"), entry("2")];
+    const chunk1 = [entry("3"), entry("4")];
+    const chunk2 = [entry("5"), entry("6")];
+
+    await dispatch({
+      operation: "dataset.chunks",
+      revision,
+      uploadId,
+      chunks: [
+        { index: 0, entries: chunk0 },
+        { index: 1, entries: chunk1 },
+        { index: 2, entries: chunk2 },
+      ],
+    });
+
+    const storedChunks = await pg.query<{
+      ordinal: number;
+      row_count: number;
+      byte_count: number;
+    }>(
+      "SELECT ordinal, row_count, byte_count FROM dataset_chunks WHERE dataset_id = $1 ORDER BY ordinal ASC",
+      ["bulk-test"],
+    );
+    expect(storedChunks.rows.map((r) => r.ordinal)).toEqual([0, 1, 2]);
+    expect(storedChunks.rows.map((r) => r.row_count)).toEqual([2, 2, 2]);
+
+    const finish = await dispatch({
+      operation: "dataset.finish",
+      revision,
+      uploadId,
+      chunkCount: 3,
+    });
+    const activated = await dispatch({
+      operation: "dataset.activate",
+      revision: finish.revision,
+      datasetId: "bulk-test",
+    });
+
+    const readItems: Entry[] = [];
+    for (let cursor = 0; cursor < 3; cursor++) {
+      const page = await dispatch({
+        operation: "dataset.read",
+        revision: activated.revision,
+        datasetId: "bulk-test",
+        cursor,
+      });
+      readItems.push(...(page.value as { items: Entry[] }).items);
+    }
+    expect(readItems.map((e) => e.id)).toEqual(["1", "2", "3", "4", "5", "6"]);
+
+    const counterRow = (
+      await pg.query<{ uploaded_rows: string; next_ordinal: number }>(
+        "SELECT uploaded_rows, next_ordinal FROM datasets WHERE id = $1",
+        ["bulk-test"],
+      )
+    ).rows[0]!;
+    expect(Number(counterRow.uploaded_rows)).toBe(6);
+    expect(Number(counterRow.next_ordinal)).toBe(3);
+  });
 });
