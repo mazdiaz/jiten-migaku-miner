@@ -313,6 +313,35 @@ describe("PostgreSQL store over the real HTTP adapter", () => {
     });
   });
 
+  it("measures 20,000-word import metrics and verifies structural improvements", async () => {
+    const store = remote();
+    await store.initialize();
+    const words = Array.from({ length: 20_000 }, (_, index) => `言葉${index}`);
+    const jsonPayload = JSON.stringify({ id: "bench-20k", name: "Benchmark", words });
+    const payloadBytes = new TextEncoder().encode(jsonPayload).length;
+
+    const start = performance.now();
+    const receipt = await store.knownWords.save("bench-20k", "Benchmark", words);
+    const saveDurationMs = performance.now() - start;
+
+    const chunkRequests = capturedRequests.filter((r) => r.operation === "state.chunk");
+    const estimatedOldChunks = Math.ceil(jsonPayload.length / 60_000);
+
+    expect(receipt).toEqual({
+      id: "bench-20k",
+      name: "Benchmark",
+      wordCount: 20_000,
+    });
+    expect(KNOWN_WORD_INSERT_BATCH_SIZE).toBe(5_000);
+    expect(chunkRequests.length).toBeLessThan(estimatedOldChunks);
+    expect(chunkRequests.length).toBeLessThanOrEqual(2);
+    expect(Math.max(...requestSizes)).toBeLessThan(750_000);
+
+    console.log(
+      `[benchmark: known-words 20k] payloadBytes: ${payloadBytes}, chunkRequests: ${chunkRequests.length} (was ~${estimatedOldChunks}), saveDuration: ${Math.round(saveDurationMs)}ms, maxWireRequestBytes: ${Math.max(...requestSizes)}`,
+    );
+  }, 60_000);
+
   it("rejects complete exports above the UTF-8 restore byte limit", async () => {
     // Isolate the client export limit from storage: a valid, bounded page is repeated
     // until individually admissible data exceeds the aggregate restore limit.
