@@ -263,16 +263,20 @@ describe("PostgreSQL store over the real HTTP adapter", () => {
       label: "mixed ASCII/Japanese/emoji",
       words: Array.from({ length: 2_000 }, (_, i) => `mixed_${i}_言葉_😀_𠮷_${"ab".repeat(20)}`),
     },
-  ])("preserves $label across 300 KB chunk boundaries", async ({ words }) => {
-    const store = remote();
-    await store.initialize();
-    const unique = [...new Set(words)];
-    await store.knownWords.save("boundary-test", "Boundary", unique);
-    const active = await store.knownWords.getActive();
-    expect(active?.words.size).toBe(unique.length);
-    expect(active?.words).toEqual(new Set(unique));
-    expect(Math.max(...requestSizes)).toBeLessThan(750_000);
-  }, 60_000);
+  ])(
+    "preserves $label across 300 KB chunk boundaries",
+    async ({ words }) => {
+      const store = remote();
+      await store.initialize();
+      const unique = [...new Set(words)];
+      await store.knownWords.save("boundary-test", "Boundary", unique);
+      const active = await store.knownWords.getActive();
+      expect(active?.words.size).toBe(unique.length);
+      expect(active?.words).toEqual(new Set(unique));
+      expect(Math.max(...requestSizes)).toBeLessThan(750_000);
+    },
+    60_000,
+  );
 
   it("uses fewer state.chunk requests for large state than 60,000-character slicing", async () => {
     const store = remote();

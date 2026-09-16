@@ -966,7 +966,10 @@ describe("MinerController", () => {
     },
     {
       mismatch: "wrong wordCount",
-      patch: (receipt: KnownWordsSaveReceipt) => ({ ...receipt, wordCount: receipt.wordCount + 10 }),
+      patch: (receipt: KnownWordsSaveReceipt) => ({
+        ...receipt,
+        wordCount: receipt.wordCount + 10,
+      }),
     },
   ])("rolls back known-word import when receipt has $mismatch", async ({ patch }) => {
     const store = createMemoryAppStore();

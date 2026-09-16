@@ -1,7 +1,12 @@
 import type { AnkiSyncConfig, AnkiSyncSnapshot } from "../domain/anki";
 import type { Entry, WordDecision } from "../domain/types";
 import type { SessionQueueSnapshot } from "../platform/session-queue";
-import type { AppStore, DatasetMetadata, KnownWordsSaveReceipt, RestoreUserStateSnapshot } from "./contracts";
+import type {
+  AppStore,
+  DatasetMetadata,
+  KnownWordsSaveReceipt,
+  RestoreUserStateSnapshot,
+} from "./contracts";
 
 type Preferences = NonNullable<Awaited<ReturnType<AppStore["preferences"]["load"]>>>;
 type KnownWords = { id: string; name: string; words: string[] };
