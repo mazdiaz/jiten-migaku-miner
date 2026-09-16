@@ -14,7 +14,7 @@ export default defineConfig({
   ],
   use: { baseURL: origin, contextOptions: { reducedMotion: "reduce" }, trace: "retain-on-failure" },
   webServer: {
-    command: "npm run dev",
+    command: process.env.CI ? "npm run start" : "npm run dev",
     url: `${origin}/login`,
     env: testServerEnvironment(origin),
     reuseExistingServer: false,
