@@ -234,7 +234,7 @@ export function createRemoteAppStore(
                   413,
                   "PAYLOAD_TOO_LARGE",
                 );
-              if (pending.length && (size + length > 350_000 || pending.length >= 500))
+              if (pending.length && (size + length > 350_000 || pending.length >= 2000))
                 await flush();
               pending.push(structuredClone(entry));
               size += length;

@@ -87,7 +87,7 @@ function datasetParts(entries: readonly Entry[]): Entry[][] {
   let size = 2;
   for (const entry of entries) {
     const length = bytes(entry) + 1;
-    if (current.length && (size + length > 350_000 || current.length >= 500)) {
+    if (current.length && (size + length > 350_000 || current.length >= 2000)) {
       result.push(current);
       current = [];
       size = 2;
@@ -240,40 +240,40 @@ async function readState(
     if (!state.known_metadata) return null;
     const values = await rows<{ word: string }>(
       database,
-      sql`SELECT word FROM known_words ORDER BY word COLLATE "C" LIMIT 512 OFFSET ${cursor}`,
+      sql`SELECT word FROM known_words ORDER BY word COLLATE "C" LIMIT 4096 OFFSET ${cursor}`,
     );
     return {
       ...state.known_metadata,
       ...page(
         values.map((item) => item.word),
         cursor,
-        values.length === 512,
+        values.length === 4096,
       ),
     };
   }
   if (operation.resource === "decisions") {
     const values = await rows(
       database,
-      sql`SELECT decision FROM word_decisions ORDER BY word COLLATE "C" LIMIT 512 OFFSET ${cursor}`,
+      sql`SELECT decision FROM word_decisions ORDER BY word COLLATE "C" LIMIT 1024 OFFSET ${cursor}`,
     );
     return page(
       values.map((item) => item.decision),
       cursor,
-      values.length === 512,
+      values.length === 1024,
     );
   }
   if (operation.resource === "ankiSnapshot") {
     if (!state.anki_synced_at) return null;
     const values = await rows<{ word: string; status: string }>(
       database,
-      sql`SELECT word, status FROM anki_statuses ORDER BY word COLLATE "C" LIMIT 512 OFFSET ${cursor}`,
+      sql`SELECT word, status FROM anki_statuses ORDER BY word COLLATE "C" LIMIT 4096 OFFSET ${cursor}`,
     );
     return {
       syncedAt: state.anki_synced_at,
       ...page(
         values.map((item) => [item.word, item.status]),
         cursor,
-        values.length === 512,
+        values.length === 4096,
       ),
     };
   }
@@ -296,7 +296,7 @@ async function readState(
     return null;
   const values = await rows<{ word: string }>(
     database,
-    sql`SELECT word FROM queue_words WHERE dataset_id = ${id} ORDER BY ordinal LIMIT 512 OFFSET ${cursor}`,
+    sql`SELECT word FROM queue_words WHERE dataset_id = ${id} ORDER BY ordinal LIMIT 4096 OFFSET ${cursor}`,
   );
   return {
     version: 1,
@@ -304,7 +304,7 @@ async function readState(
     ...page(
       values.map((item) => item.word),
       cursor,
-      values.length === 512,
+      values.length === 4096,
     ),
   };
 }
