@@ -111,7 +111,10 @@ async function saveDatasetChunks(
 }
 export const KNOWN_WORD_INSERT_BATCH_SIZE = 5_000;
 
-async function replaceKnown(database: StoreDatabase, value: z.infer<typeof knownSchema> | null) {
+async function replaceKnown(
+  database: StoreDatabase,
+  value: z.infer<typeof knownSchema> | null,
+): Promise<{ id: string; name: string; wordCount: number } | null> {
   await database.execute(sql`DELETE FROM known_words`);
   await database.execute(
     sql`UPDATE app_state SET known_metadata = ${value === null ? sql`NULL` : json({ id: value.id, name: value.name })} WHERE id = 1`,
@@ -124,7 +127,13 @@ async function replaceKnown(database: StoreDatabase, value: z.infer<typeof known
         sql`INSERT INTO known_words(word) SELECT value FROM jsonb_array_elements_text(${json(chunk)}) ON CONFLICT DO NOTHING`,
       );
     }
+    return {
+      id: value.id,
+      name: value.name,
+      wordCount: unique.length,
+    };
   }
+  return null;
 }
 async function replaceDecisions(database: StoreDatabase, values: z.infer<typeof decisionSchema>[]) {
   assertUnique(
@@ -722,7 +731,7 @@ FROM jsonb_array_elements(${json(payload)}) AS value`,
           }
           switch (upload.target) {
             case "knownWords":
-              await replaceKnown(transaction, parse(knownSchema.nullable(), payload));
+              value = await replaceKnown(transaction, parse(knownSchema.nullable(), payload));
               break;
             case "decisions":
               await replaceDecisions(

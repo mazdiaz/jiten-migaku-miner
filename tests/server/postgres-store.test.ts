@@ -301,6 +301,18 @@ describe("PostgreSQL store over the real HTTP adapter", () => {
     expect(active?.words).toEqual(new Set(words));
   }, 60_000);
 
+  it("returns a committed save receipt from state.finish for knownWords", async () => {
+    const store = remote();
+    await store.initialize();
+    const words = ["猫", "犬", "猫", "鳥"];
+    const receipt = await store.knownWords.save("known-receipt", "ReceiptTest", words);
+    expect(receipt).toEqual({
+      id: "known-receipt",
+      name: "ReceiptTest",
+      wordCount: 3,
+    });
+  });
+
   it("rejects complete exports above the UTF-8 restore byte limit", async () => {
     // Isolate the client export limit from storage: a valid, bounded page is repeated
     // until individually admissible data exceeds the aggregate restore limit.
