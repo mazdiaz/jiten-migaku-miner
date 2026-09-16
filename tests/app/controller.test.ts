@@ -152,7 +152,7 @@ class FakeWorkerClient implements WorkerClient {
     const importing = this.nextJiten ?? {
       chunks: [[entry("new-entry", "新しい")]],
       complete: {
-        protocolVersion: 3 as const,
+        protocolVersion: 4 as const,
         type: "import-complete" as const,
         requestId: "import",
         kind: "jiten" as const,
@@ -164,7 +164,7 @@ class FakeWorkerClient implements WorkerClient {
     };
     importing.chunks.forEach((entries, chunkIndex) => {
       onChunk?.({
-        protocolVersion: 3,
+        protocolVersion: 4,
         type: "import-chunk",
         requestId: importing.complete.requestId,
         kind: "jiten",
@@ -186,7 +186,7 @@ class FakeWorkerClient implements WorkerClient {
     const importing = this.nextKnown ?? {
       chunks: [["新しい"]],
       complete: {
-        protocolVersion: 3 as const,
+        protocolVersion: 4 as const,
         type: "import-complete" as const,
         requestId: "known-import",
         kind: "known" as const,
@@ -196,7 +196,7 @@ class FakeWorkerClient implements WorkerClient {
     };
     importing.chunks.forEach((words, chunkIndex) => {
       onChunk?.({
-        protocolVersion: 3,
+        protocolVersion: 4,
         type: "import-chunk",
         requestId: importing.complete.requestId,
         kind: "known",
@@ -208,12 +208,29 @@ class FakeWorkerClient implements WorkerClient {
     return { ...importing.complete, name };
   }
 
+  readonly commitCalls: string[] = [];
+  readonly discardCalls: string[] = [];
+  commitError: Error | null = null;
+  discardError: Error | null = null;
+
   async loadDataset(datasetId: string, chunks: AsyncIterable<readonly Entry[]>): Promise<void> {
     if (this.loadError) throw this.loadError;
     const loaded: Entry[][] = [];
     for await (const chunk of chunks) loaded.push([...chunk]);
     this.events.push("load");
     this.loadCalls.push({ datasetId, chunks: loaded });
+  }
+
+  async commitImportedDataset(datasetId: string): Promise<void> {
+    if (this.commitError) throw this.commitError;
+    this.events.push("commit");
+    this.commitCalls.push(datasetId);
+  }
+
+  async discardImportedDataset(datasetId: string): Promise<void> {
+    if (this.discardError) throw this.discardError;
+    this.events.push("discard");
+    this.discardCalls.push(datasetId);
   }
 
   async query(request: WorkerQueryInput): Promise<QueryResult> {
@@ -757,7 +774,7 @@ describe("MinerController", () => {
     worker.nextJiten = {
       chunks: [[entry("new-entry", "新しい")]],
       complete: {
-        protocolVersion: 3,
+        protocolVersion: 4,
         type: "import-complete",
         requestId: "import-new",
         kind: "jiten",
@@ -797,7 +814,7 @@ describe("MinerController", () => {
       status: "ready",
       errorMessage: null,
     });
-    expect(worker.loadCalls.at(-1)?.datasetId).toBe(active?.id);
+    expect(worker.commitCalls.at(-1)).toBe(active?.id);
     expect(worker.queryCalls).toHaveLength(3);
     expect(worker.queryCalls[0]?.queryChannel).toBe("user");
     expect(worker.queryCalls[1]).toMatchObject({
@@ -919,7 +936,7 @@ describe("MinerController", () => {
     worker.nextKnown = {
       chunks: [["単語", "語彙"]],
       complete: {
-        protocolVersion: 3,
+        protocolVersion: 4,
         type: "import-complete",
         requestId: "known-1",
         kind: "known",
@@ -978,7 +995,7 @@ describe("MinerController", () => {
     worker.nextKnown = {
       chunks: [["新しい"]],
       complete: {
-        protocolVersion: 3,
+        protocolVersion: 4,
         type: "import-complete",
         requestId: "known-new",
         kind: "known",
@@ -1033,7 +1050,7 @@ describe("MinerController", () => {
     worker.nextKnown = {
       chunks: [["新しい"]],
       complete: {
-        protocolVersion: 3,
+        protocolVersion: 4,
         type: "import-complete",
         requestId: "known-new",
         kind: "known",
@@ -1099,7 +1116,7 @@ describe("MinerController", () => {
     worker.nextKnown = {
       chunks: [["新しい"]],
       complete: {
-        protocolVersion: 3,
+        protocolVersion: 4,
         type: "import-complete",
         requestId: "known-fail",
         kind: "known",
@@ -1142,7 +1159,7 @@ describe("MinerController", () => {
     worker.nextKnown = {
       chunks: [["新しい"]],
       complete: {
-        protocolVersion: 3,
+        protocolVersion: 4,
         type: "import-complete",
         requestId: "known-rollback-fail",
         kind: "known",
@@ -1183,7 +1200,7 @@ describe("MinerController", () => {
     worker.nextKnown = {
       chunks: [["二回目"]],
       complete: {
-        protocolVersion: 3,
+        protocolVersion: 4,
         type: "import-complete",
         requestId: "known-second",
         kind: "known",
@@ -1212,7 +1229,7 @@ describe("MinerController", () => {
     worker.nextKnown = {
       chunks: [["新"]],
       complete: {
-        protocolVersion: 3,
+        protocolVersion: 4,
         type: "import-complete",
         requestId: "known-err",
         kind: "known",
@@ -1256,7 +1273,7 @@ describe("MinerController", () => {
     const states: Readonly<AppState>[] = [];
     controller.subscribe((state) => states.push(state));
     await controller.init();
-    worker.loadError = new Error("worker load failed");
+    worker.commitError = new Error("worker load failed");
 
     await controller.importJiten({
       name: "new.csv",
@@ -1267,6 +1284,7 @@ describe("MinerController", () => {
     expect((await store.datasets.list()).map((dataset) => dataset.id)).toEqual(["old-dataset"]);
     expect(states.at(-1)?.dataset).toEqual(metadata("old-dataset"));
     expect(states.at(-1)?.errorMessage).toContain("worker load failed");
+    expect(worker.discardCalls).toHaveLength(1);
   });
 
   it("queries replacement before committing and preserves previous result after query failure", async () => {
@@ -1302,23 +1320,23 @@ describe("MinerController", () => {
   it("cleans stale replacement candidates after a later import supersedes them", async () => {
     const store = createMemoryAppStore();
     const worker = new FakeWorkerClient();
-    const originalLoad = worker.loadDataset.bind(worker);
-    let releaseFirstLoad: (() => void) | undefined;
-    let firstLoadStarted: (() => void) | undefined;
-    const firstLoad = new Promise<void>((resolve) => {
-      releaseFirstLoad = resolve;
+    const originalCommit = worker.commitImportedDataset.bind(worker);
+    let releaseFirstCommit: (() => void) | undefined;
+    let firstCommitStarted: (() => void) | undefined;
+    const firstCommit = new Promise<void>((resolve) => {
+      releaseFirstCommit = resolve;
     });
-    const firstLoadReady = new Promise<void>((resolve) => {
-      firstLoadStarted = resolve;
+    const firstCommitReady = new Promise<void>((resolve) => {
+      firstCommitStarted = resolve;
     });
-    let isFirstLoad = true;
-    worker.loadDataset = async (datasetId, chunks) => {
-      if (isFirstLoad) {
-        isFirstLoad = false;
-        firstLoadStarted?.();
-        await firstLoad;
+    let isFirstCommit = true;
+    worker.commitImportedDataset = async (datasetId) => {
+      if (isFirstCommit) {
+        isFirstCommit = false;
+        firstCommitStarted?.();
+        await firstCommit;
       }
-      return originalLoad(datasetId, chunks);
+      return originalCommit(datasetId);
     };
     const originalQuery = worker.query.bind(worker);
     worker.query = async (request) => {
@@ -1337,16 +1355,17 @@ describe("MinerController", () => {
       name: "first.csv",
       text: async () => "Word\n一つ",
     });
-    await firstLoadReady;
+    await firstCommitReady;
     const second = controller.importJiten({
       name: "second.csv",
       text: async () => "Word\n二つ",
     });
-    releaseFirstLoad?.();
+    releaseFirstCommit?.();
     await Promise.all([first, second]);
 
     expect((await store.datasets.list()).map((dataset) => dataset.id)).toEqual(["dataset-2"]);
     expect((await store.datasets.getActive())?.id).toBe("dataset-2");
+    expect(worker.discardCalls).toContain("dataset-1");
   });
 
   it("does not publish a stale replacement after activation yields to a newer import", async () => {
@@ -1402,7 +1421,7 @@ describe("MinerController", () => {
     worker.nextJiten = {
       chunks: [[entry("new-entry", "新しい")]],
       complete: {
-        protocolVersion: 3,
+        protocolVersion: 4,
         type: "import-complete",
         requestId: "import-count",
         kind: "jiten",
@@ -1434,7 +1453,7 @@ describe("MinerController", () => {
     worker.nextKnown = {
       chunks: [["古い"]],
       complete: {
-        protocolVersion: 3,
+        protocolVersion: 4,
         type: "import-complete",
         requestId: "known-new",
         kind: "known",
@@ -1471,7 +1490,7 @@ describe("MinerController", () => {
     worker.nextKnown = {
       chunks: [["新しい"]],
       complete: {
-        protocolVersion: 3,
+        protocolVersion: 4,
         type: "import-complete",
         requestId: "known-new",
         kind: "known",
@@ -1983,7 +2002,7 @@ describe("MinerController word decisions", () => {
     worker.nextKnown = {
       chunks: [["犬"]],
       complete: {
-        protocolVersion: 3,
+        protocolVersion: 4,
         type: "import-complete",
         requestId: "known-new",
         kind: "known",
@@ -3942,7 +3961,7 @@ describe("MinerController coverage lifecycle", () => {
     worker.nextKnown = {
       chunks: [["新しい"]],
       complete: {
-        protocolVersion: 3,
+        protocolVersion: 4,
         type: "import-complete",
         requestId: "known-new",
         kind: "known",

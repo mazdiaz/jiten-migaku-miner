@@ -30,7 +30,32 @@ export async function dispatchWorkerRequest(
   try {
     switch (request.type) {
       case "import-jiten":
-        await engine.importJiten(request.requestId, request.name, request.text, send);
+        await engine.importJiten(
+          request.requestId,
+          request.name,
+          request.text,
+          send,
+          request.datasetId,
+        );
+        return;
+      case "commit-imported-dataset":
+        engine.commitImportedDataset(request.datasetId);
+        send({
+          protocolVersion: WORKER_PROTOCOL_VERSION,
+          type: "commit-imported-dataset-complete",
+          requestId: request.requestId,
+          datasetId: request.datasetId,
+          entryCount: engine.getDatasetEntryCount(request.datasetId),
+        });
+        return;
+      case "discard-imported-dataset":
+        engine.discardImportedDataset(request.datasetId);
+        send({
+          protocolVersion: WORKER_PROTOCOL_VERSION,
+          type: "discard-imported-dataset-complete",
+          requestId: request.requestId,
+          datasetId: request.datasetId,
+        });
         return;
       case "import-known":
         await engine.importKnown(request.requestId, request.name, request.text, send);

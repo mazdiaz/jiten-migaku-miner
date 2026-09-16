@@ -253,6 +253,8 @@ class MinerControllerImpl implements MinerController {
     let committedQueryGeneration = -1;
     this.setState({ status: "loading", errorMessage: null });
 
+    const datasetId = this.createId("dataset");
+
     try {
       const text = await source.text();
       const chunks: Entry[][] = [];
@@ -263,9 +265,13 @@ class MinerControllerImpl implements MinerController {
         (chunk: JitenImportChunk) => {
           chunks.push(chunk.entries);
         },
+        datasetId,
       );
       this.recordStage("worker_parse_and_emit", parseStart);
-      if (generation !== this.importGeneration) return;
+      if (generation !== this.importGeneration) {
+        await this.worker.discardImportedDataset(datasetId).catch(() => {});
+        return;
+      }
       const receivedCount = chunks.reduce((count, chunk) => count + chunk.length, 0);
       if (receivedCount !== complete.entryCount) {
         throw new Error(
@@ -274,7 +280,7 @@ class MinerControllerImpl implements MinerController {
       }
 
       const dataset = this.datasetMetadata(
-        this.createId("dataset"),
+        datasetId,
         source.name,
         complete.headers,
         complete.entryCount,
@@ -286,12 +292,13 @@ class MinerControllerImpl implements MinerController {
       );
       this.recordStage("remote_dataset_stage", stageStart);
       if (generation !== this.importGeneration) {
+        await this.worker.discardImportedDataset(dataset.id).catch(() => {});
         this.mergeWarning(await this.removeStagedDataset(dataset.id));
         return;
       }
 
       const loadStart = this.performanceNow();
-      await this.worker.loadDataset(dataset.id, copiedEntryChunks(chunks));
+      await this.worker.commitImportedDataset(dataset.id);
       this.recordStage("worker_dataset_load", loadStart);
       const candidateWindow =
         this.state.query.pageSize === "all" ? { start: 0, size: VIEWPORT_WINDOW_SIZE } : undefined;
@@ -307,6 +314,7 @@ class MinerControllerImpl implements MinerController {
       });
       this.recordStage("candidate_query", candidateStart);
       if (generation !== this.importGeneration) {
+        await this.worker.discardImportedDataset(dataset.id).catch(() => {});
         this.mergeWarning(await this.removeStagedDataset(dataset.id));
         return;
       }
@@ -353,9 +361,11 @@ class MinerControllerImpl implements MinerController {
         return;
       }
 
+      await this.worker.discardImportedDataset(dataset.id).catch(() => {});
       await this.withImportLock(() => this.rollbackActivation(dataset.id, previous.state.dataset));
       this.mergeWarning(await this.removeStagedDataset(dataset.id));
     } catch (error) {
+      await this.worker.discardImportedDataset(datasetId).catch(() => {});
       if (activationAttempted) {
         try {
           await this.withImportLock(() =>

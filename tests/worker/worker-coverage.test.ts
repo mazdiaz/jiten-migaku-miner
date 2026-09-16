@@ -28,7 +28,7 @@ function entry(index: number, word = `word-${index}`, occurrences = index): Entr
 
 function coverageRequest(overrides: Partial<CoverageRequest> = {}): CoverageRequest {
   return {
-    protocolVersion: 3,
+    protocolVersion: 4,
     type: "coverage",
     requestId: "coverage-1",
     datasetId: "dataset-1",
@@ -56,7 +56,7 @@ function queryState(overrides: Partial<QueryState> = {}): QueryState {
 
 function queryRequest(overrides: Partial<QueryRequest> = {}): QueryRequest {
   return {
-    protocolVersion: 3,
+    protocolVersion: 4,
     type: "query",
     requestId: "query-1",
     datasetId: "dataset-1",
@@ -79,7 +79,7 @@ function loadDataset(engine: WorkerEngine, datasetId: string, entries: Entry[]):
 
 describe("worker coverage protocol", () => {
   const validCoverageRequest: WorkerRequest = {
-    protocolVersion: 3,
+    protocolVersion: 4,
     type: "coverage",
     requestId: "coverage-1",
     datasetId: "dataset-1",
@@ -127,7 +127,7 @@ describe("worker coverage protocol", () => {
     const responses: WorkerResponse[] = [];
     await dispatchWorkerRequest(
       {
-        protocolVersion: 3,
+        protocolVersion: 4,
         type: "coverage",
         requestId: "cov-dispatch",
         datasetId: "dataset-1",
@@ -146,7 +146,7 @@ describe("worker coverage protocol", () => {
     );
     expect(responses).toEqual([
       {
-        protocolVersion: 3,
+        protocolVersion: 4,
         type: "coverage-result",
         requestId: "cov-dispatch",
         datasetId: "dataset-1",
@@ -160,7 +160,7 @@ describe("worker coverage protocol", () => {
 
     await dispatchWorkerRequest(
       {
-        protocolVersion: 3,
+        protocolVersion: 4,
         type: "coverage",
         requestId: "cov-missing",
         datasetId: "missing",
@@ -174,7 +174,7 @@ describe("worker coverage protocol", () => {
 
     expect(responses).toEqual([
       {
-        protocolVersion: 3,
+        protocolVersion: 4,
         type: "error",
         requestId: "cov-missing",
         code: "dataset-not-found",
@@ -206,7 +206,7 @@ describe("worker engine coverage", () => {
     const expected = computeCoverage(source, new Set(knownWords), new Map(decisions), targets);
     expect(responses).toHaveLength(1);
     expect(responses[0]).toMatchObject({
-      protocolVersion: 3,
+      protocolVersion: 4,
       type: "coverage-result",
       requestId: "cov-1",
       datasetId: "dataset-1",
@@ -322,7 +322,7 @@ describe("worker engine coverage", () => {
 
     await dispatchWorkerRequest(
       {
-        protocolVersion: 3,
+        protocolVersion: 4,
         type: "anki-preview-match",
         requestId: "preview-dispatch",
         datasetId: "dataset-1",
@@ -336,7 +336,7 @@ describe("worker engine coverage", () => {
 
     expect(responses).toEqual([
       {
-        protocolVersion: 3,
+        protocolVersion: 4,
         type: "anki-preview-result",
         requestId: "preview-dispatch",
         datasetId: "dataset-1",

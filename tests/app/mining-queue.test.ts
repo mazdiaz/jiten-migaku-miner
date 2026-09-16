@@ -116,7 +116,7 @@ class FakeWorkerClient implements WorkerClient {
     const importing = this.nextJiten ?? {
       chunks: [[entry("new-entry", "新しい")]],
       complete: {
-        protocolVersion: 3 as const,
+        protocolVersion: 4 as const,
         type: "import-complete" as const,
         requestId: "import",
         kind: "jiten" as const,
@@ -128,7 +128,7 @@ class FakeWorkerClient implements WorkerClient {
     };
     importing.chunks.forEach((entries, chunkIndex) => {
       onChunk?.({
-        protocolVersion: 3,
+        protocolVersion: 4,
         type: "import-chunk",
         requestId: importing.complete.requestId,
         kind: "jiten",
@@ -142,7 +142,7 @@ class FakeWorkerClient implements WorkerClient {
 
   async importKnown(name: string): Promise<Extract<ImportCompleteResponse, { kind: "known" }>> {
     return {
-      protocolVersion: 3,
+      protocolVersion: 4,
       type: "import-complete",
       requestId: "known",
       kind: "known",
@@ -156,6 +156,9 @@ class FakeWorkerClient implements WorkerClient {
     for await (const chunk of chunks) loaded.push([...chunk]);
     this.loadCalls.push({ datasetId, chunks: loaded });
   }
+
+  async commitImportedDataset(_datasetId: string): Promise<void> {}
+  async discardImportedDataset(_datasetId: string): Promise<void> {}
 
   async query(request: WorkerQueryInput): Promise<QueryResult> {
     this.queryCalls.push(request);
@@ -310,7 +313,7 @@ describe("mining queue controller operations", () => {
     env.worker.nextJiten = {
       chunks: [[entry("new", "新しい", 0, 9)]],
       complete: {
-        protocolVersion: 3,
+        protocolVersion: 4,
         type: "import-complete",
         requestId: "import",
         kind: "jiten",

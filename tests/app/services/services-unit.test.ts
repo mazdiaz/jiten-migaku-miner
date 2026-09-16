@@ -70,7 +70,7 @@ class FakeWorker implements WorkerClient {
 
   async importJiten(name: string) {
     return {
-      protocolVersion: 3 as const,
+      protocolVersion: 4 as const,
       type: "import-complete" as const,
       requestId: "i",
       kind: "jiten" as const,
@@ -83,7 +83,7 @@ class FakeWorker implements WorkerClient {
 
   async importKnown(name: string) {
     return {
-      protocolVersion: 3 as const,
+      protocolVersion: 4 as const,
       type: "import-complete" as const,
       requestId: "i",
       kind: "known" as const,
@@ -93,6 +93,10 @@ class FakeWorker implements WorkerClient {
   }
 
   async loadDataset(_datasetId: string, _chunks: AsyncIterable<readonly Entry[]>): Promise<void> {}
+
+  async commitImportedDataset(_datasetId: string): Promise<void> {}
+
+  async discardImportedDataset(_datasetId: string): Promise<void> {}
 
   async query(request: WorkerQueryInput): Promise<QueryResult> {
     await this.queryGate;

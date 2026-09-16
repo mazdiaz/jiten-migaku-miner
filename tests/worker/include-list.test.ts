@@ -35,7 +35,7 @@ function queryState(overrides: Partial<QueryState> = {}): QueryState {
 
 function queryRequest(overrides: Partial<QueryRequest> = {}): QueryRequest {
   return {
-    protocolVersion: 3,
+    protocolVersion: 4,
     type: "query",
     requestId: "query-1",
     datasetId: "dataset-1",
@@ -272,7 +272,7 @@ describe("worker canonical case-insensitive matching", () => {
 describe("worker include-list protocol", () => {
   it("parses an optional include list of non-empty strings", () => {
     const parsed = parseWorkerRequest({
-      protocolVersion: 3,
+      protocolVersion: 4,
       type: "query",
       requestId: "query-1",
       datasetId: "dataset-1",
@@ -291,7 +291,7 @@ describe("worker include-list protocol", () => {
 
   it("omits the include list when absent", () => {
     const parsed = parseWorkerRequest({
-      protocolVersion: 3,
+      protocolVersion: 4,
       type: "query",
       requestId: "query-1",
       datasetId: "dataset-1",
@@ -308,7 +308,7 @@ describe("worker include-list protocol", () => {
   it("rejects include lists containing non-string or empty values", () => {
     expect(() =>
       parseWorkerRequest({
-        protocolVersion: 3,
+        protocolVersion: 4,
         type: "query",
         requestId: "query-1",
         datasetId: "dataset-1",
@@ -322,7 +322,7 @@ describe("worker include-list protocol", () => {
 
     expect(() =>
       parseWorkerRequest({
-        protocolVersion: 3,
+        protocolVersion: 4,
         type: "query",
         requestId: "query-1",
         datasetId: "dataset-1",
