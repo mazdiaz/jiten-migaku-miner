@@ -41,6 +41,11 @@ import {
 
 export { MAX_BACKUP_BYTES };
 
+export interface ImportTimingEvent {
+  stage: string;
+  durationMs: number;
+}
+
 export interface MinerControllerOptions {
   persistence?: AppState["persistence"];
   store?: AppStore;
@@ -52,6 +57,8 @@ export interface MinerControllerOptions {
   createId?: (kind: "dataset" | "known") => string;
   ankiConnect?: AnkiConnectPort;
   ankiConnectFactory?: () => AnkiConnectPort;
+  performanceNow?: () => number;
+  onImportTiming?: (event: ImportTimingEvent) => void;
 }
 
 function defaultId(kind: "dataset" | "known"): string {
@@ -122,6 +129,8 @@ class MinerControllerImpl implements MinerController {
   private readonly decisionService: DecisionService;
   private readonly backupService: BackupService;
   private readonly ankiSyncService: AnkiSyncService;
+  private readonly performanceNow: () => number;
+  private readonly onImportTiming: ((event: ImportTimingEvent) => void) | undefined;
   private activeKnownId: string | null = null;
 
   constructor(options: MinerControllerOptions) {
@@ -135,6 +144,13 @@ class MinerControllerImpl implements MinerController {
     this.sessionQueue = options.sessionQueueStore ?? createSessionQueueStore();
     this.now = options.now ?? (() => new Date().toISOString());
     this.createId = options.createId ?? defaultId;
+    this.performanceNow =
+      options.performanceNow ??
+      (() =>
+        typeof performance !== "undefined" && typeof performance.now === "function"
+          ? performance.now()
+          : Date.now());
+    this.onImportTiming = options.onImportTiming;
     this.state = createInitialAppState(
       options.persistence ?? (this.storeWasProvided ? "memory" : "indexeddb"),
     );
@@ -222,6 +238,11 @@ class MinerControllerImpl implements MinerController {
     }
   }
 
+  private recordStage(stage: string, start: number): void {
+    const durationMs = Math.max(0, this.performanceNow() - start);
+    this.onImportTiming?.({ stage, durationMs });
+  }
+
   async importJiten(source: FileSource): Promise<void> {
     const generation = ++this.importGeneration;
     const previous: ImportSnapshot = { state: cloneAppState(this.state) };
@@ -235,6 +256,7 @@ class MinerControllerImpl implements MinerController {
     try {
       const text = await source.text();
       const chunks: Entry[][] = [];
+      const parseStart = this.performanceNow();
       const complete = await this.worker.importJiten(
         source.name,
         text,
@@ -242,6 +264,7 @@ class MinerControllerImpl implements MinerController {
           chunks.push(chunk.entries);
         },
       );
+      this.recordStage("worker_parse_and_emit", parseStart);
       if (generation !== this.importGeneration) return;
       const receivedCount = chunks.reduce((count, chunk) => count + chunk.length, 0);
       if (receivedCount !== complete.entryCount) {
@@ -257,17 +280,22 @@ class MinerControllerImpl implements MinerController {
         complete.entryCount,
       );
       stagedDataset = dataset;
+      const stageStart = this.performanceNow();
       await this.storageOperation((store) =>
         store.datasets.stage(dataset, copiedEntryChunks(chunks)),
       );
+      this.recordStage("remote_dataset_stage", stageStart);
       if (generation !== this.importGeneration) {
         this.mergeWarning(await this.removeStagedDataset(dataset.id));
         return;
       }
 
+      const loadStart = this.performanceNow();
       await this.worker.loadDataset(dataset.id, copiedEntryChunks(chunks));
+      this.recordStage("worker_dataset_load", loadStart);
       const candidateWindow =
         this.state.query.pageSize === "all" ? { start: 0, size: VIEWPORT_WINDOW_SIZE } : undefined;
+      const candidateStart = this.performanceNow();
       candidateResult = await this.worker.query({
         datasetId: dataset.id,
         knownWords: [...this.state.knownWords],
@@ -277,11 +305,13 @@ class MinerControllerImpl implements MinerController {
         queryChannel: "candidate",
         ...(candidateWindow === undefined ? {} : { window: candidateWindow }),
       });
+      this.recordStage("candidate_query", candidateStart);
       if (generation !== this.importGeneration) {
         this.mergeWarning(await this.removeStagedDataset(dataset.id));
         return;
       }
 
+      const activationStart = this.performanceNow();
       activationAttempted = true;
       committed = await this.withImportLock(() =>
         this.withUserStateLock(async () => {
@@ -311,11 +341,14 @@ class MinerControllerImpl implements MinerController {
           return true;
         }),
       );
+      this.recordStage("activation_and_metadata_refresh", activationStart);
       if (committed) {
         // A newer query or backup error owns the visible state now. Do not
         // overwrite it with a refresh delayed by the import's preference save.
         if (this.queryGeneration !== committedQueryGeneration) return;
+        const postCommitStart = this.performanceNow();
         await this.runQuery();
+        this.recordStage("post_commit_query", postCommitStart);
         await this.requestCoverage();
         return;
       }
