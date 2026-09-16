@@ -38,6 +38,7 @@ export class RemoteStoreError extends Error {
 }
 const byteLength = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
 const MAX_BACKUP_BYTES = 256 * 1024 * 1024;
+const DATASET_WIRE_BATCH_TARGET = 680_000;
 
 /** Calls are serialized across every store area so dependent writes use the last acknowledged revision. */
 export function createRemoteAppStore(
@@ -216,31 +217,62 @@ export function createRemoteAppStore(
           const { uploadId } = await request<{ uploadId: string }>("dataset.begin", {
             metadata: capturedMetadata,
           });
-          let pending: Entry[] = [],
-            size = 2,
-            index = 0;
-          const flush = async () => {
-            if (pending.length)
-              await mutate("dataset.chunk", { uploadId, index: index++, entries: pending });
-            pending = [];
-            size = 2;
+          let pendingEntries: Entry[] = [];
+          let pendingEntriesSize = 2;
+          let chunkIndex = 0;
+          let pendingWireChunks: Array<{ index: number; entries: Entry[] }> = [];
+          let wireBatchEstimatedBytes = 150;
+
+          const flushWireBatch = async () => {
+            if (pendingWireChunks.length) {
+              await mutate("dataset.chunks", { uploadId, chunks: pendingWireChunks });
+            }
+            pendingWireChunks = [];
+            wireBatchEstimatedBytes = 150;
           };
-          for await (const chunk of chunks)
+
+          const emitLogicalChunk = async () => {
+            if (!pendingEntries.length) return;
+            const logicalChunk = { index: chunkIndex++, entries: pendingEntries };
+            const logicalChunkBytes = byteLength(logicalChunk) + 1;
+
+            if (
+              pendingWireChunks.length &&
+              wireBatchEstimatedBytes + logicalChunkBytes > DATASET_WIRE_BATCH_TARGET
+            ) {
+              await flushWireBatch();
+            }
+
+            pendingWireChunks.push(logicalChunk);
+            wireBatchEstimatedBytes += logicalChunkBytes;
+            pendingEntries = [];
+            pendingEntriesSize = 2;
+          };
+
+          for await (const chunk of chunks) {
             for (const entry of chunk) {
               const length = byteLength(entry) + 1;
-              if (length + 2 > 400_000)
+              if (length + 2 > 400_000) {
                 throw new RemoteStoreError(
                   "One dataset row exceeds the 400 KB size limit.",
                   413,
                   "PAYLOAD_TOO_LARGE",
                 );
-              if (pending.length && (size + length > 350_000 || pending.length >= 2000))
-                await flush();
-              pending.push(structuredClone(entry));
-              size += length;
+              }
+              if (
+                pendingEntries.length &&
+                (pendingEntriesSize + length > 350_000 || pendingEntries.length >= 2000)
+              ) {
+                await emitLogicalChunk();
+              }
+              pendingEntries.push(structuredClone(entry));
+              pendingEntriesSize += length;
             }
-          await flush();
-          await mutate("dataset.finish", { uploadId, chunkCount: index });
+          }
+
+          await emitLogicalChunk();
+          await flushWireBatch();
+          await mutate("dataset.finish", { uploadId, chunkCount: chunkIndex });
         });
       },
       activate: (datasetId) => run(() => mutate("dataset.activate", { datasetId })),

@@ -59,13 +59,16 @@ describe("PostgreSQL store over the real HTTP adapter", () => {
   let dispatch: ReturnType<typeof createPostgresStore>;
   let requestSizes: number[];
   let responseSizes: number[];
+  let capturedRequests: Array<Record<string, unknown>>;
   const remote = () =>
     createRemoteAppStore({
       fetch: (async (_url, init) => {
         const body = String(init?.body);
         requestSizes.push(new TextEncoder().encode(body).length);
+        const parsed = JSON.parse(body);
+        capturedRequests.push(parsed);
         try {
-          const value = await dispatch(JSON.parse(body));
+          const value = await dispatch(parsed);
           const json = JSON.stringify(value);
           responseSizes.push(new TextEncoder().encode(json).length);
           return new Response(json, { status: 200 });
@@ -94,6 +97,7 @@ describe("PostgreSQL store over the real HTTP adapter", () => {
     );
     requestSizes = [];
     responseSizes = [];
+    capturedRequests = [];
   });
 
   it("persists ordered datasets, decisions, known words, preferences and Anki state across clients", async () => {
@@ -546,5 +550,36 @@ describe("PostgreSQL store over the real HTTP adapter", () => {
 
     const active = await dispatch({ operation: "dataset.active", revision: currentRev });
     expect(active.value).toMatchObject({ id: "initial" });
+  });
+
+  it("batches multiple logical dataset chunks into fewer wire requests", async () => {
+    const store = remote();
+    await store.initialize();
+    const rows = Array.from({ length: 400 }, (_, index) => ({
+      ...entry(String(index)),
+      definitions: "x".repeat(3000),
+    }));
+    await store.datasets.stage(metadata("wire-batch", rows.length), chunks(rows));
+    await store.datasets.activate("wire-batch");
+
+    const chunkRequests = capturedRequests.filter((r) => r.operation === "dataset.chunks");
+    expect(chunkRequests.length).toBeGreaterThan(0);
+
+    const logicalChunkCount = chunkRequests.reduce(
+      (sum, r) => sum + (Array.isArray(r.chunks) ? r.chunks.length : 0),
+      0,
+    );
+    expect(logicalChunkCount).toBeGreaterThanOrEqual(3);
+    expect(chunkRequests.length).toBeLessThan(logicalChunkCount);
+
+    for (const size of requestSizes) {
+      expect(size).toBeLessThan(750_000);
+    }
+
+    const read: Entry[] = [];
+    for await (const chunk of store.datasets.readChunks("wire-batch", 50)) {
+      read.push(...chunk);
+    }
+    expect(read.map((r) => r.id)).toEqual(rows.map((r) => r.id));
   });
 });
