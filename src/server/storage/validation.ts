@@ -224,7 +224,7 @@ export const operationSchema = z.discriminatedUnion("operation", [
       revision,
       uploadId,
       index: integer.max(10000),
-      text: z.string().max(60_000),
+      text: z.string().max(400_000),
     })
     .strict(),
   z

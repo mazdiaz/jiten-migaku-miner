@@ -234,6 +234,57 @@ describe("PostgreSQL store over the real HTTP adapter", () => {
     },
   );
 
+  it.each([
+    {
+      label: "ASCII payload",
+      words: Array.from({ length: 3_500 }, (_, i) => `word_${i}_${"a".repeat(90)}`),
+    },
+    {
+      label: "Japanese payload",
+      words: Array.from({ length: 1_500 }, (_, i) => `言葉_${i}_${"猫".repeat(30)}`),
+    },
+    {
+      label: "emoji at chunk boundary",
+      words: [
+        ...Array.from({ length: 2_500 }, (_, i) => `word_${i}_${"a".repeat(90)}`),
+        `emoji_😀_boundary_${"😀".repeat(20)}`,
+        ...Array.from({ length: 1_000 }, (_, i) => `after_${i}_${"a".repeat(90)}`),
+      ],
+    },
+    {
+      label: "𠮷 at chunk boundary",
+      words: [
+        ...Array.from({ length: 2_500 }, (_, i) => `word_${i}_${"a".repeat(90)}`),
+        `kanji_𠮷_boundary_${"𠮷".repeat(20)}`,
+        ...Array.from({ length: 1_000 }, (_, i) => `after_${i}_${"a".repeat(90)}`),
+      ],
+    },
+    {
+      label: "mixed ASCII/Japanese/emoji",
+      words: Array.from({ length: 2_000 }, (_, i) => `mixed_${i}_言葉_😀_𠮷_${"ab".repeat(20)}`),
+    },
+  ])("preserves $label across 300 KB chunk boundaries", async ({ words }) => {
+    const store = remote();
+    await store.initialize();
+    const unique = [...new Set(words)];
+    await store.knownWords.save("boundary-test", "Boundary", unique);
+    const active = await store.knownWords.getActive();
+    expect(active?.words.size).toBe(unique.length);
+    expect(active?.words).toEqual(new Set(unique));
+    expect(Math.max(...requestSizes)).toBeLessThan(750_000);
+  }, 60_000);
+
+  it("uses fewer state.chunk requests for large state than 60,000-character slicing", async () => {
+    const store = remote();
+    await store.initialize();
+    const words = Array.from({ length: 20_000 }, (_, i) => `言葉${i}`);
+    await store.knownWords.save("chunk-count", "CountTest", words);
+    const chunkRequests = capturedRequests.filter((r) => r.operation === "state.chunk");
+    expect(chunkRequests.length).toBeLessThan(3);
+    expect(chunkRequests.length).toBeGreaterThan(0);
+    expect(Math.max(...requestSizes)).toBeLessThan(750_000);
+  }, 60_000);
+
   it("rejects complete exports above the UTF-8 restore byte limit", async () => {
     // Isolate the client export limit from storage: a valid, bounded page is repeated
     // until individually admissible data exceeds the aggregate restore limit.
