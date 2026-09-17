@@ -2,17 +2,15 @@
 
 ## Goal
 
-Make the miner feel instant on repeat visits while preserving durable cross-device PostgreSQL sync. The browser becomes the immediate working copy; PostgreSQL remains the durable shared copy. Normal UI actions must not wait for network acknowledgement.
+Make the miner feel instant on repeat visits while preserving durable cross-device PostgreSQL sync. The browser becomes the immediate working copy; PostgreSQL remains the durable shared copy. Normal study actions must not wait for network acknowledgement.
 
 ## Current problem
 
-The deployed runtime currently constructs `createRemoteAppStore()` and passes it directly to the miner controller. Startup waits for remote initialization, queue loading, controller initialization, server-backed state reads, active-dataset download, worker load, and the first query before the workspace is ready. The remote store also serializes operations behind a promise tail so dependent PostgreSQL revision writes stay ordered. This is safe, but it puts network latency in the critical path for startup and ordinary persistence.
+The deployed runtime constructs `createRemoteAppStore()` and passes it directly to the miner controller. Startup waits for remote initialization, queue loading, server-backed state reads, active-dataset download, worker load, and the first query. The remote store also serializes requests so PostgreSQL revision writes remain ordered. This is safe, but network/database latency sits directly in the startup and persistence path.
 
-The repository already contains most of the pieces needed for a local-first architecture: an IndexedDB `AppStore`, chunked datasets, a Web Worker, virtualized results, PostgreSQL persistence, revision checks, and a separate browser study runtime.
+The repository already has the useful local pieces: an IndexedDB `AppStore`, chunked datasets, a Web Worker, virtualized results, PostgreSQL persistence, revision checks, and a separate browser study runtime.
 
 ## Chosen architecture
-
-Use a hybrid local-first model:
 
 ```text
 UI / miner controller
@@ -24,24 +22,24 @@ IndexedDB working copy  <---->  SyncEngine  <---->  PostgreSQL
 Web Worker
 ```
 
-The miner controller reads and writes IndexedDB. A background `SyncEngine` pushes durable local mutations to PostgreSQL and pulls remote changes back into IndexedDB. The cloud is no longer part of the steady-state UI latency path.
+The controller reads and writes IndexedDB. `SyncEngine` pushes durable local mutations in the background and pulls cloud changes back into IndexedDB. PostgreSQL remains the durable cross-device copy but leaves the steady-state UI critical path.
 
-The existing `RemoteAppStore` remains available for compatibility-sensitive operations such as complete backup/restore during the first local-first release and as the server-first fallback when IndexedDB is unavailable.
+The existing `RemoteAppStore` stays available for complete backup/restore and as a server-first fallback when IndexedDB is unavailable.
 
-## Non-goals for the first local-first release
+## Non-goals
 
 - No CRDT framework.
 - No multi-user collaboration semantics.
-- No service worker/PWA dependency.
+- No service worker/PWA requirement.
 - No automatic deletion of the pre-local-first IndexedDB database.
-- No attempt to make complete backup restore work offline.
+- No offline complete-backup restore.
 - No eager download of every saved dataset on every device.
 
-The deployment is single-owner. Server arrival order is therefore an acceptable conflict rule for resources edited concurrently on multiple devices: the last mutation accepted by PostgreSQL wins. Pending local writes are pushed before remote changes are pulled, so a reconnecting device's unsynced edits are not silently discarded.
+This is a single-owner deployment. The first release therefore uses server acceptance order for conflicting writes. Pending local writes are pushed before remote changes are pulled, so a reconnecting device does not silently discard its unsynced edits.
 
 ## Storage interfaces
 
-Keep the existing `AppStore` as the miner-facing storage boundary. Add sync-specific ports rather than teaching the controller about HTTP or PostgreSQL.
+Keep `AppStore` as the miner-facing boundary. Add sync-specific ports instead of teaching the controller about HTTP or PostgreSQL.
 
 ```ts
 export type SyncMutationKind =
@@ -89,11 +87,23 @@ export interface LocalSyncStore {
   saveWorkspace(value: WorkspaceResumeState): Promise<void>;
 }
 
+export interface CloudBootstrapManifest {
+  eventId: number;
+  activeDatasetId: string | null;
+  datasets: DatasetMetadata[];
+}
+
 export interface CloudSyncPort {
-  bootstrap(): Promise<CloudBootstrap>;
+  bootstrap(): Promise<CloudBootstrapManifest>;
+  readKnownWords(): Promise<{ id: string; name: string; words: string[] } | null>;
+  readDecisions(): Promise<WordDecision[]>;
+  readPreferences(): Promise<PreferencesValue | null>;
+  readQueues(): Promise<SessionQueueSnapshot[]>;
+  readAnki(): Promise<{ config: AnkiSyncConfig | null; snapshot: AnkiSyncSnapshot | null }>;
   pull(afterEventId: number, limit: number): Promise<SyncPullPage>;
-  push(mutations: readonly MaterializedSyncMutation[]): Promise<SyncPushReceipt>;
+  push(deviceId: string, mutations: readonly MaterializedSyncMutation[]): Promise<SyncPushReceipt>;
   uploadDataset(
+    deviceId: string,
     mutationId: string,
     metadata: DatasetMetadata,
     chunks: AsyncIterable<readonly Entry[]>,
@@ -102,36 +112,36 @@ export interface CloudSyncPort {
 }
 ```
 
-`SyncOutboxRecord` deliberately stores only identity and mutation kind. The sync engine materializes the latest local payload when flushing. This prevents large known-word sets, Anki snapshots, and queues from being duplicated inside the outbox and naturally coalesces rapid repeated changes.
+Bootstrap returns only metadata/cursor. Large collections are read through paginated sync reads so bootstrap and pull never require a multi-megabyte JSON response.
 
-The outbox key is a stable dedupe key such as `decision:騒ぐ`, `preferences`, `queue:<datasetId>`, `known`, `anki`, or `dataset:<datasetId>`. Each local mutation replaces the pending record for that key with a new `mutationId`. A sync acknowledgement deletes the record only if the stored `mutationId` still matches the sent mutation, so an in-flight acknowledgement cannot erase a newer local change.
+`SyncOutboxRecord` stores identity, not large payloads. The engine materializes the latest local value at flush time. This naturally coalesces repeated preference/queue/known/Anki changes and prevents a large known-word set from being duplicated in the outbox.
 
-## IndexedDB database and schema
+Use stable dedupe keys: `decision:<word>`, `preferences`, `queue:<datasetId>`, `known`, `anki`, `dataset:<datasetId>`, and `activeDataset`. Each new local mutation replaces the pending record for that key with a new `mutationId`. An acknowledgement deletes the record only if the stored `mutationId` still matches the sent mutation.
 
-Use a new production database name so stale browser data from the earlier IndexedDB era can never be mistaken for a valid cloud-seeded cache:
+## IndexedDB schema
+
+Use a new production database name so stale pre-cloud browser data cannot be mistaken for a valid cache:
 
 ```ts
 INDEXED_DB_NAME = "jiten-migaku-miner-local-first";
 INDEXED_DB_VERSION = 4;
 ```
 
-Keep the current stores and add local-first stores:
-
 | Store | Key | Purpose |
 | --- | --- | --- |
-| `datasets` | `id` | Dataset metadata and local cache readiness. |
+| `datasets` | `id` | Dataset metadata and cache readiness. |
 | `entryChunks` | `[datasetId, chunkIndex]` | Cached dataset rows. |
 | `knownWordSets` | `id` | Current known-word set. |
 | `preferences` | `id = "current"` | Query/view/page preferences. |
 | `meta` | `key` | Active dataset and active known-set ids. |
 | `wordDecisions` | `normalizedWord` | Manual decisions. |
 | `ankiSync` | `id = "current"` | Anki config/snapshot. |
-| `queues` | `datasetId` | Durable per-dataset mining queue snapshots. |
-| `workspace` | `id = "current"` | Resume state not appropriate for cloud preferences, especially viewport. |
-| `syncOutbox` | `dedupeKey` | Durable, coalescing pending cloud mutations. |
-| `syncMeta` | `id = "current"` | Device id, bootstrap marker, server event cursor, last-sync timestamp. |
+| `queues` | `datasetId` | Durable per-dataset mining queues. |
+| `workspace` | `id = "current"` | Device-local resume state. |
+| `syncOutbox` | `dedupeKey` | Durable coalescing pending cloud mutations. |
+| `syncMeta` | `id = "current"` | Device id, bootstrap marker, server cursor, last sync. |
 
-Extend the local dataset record with a cache state:
+Extend local dataset records:
 
 ```ts
 interface DatasetRecord extends DatasetMetadata {
@@ -140,13 +150,13 @@ interface DatasetRecord extends DatasetMetadata {
 }
 ```
 
-`list()` returns both cached and metadata-only datasets so the library is complete. `readChunks()` only succeeds for `cacheState: "ready"`. The active dataset must be cached before controller initialization completes. Other datasets are downloaded on demand when switched to, then remain cached on that device.
+`list()` returns both cached and metadata-only datasets. `readChunks()` only succeeds for ready cached content. The active dataset must be cached before controller initialization. Other datasets download on demand when selected and stay cached afterward.
 
-All local mutations that need cloud synchronization must write application state and the matching outbox record in the same IndexedDB transaction. This is a hard invariant: the UI may acknowledge a local change only after both the local state and its durable sync intent commit atomically.
+All local mutations that require cloud sync must write application state and the matching outbox record in the same IndexedDB transaction. Remote/bootstrap writes use a recording-disabled store and never create outbox entries.
 
-## Workspace resume state
+## Workspace resume
 
-Cloud preferences already persist query, view, and page. Add a small local workspace record for device-specific resume state:
+Cloud preferences already persist query/view/page. Add a small device-local workspace record:
 
 ```ts
 {
@@ -158,13 +168,13 @@ Cloud preferences already persist query, view, and page. Add a small local works
 }
 ```
 
-`viewportStart` is written with a 300-500 ms debounce while the virtualized all-results view moves. Query, view, and page remain in the existing preferences model and therefore sync across devices. Viewport position stays device-local because screen size and virtual-window position are device-specific.
+Persist viewport with a 400 ms debounce. Query/view/page keep their existing cross-device persistence. Viewport stays local because screen size and virtual-window position are device-specific.
 
-Controller construction gains an `initialViewportStart` option so the first query can open at the saved window without issuing a second corrective query.
+Controller construction gains `initialViewportStart` so the first query can open at the saved window without a second corrective query.
 
-## Server change feed
+## PostgreSQL change feed
 
-Add an append-only sync event table and idempotency ledger:
+Add:
 
 ```sql
 CREATE TABLE sync_events (
@@ -180,18 +190,14 @@ CREATE TABLE sync_events (
 CREATE TABLE sync_mutations (
   mutation_id uuid PRIMARY KEY,
   device_id text NOT NULL,
-  accepted_event_id bigint,
+  accepted_event_id bigint REFERENCES sync_events(id) ON DELETE SET NULL,
   created_at timestamptz NOT NULL DEFAULT now()
 );
-
-CREATE INDEX sync_events_id_idx ON sync_events(id);
 ```
 
-Do not purge sync events in the first release. Expected single-owner event volume is small and indefinite retention removes bootstrap-gap complexity.
+Keep events indefinitely in this release. Every canonical PostgreSQL mutation emits an event in the same transaction. The legacy `/api/store` path must dual-write events before local-first runtime is enabled so an already-open old tab cannot create invisible cloud changes.
 
-Every canonical PostgreSQL mutation must emit an event in the same transaction. The existing server-first `/api/store` path must dual-write events before the local-first client is enabled so an already-open old tab cannot make invisible cloud changes.
-
-Event forms are compact:
+Compact event forms:
 
 ```ts
 type RemoteChange =
@@ -208,67 +214,57 @@ type RemoteChange =
   | { id: number; kind: "full-reset" };
 ```
 
-Large resources are not duplicated into the event log. `known.replace`, `queue.replace`, `anki.replace`, and `full-reset` instruct the client to fetch the canonical current resource through the sync transport.
+Large resources are not duplicated in the event table. `known.replace`, `queue.replace`, `anki.replace`, and `full-reset` instruct the client to fetch canonical current state through paginated sync reads.
 
-## Push semantics
-
-The sync loop is always push-first, then pull:
+## Push flow
 
 ```text
 1. read pending outbox records
 2. materialize current local values
 3. push to PostgreSQL
 4. acknowledge only matching mutationIds
-5. pull events after local serverEventId
-6. apply remote events to IndexedDB
-7. advance serverEventId only after the whole pull page commits locally
-8. repeat until outbox empty and pull has no more pages
+5. pull events after serverEventId
+6. apply remote events to IndexedDB without recording mutations
+7. refresh the in-memory controller from IndexedDB if user-visible state changed
+8. advance serverEventId only after the pull page and controller refresh succeed
+9. repeat until outbox empty and pull has no more pages
 ```
 
-`sync.push` does not use the old global optimistic revision as a rejection gate. It serializes on the database transaction, applies mutations in request order, records each `mutationId`, and returns prior success for duplicate retries. This keeps background sync resilient to another device changing the cloud between requests.
+`sync.push` does not use the old global optimistic revision as a rejection gate. It applies mutations in server transaction order, records each `mutationId`, and returns prior success for duplicate retries.
 
-Dataset uploads use a dedicated idempotent staged sync upload because entries can be large. Re-uploading an already-ready dataset id with identical metadata is a successful no-op; a different payload under the same dataset id is an explicit conflict.
+Dataset uploads use a dedicated idempotent staged sync upload. The dataset mutation id is also the stable upload identity. Re-uploading an already-ready dataset id with identical metadata is a successful no-op; the same id with different metadata is an explicit conflict.
 
-## Pull semantics and conflict handling
+## Pull and conflict handling
 
-Because the deployment has one human owner, the first release uses server acceptance order as the conflict rule. A device flushes pending local changes before pulling. Therefore:
+The first release uses server acceptance order. A device flushes local pending changes before pulling. Therefore two online devices converge to the server's final accepted mutation, and an offline device publishes its durable pending edits before ingesting cloud changes. Echoing the device's own event is harmless and simplifies cursor advancement.
 
-- two online devices converge to whichever mutation the server accepts last;
-- an offline device that later reconnects publishes its pending edits before ingesting newer cloud events;
-- duplicate requests are harmless because `mutationId` is idempotent;
-- applying the device's own echoed event is harmless and keeps cursor advancement simple.
+If a remote event references a dataset not cached locally, only metadata is updated. If the event activates that dataset, the engine downloads it before local activation.
 
-Remote events are applied directly to IndexedDB without generating new outbox records. The local store therefore needs an internal `applyRemote*` path that bypasses mutation recording.
-
-If a remote event refers to a dataset not cached locally, only metadata is updated. If it activates that dataset, the sync engine downloads and installs the dataset before the controller switches to it.
+Remote changes live in IndexedDB, but the controller keeps an in-memory state snapshot. After a pull page changes user-visible resources, the runtime calls a controller `refreshFromStorage()` method. That method re-reads local metadata/known words/decisions/preferences/Anki/queue. It reloads worker dataset content only if the active dataset changed; otherwise it reruns the current query against already-loaded worker data.
 
 ## Initial cloud bootstrap
 
-A new device or a browser with no completed local-first bootstrap follows a one-time cloud hydration path:
+A new device or browser with no completed bootstrap performs one remote hydration:
 
 ```text
-open new local-first IndexedDB
-        |
-        v
-read cloud metadata/state
-        |
-        +--> preferences, decisions, known words, Anki, queues
-        +--> dataset library metadata
-        +--> active dataset entries only
-        |
-        v
-commit local state
-        |
-        v
-write bootstrapComplete=true and serverEventId=<cloud cursor>
-        |
-        v
-initialize controller from IndexedDB
+open local-first DB
+  -> cloud bootstrap manifest (event cursor + dataset library + active id)
+  -> paginated reads for known words, decisions, preferences, queues, Anki
+  -> write those resources through recording-disabled local stores
+  -> upsert dataset metadata as metadata-only
+  -> download and cache active dataset only
+  -> activate locally
+  -> write workspace active dataset
+  -> set bootstrapComplete=true and serverEventId=<manifest cursor>
+  -> initialize controller from IndexedDB
+  -> immediately run background pull after manifest cursor
 ```
 
-Do not mark bootstrap complete until the active dataset and all state needed by controller initialization are durable locally. A failed bootstrap leaves the marker false and retries on the next load.
+The manifest cursor anchors reconciliation. If cloud state changes while paginated bootstrap reads are running, the first pull replays every event after that cursor; repeated application is idempotent.
 
-The old `jiten-migaku-miner` IndexedDB database is untouched during rollout. The new local-first database uses a different name, so stale pre-cloud data cannot appear. Legacy data can be deleted manually or in a later cleanup release after the new architecture has been stable.
+Do not set `bootstrapComplete` until state and the active dataset are durable locally. Failed bootstrap leaves it false and retries later.
+
+The previous `jiten-migaku-miner` browser database stays untouched.
 
 ## Warm startup
 
@@ -276,22 +272,20 @@ When `bootstrapComplete` is true:
 
 ```text
 open IndexedDB
-    |
-    +--> restore workspace/preferences/active dataset
-    +--> load active cached dataset into worker
-    +--> render/query immediately
+  -> restore workspace/preferences/active cached dataset
+  -> load dataset into worker
+  -> first query / render
+  -> mark local UI ready
 
-in parallel after local readiness:
-    syncEngine.flushAndPull()
+then, without blocking readiness:
+  -> syncEngine.syncNow()
 ```
 
-Authentication and PostgreSQL errors must not block a warm local startup. The status area reports cloud state separately from local readiness.
+Authentication/network/PostgreSQL errors do not block warm local use. Only local-storage failure prevents local persistence; in that case fall back to the existing server-first runtime.
 
-## Cloud status UI
+## Status UI
 
-Replace the current all-or-nothing PostgreSQL status with two concepts: local durability and cloud sync.
-
-Supported copy:
+Use exactly:
 
 - `Loading local vocabulary…`
 - `Saved locally`
@@ -300,58 +294,57 @@ Supported copy:
 - `Offline · changes saved locally`
 - `Sync error · changes remain on this device`
 
-Only IndexedDB failure should prevent local persistence. If IndexedDB cannot be opened, fall back to the existing `RemoteAppStore` server-first boot path and retain the current `beforeunload` protection for pending remote writes.
+Background sync failure never makes the whole study surface inert.
 
-## Complete backup/restore
+## Backup, restore, and clear
 
-For the first local-first release, complete backup/export remains cloud-backed:
+Complete backup/export remains cloud-backed:
 
-1. flush the local outbox;
-2. verify the outbox is empty;
-3. call the existing remote complete-export path.
+1. flush local outbox;
+2. verify outbox empty;
+3. call existing remote complete export.
 
 Complete restore remains online-only:
 
-1. call the existing atomic PostgreSQL restore;
-2. clear the local-first IndexedDB database;
-3. bootstrap again from PostgreSQL;
-4. reload the study runtime.
+1. restore PostgreSQL atomically;
+2. clear only the new local-first cache;
+3. bootstrap from PostgreSQL;
+4. reload runtime.
 
-This preserves current version-3 backup semantics without adding a second complex local atomic-restore implementation in the same release.
+Legacy user-state restore continues through local IndexedDB. Its atomic `restoreUserState` transaction must also record sync intent for known words, preferences, Anki, and the decision replacement/difference so cloud state converges.
 
-## Migration and rollout
+`Clear saved data` is intentionally online-only in the first release: clear PostgreSQL first, then clear the local-first database. If cloud clear fails, keep local data untouched.
 
-Roll out in compatibility-first order:
+## Rollout
 
-1. Add PostgreSQL sync tables and dual-write sync events from the existing server store. Deploy with current server-first UI unchanged.
-2. Add `/api/sync`, idempotent push, pull, bootstrap helpers, and tests. Keep UI server-first.
-3. Add the new local-first IndexedDB schema, atomic outbox recording, workspace state, and sync engine behind `NEXT_PUBLIC_LOCAL_FIRST_SYNC`.
-4. Test in local production mode and a Vercel preview using a disposable preview database.
-5. Enable local-first in production for the owner. The first production visit performs one cloud bootstrap; later visits warm-start locally.
-6. Keep `RemoteAppStore` fallback and the old IndexedDB database for at least one stabilization window. Do not delete either in the first release.
-7. After stable operation, remove the rollout flag and optionally add an explicit legacy-cache cleanup action.
+1. Add PostgreSQL sync tables and dual-write events; deploy with current server-first UI unchanged.
+2. Add `/api/sync` push/pull/bootstrap/paginated read operations; UI still server-first.
+3. Add new IndexedDB schema, atomic outbox recording, workspace state, sync engine behind `NEXT_PUBLIC_LOCAL_FIRST_SYNC`.
+4. Validate local production build and Vercel preview against a disposable preview database.
+5. Enable local-first only after preview passes. First production visit performs one bootstrap; later visits warm-start locally.
+6. Keep `RemoteAppStore` fallback and old browser DB through the stabilization window.
+7. Remove rollout flag only in a later cleanup change.
 
 ## Performance targets
 
-These are acceptance targets, not guarantees:
-
-- Warm cached startup should render locally without waiting for `/api/store` or `/api/sync`.
-- Active cached dataset should reach worker/query readiness in under 500 ms on a normal desktop for the existing 100k-row performance fixture.
-- Marking a decision or changing a view/query setting should update the UI without waiting for network acknowledgement.
-- Background sync should batch/coalesce repeated preference, queue, known-word, and per-word decision changes.
-- A failed network request must leave pending mutations durable in IndexedDB and retryable after reload.
+- Warm cached startup renders without waiting for `/api/store` or `/api/sync`.
+- Existing 100k-row performance fixture reaches first query readiness within 500 ms on a normal desktop target environment.
+- Decision/view/query interactions update locally without waiting for cloud acknowledgement.
+- Repeated preference/queue/known/Anki and per-word decision changes coalesce in the outbox.
+- Network failure leaves pending mutations durable and retryable after reload.
 
 ## Required tests
 
-- IndexedDB upgrade/new-database schema tests.
+- New IndexedDB schema and upgrade tests.
 - Atomic local-write + outbox tests for every synced resource.
-- In-flight acknowledgement cannot erase a newer outbox mutation.
+- In-flight acknowledgement cannot erase a newer mutation.
 - Sync push retry is idempotent.
 - Push-first/pull-second convergence across two simulated devices.
-- Remote change application does not create a new outbox mutation.
-- Active remote-only dataset is downloaded before activation.
-- Failed initial bootstrap does not set `bootstrapComplete`.
-- Warm startup succeeds with the sync endpoint unavailable.
-- Existing backup/restore behavior still passes after local-first integration.
-- E2E test proving a second browser context receives a first context's decision after sync.
-- Performance instrumentation distinguishes `local_boot`, `worker_dataset_load`, `first_query_ready`, `sync_push`, and `sync_pull`.
+- Remote apply does not create outbox work.
+- Controller refreshes live state after remote apply without unnecessary dataset reload.
+- Active remote-only dataset downloads before activation.
+- Failed bootstrap does not mark completion.
+- Warm startup works while sync endpoint is unavailable.
+- Existing backup/restore behavior still passes.
+- Second browser context receives first context's decision after sync.
+- Performance timings distinguish `local_boot`, `worker_dataset_load`, `first_query_ready`, `sync_push`, and `sync_pull`.
