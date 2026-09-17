@@ -654,6 +654,14 @@ export function createSyncEngine(options: SyncEngineOptions): SyncEngine {
   }
 
   function notifyOutbox(): void {
+    void localSyncStore.listOutbox(100).then((pendingRecords) => {
+      if (pendingRecords.length > 0 && currentStatus.state === "idle") {
+        setStatus({
+          ...currentStatus,
+          pending: pendingRecords.length,
+        });
+      }
+    });
     if (debounceTimer) clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
       debounceTimer = null;

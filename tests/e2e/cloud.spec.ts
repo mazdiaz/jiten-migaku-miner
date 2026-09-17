@@ -122,12 +122,18 @@ test("forces IndexedDB open failure and falls back to server-first remote store"
 test("forces cloud clear failure and keeps local cached data intact", async ({ page }) => {
   page.on("dialog", (dialog) => dialog.accept());
   await page.goto("/");
+  await expect(page.locator(".cloud-status")).toHaveText(
+    /^(Saved to PostgreSQL|Synced|Saved locally)\s*$/,
+  );
   await page.locator("#jitenInput").setInputFiles("tests/fixtures/jiten-small.csv");
   await expect(page.locator(".mining-entry")).toHaveCount(3);
 
   await page.route("**/api/store", (route) => {
     const postData = route.request().postDataJSON();
-    if (postData?.operation === "clearAll") {
+    if (
+      postData?.operation === "clearAll" ||
+      (postData?.operation === "state.clear" && postData?.resource === "all")
+    ) {
       return route.abort();
     }
     return route.continue();

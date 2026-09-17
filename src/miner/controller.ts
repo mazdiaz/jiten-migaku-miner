@@ -860,7 +860,7 @@ class MinerControllerImpl implements MinerController {
     }
 
     this.setState({ status: "loading", errorMessage: this.warningMessage });
-    await this.loadAndQuery(active.id, active.entryCount);
+    await this.loadAndQuery(active.id, active.entryCount, { silent: true });
   }
 
   async refreshFromStorage(): Promise<void> {
@@ -925,11 +925,14 @@ class MinerControllerImpl implements MinerController {
 
       if (activeChanged) {
         this.setState({ status: "loading", errorMessage: this.warningMessage });
-        await this.loadAndQuery(active.id, active.entryCount, { callerHoldsUserStateLock: true });
+        await this.loadAndQuery(active.id, active.entryCount, {
+          callerHoldsUserStateLock: true,
+          silent: true,
+        });
       } else {
         this.userStateEpoch += 1;
         this.queryGeneration += 1;
-        await this.runQuery({ callerHoldsUserStateLock: true });
+        await this.runQuery({ callerHoldsUserStateLock: true, silent: true });
         await this.requestCoverage();
       }
     });
@@ -1144,7 +1147,7 @@ class MinerControllerImpl implements MinerController {
   private async loadAndQuery(
     datasetId: string,
     expectedEntryCount: number,
-    options: { callerHoldsUserStateLock?: boolean } = {},
+    options: { callerHoldsUserStateLock?: boolean; silent?: boolean } = {},
   ): Promise<void> {
     try {
       if (this.prepareDataset) {

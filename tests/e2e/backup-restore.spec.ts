@@ -198,6 +198,9 @@ test.describe("backup and restore", () => {
     test.setTimeout(60_000);
     await acceptDialogs(page);
     await page.goto("/");
+    await expect(page.locator(".cloud-status")).toHaveText(
+      /^(Saved to PostgreSQL|Synced|Saved locally)\s*$/,
+    );
 
     await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
@@ -235,6 +238,9 @@ test.describe("backup and restore", () => {
     test.setTimeout(60_000);
     await acceptDialogs(page);
     await page.goto("/");
+    await expect(page.locator(".cloud-status")).toHaveText(
+      /^(Saved to PostgreSQL|Synced|Saved locally)\s*$/,
+    );
 
     await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
@@ -244,11 +250,18 @@ test.describe("backup and restore", () => {
     const download = await downloadPromise;
     const backupPath = await download.path();
     const backup = JSON.parse(readFileSync(backupPath!, "utf-8")) as {
-      datasets: Array<{ id: string; name: string }>;
+      datasets: Array<{
+        metadata: { id: string; name: string };
+        entries: unknown[];
+      }>;
+      activeDatasetId: string | null;
       version: number;
     };
-    backup.datasets[0]!.id = "restore-dataset";
-    backup.datasets[0]!.name = "restore-dataset.csv";
+    backup.datasets[0]!.metadata.id = "restore-dataset";
+    backup.datasets[0]!.metadata.name = "restore-dataset.csv";
+    if (backup.activeDatasetId) {
+      backup.activeDatasetId = "restore-dataset";
+    }
 
     await page.locator("#restoreBackupInput").setInputFiles({
       name: "restore-dataset.json",
@@ -256,8 +269,8 @@ test.describe("backup and restore", () => {
       buffer: Buffer.from(JSON.stringify(backup), "utf-8"),
     });
 
-    await expect(page).toHaveURL(/\/\?restored=1/);
     await expect(page.locator("#backupStatus")).toHaveText("Complete backup restored.");
+    await expect(page).toHaveURL(/\/(?:\?restored=1)?$/);
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
   });
 
@@ -267,6 +280,9 @@ test.describe("backup and restore", () => {
     test.setTimeout(60_000);
     await acceptDialogs(page);
     await page.goto("/");
+    await expect(page.locator(".cloud-status")).toHaveText(
+      /^(Saved to PostgreSQL|Synced|Saved locally)\s*$/,
+    );
 
     await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);

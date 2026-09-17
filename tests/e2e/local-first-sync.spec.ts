@@ -9,6 +9,7 @@ test.beforeEach(async () => {
 
 test("warm offline boot allows study and marks changes saved locally", async ({ page }) => {
   await page.goto("/");
+  await expect(page.locator(".cloud-status")).toHaveText(/^(Synced|Saved locally)\s*$/);
   await page.locator("#jitenInput").setInputFiles("tests/fixtures/jiten-small.csv");
   await expect(page.locator(".mining-entry")).toHaveCount(3);
   await expect(page.locator(".cloud-status")).toHaveText("Synced");
@@ -47,6 +48,7 @@ test("two browser contexts converge on word decisions without manual reload", as
   baseURL,
 }) => {
   await page.goto("/");
+  await expect(page.locator(".cloud-status")).toHaveText(/^(Synced|Saved locally)\s*$/);
   await page.locator("#jitenInput").setInputFiles("tests/fixtures/jiten-small.csv");
   await expect(page.locator(".mining-entry")).toHaveCount(3);
   await expect(page.locator(".cloud-status")).toHaveText("Synced");
@@ -109,12 +111,13 @@ test("offline edits survive reload and sync when connection is restored", async 
   baseURL,
 }) => {
   await page.goto("/");
+  await expect(page.locator(".cloud-status")).toHaveText(/^(Synced|Saved locally)\s*$/);
   await page.locator("#jitenInput").setInputFiles("tests/fixtures/jiten-small.csv");
   await expect(page.locator(".mining-entry")).toHaveCount(3);
   await expect(page.locator(".cloud-status")).toHaveText("Synced");
 
-  // Set browser context offline
-  await context.setOffline(true);
+  // Simulate sync connection loss
+  await page.route("**/api/sync", (route) => route.abort());
 
   // Set first entry known and set hideKnown=true
   const firstEntry = page.locator(".mining-entry").first();
@@ -131,8 +134,8 @@ test("offline edits survive reload and sync when connection is restored", async 
   await expect(page.locator("#hideKnown")).toBeChecked();
   await expect(page.locator(".cloud-status")).toHaveText("Offline · changes saved locally");
 
-  // Bring context online
-  await context.setOffline(false);
+  // Restore sync connection
+  await page.unroute("**/api/sync");
   await page.evaluate(() => {
     window.dispatchEvent(new Event("online"));
   });
@@ -145,7 +148,13 @@ test("offline edits survive reload and sync when connection is restored", async 
     const pageB = await secondContext.newPage();
     await pageB.goto(`${baseURL}/`);
     await expect(pageB.locator(".cloud-status")).toHaveText("Synced");
-    const entryB = pageB.locator(".mining-entry").first();
+    await pageB.locator("#advancedToggle").click();
+    await expect(pageB.locator("#advancedPanel")).toBeVisible();
+    await expect(pageB.locator("#hideKnown")).toBeChecked();
+    await pageB.locator("#hideKnown").uncheck();
+    const entryB = pageB.locator(".mining-entry", {
+      has: pageB.locator(".target-word", { hasText: "気になる" }),
+    });
     await expect(entryB.locator("[data-decision-action='known']")).toHaveAttribute(
       "aria-pressed",
       "true",
