@@ -15,7 +15,11 @@ import type {
   SyncPullPage,
   SyncPushReceipt,
 } from "../../src/sync/contracts";
-import { bootstrapLocalCache, ensureDatasetCached } from "../../src/sync/engine";
+import {
+  bootstrapLocalCache,
+  createSyncEngine,
+  ensureDatasetCached,
+} from "../../src/sync/engine";
 
 function sampleMetadata(id: string, entryCount: number): DatasetMetadata {
   return {
@@ -564,3 +568,616 @@ describe("Task 5: Cloud client and bootstrap local cache hydration", () => {
     });
   });
 });
+
+describe("Task 6: Push-first/pull-second SyncEngine", () => {
+  it("enforces push-before-pull order in serialized sync loop", async () => {
+    const dbName = `test-order-${crypto.randomUUID()}`;
+    const localSyncStore = createLocalSyncStore(dbName);
+    const recordingStore = createIndexedDbAppStore({
+      databaseName: dbName,
+      recordSyncMutations: true,
+    });
+    const remoteApplyStore = createIndexedDbAppStore({
+      databaseName: dbName,
+      recordSyncMutations: false,
+    });
+
+    const calls: string[] = [];
+    const fakeCloud: CloudSyncPort = {
+      async bootstrap() {
+        return { eventId: 0, activeDatasetId: null, datasets: [] };
+      },
+      async readKnownWords() {
+        return null;
+      },
+      async readDecisions() {
+        return [];
+      },
+      async readPreferences() {
+        return null;
+      },
+      async readQueues() {
+        return [];
+      },
+      async readAnki() {
+        return { config: null, snapshot: null };
+      },
+      async pull() {
+        calls.push("pull");
+        return { changes: [], nextEventId: 0 };
+      },
+      async push(_deviceId, mutations) {
+        calls.push("push");
+        return {
+          accepted: mutations.map((m) => ({ mutationId: m.mutationId, eventId: 1 })),
+          acceptedMutationIds: mutations.map((m) => m.mutationId),
+        };
+      },
+      async uploadDataset() {
+        calls.push("uploadDataset");
+        return { accepted: [], acceptedMutationIds: [] };
+      },
+      async *readDataset() {},
+    };
+
+    // Pre-record a decision
+    await recordingStore.wordDecisions.set({
+      normalizedWord: "猫",
+      status: "known",
+      updatedAt: "2026-09-17T00:00:00.000Z",
+    });
+
+    const engine = createSyncEngine({
+      cloud: fakeCloud,
+      localAppStore: recordingStore,
+      remoteApplyStore,
+      localSyncStore,
+    });
+
+    try {
+      await engine.syncNow();
+      expect(calls.slice(0, 2)).toEqual(["push", "pull"]);
+    } finally {
+      engine.dispose();
+      indexedDB.deleteDatabase(dbName);
+    }
+  });
+
+  it("handles durable retry across engine instances on network error", async () => {
+    const dbName = `test-retry-${crypto.randomUUID()}`;
+    const localSyncStore = createLocalSyncStore(dbName);
+    const recordingStore = createIndexedDbAppStore({
+      databaseName: dbName,
+      recordSyncMutations: true,
+    });
+    const remoteApplyStore = createIndexedDbAppStore({
+      databaseName: dbName,
+      recordSyncMutations: false,
+    });
+
+    await recordingStore.wordDecisions.set({
+      normalizedWord: "猫",
+      status: "known",
+      updatedAt: "2026-09-17T00:00:00.000Z",
+    });
+
+    let attempts = 0;
+    const fakeCloud: CloudSyncPort = {
+      async bootstrap() {
+        return { eventId: 0, activeDatasetId: null, datasets: [] };
+      },
+      async readKnownWords() {
+        return null;
+      },
+      async readDecisions() {
+        return [];
+      },
+      async readPreferences() {
+        return null;
+      },
+      async readQueues() {
+        return [];
+      },
+      async readAnki() {
+        return { config: null, snapshot: null };
+      },
+      async pull() {
+        return { changes: [], nextEventId: 0 };
+      },
+      async push(_deviceId, mutations) {
+        attempts++;
+        if (attempts === 1) {
+          throw new RemoteStoreError("Network failure", 0, "NETWORK_ERROR");
+        }
+        return {
+          accepted: mutations.map((m) => ({ mutationId: m.mutationId, eventId: 1 })),
+          acceptedMutationIds: mutations.map((m) => m.mutationId),
+        };
+      },
+      async uploadDataset() {
+        return { accepted: [], acceptedMutationIds: [] };
+      },
+      async *readDataset() {},
+    };
+
+    // First engine instance fails push
+    const engine1 = createSyncEngine({
+      cloud: fakeCloud,
+      localAppStore: recordingStore,
+      remoteApplyStore,
+      localSyncStore,
+    });
+
+    let status1: any;
+    engine1.subscribe((s) => (status1 = s));
+
+    await expect(engine1.syncNow()).rejects.toThrowError(RemoteStoreError);
+    expect(status1.state).toBe("offline");
+
+    // Outbox must still contain the pending mutation
+    const pendingAfterFail = await localSyncStore.listOutbox(10);
+    expect(pendingAfterFail).toHaveLength(1);
+    expect(pendingAfterFail[0]?.dedupeKey).toBe("decision:猫");
+    engine1.dispose();
+
+    // Second engine instance against same database succeeds
+    const engine2 = createSyncEngine({
+      cloud: fakeCloud,
+      localAppStore: recordingStore,
+      remoteApplyStore,
+      localSyncStore,
+    });
+
+    await engine2.syncNow();
+    const pendingAfterSuccess = await localSyncStore.listOutbox(10);
+    expect(pendingAfterSuccess).toHaveLength(0);
+    engine2.dispose();
+
+    indexedDB.deleteDatabase(dbName);
+  });
+
+  it("acknowledgement race: newer mutation on same dedupe key is preserved when older mutation resolves", async () => {
+    const dbName = `test-race-${crypto.randomUUID()}`;
+    const localSyncStore = createLocalSyncStore(dbName);
+    const recordingStore = createIndexedDbAppStore({
+      databaseName: dbName,
+      recordSyncMutations: true,
+    });
+    const remoteApplyStore = createIndexedDbAppStore({
+      databaseName: dbName,
+      recordSyncMutations: false,
+    });
+
+    await recordingStore.wordDecisions.set({
+      normalizedWord: "猫",
+      status: "known",
+      updatedAt: "2026-09-17T00:00:00.000Z",
+    });
+
+    const pendingA = await localSyncStore.listOutbox(10);
+    const mutationIdA = pendingA[0]!.mutationId;
+
+    let resolvePush: (val: any) => void;
+    const pushPromise = new Promise((resolve) => {
+      resolvePush = resolve;
+    });
+
+    const fakeCloud: CloudSyncPort = {
+      async bootstrap() {
+        return { eventId: 0, activeDatasetId: null, datasets: [] };
+      },
+      async readKnownWords() {
+        return null;
+      },
+      async readDecisions() {
+        return [];
+      },
+      async readPreferences() {
+        return null;
+      },
+      async readQueues() {
+        return [];
+      },
+      async readAnki() {
+        return { config: null, snapshot: null };
+      },
+      async pull() {
+        return { changes: [], nextEventId: 0 };
+      },
+      async push() {
+        return await pushPromise as any;
+      },
+      async uploadDataset() {
+        return { accepted: [], acceptedMutationIds: [] };
+      },
+      async *readDataset() {},
+    };
+
+    const engine = createSyncEngine({
+      cloud: fakeCloud,
+      localAppStore: recordingStore,
+      remoteApplyStore,
+      localSyncStore,
+    });
+
+    try {
+      // Start syncNow in background (waiting on pushPromise)
+      const syncPromise = engine.syncNow();
+
+      // Before push resolves, user updates the decision to "mined"
+      await recordingStore.wordDecisions.set({
+        normalizedWord: "猫",
+        status: "mined",
+        updatedAt: "2026-09-17T00:00:01.000Z",
+      });
+
+      const pendingB = await localSyncStore.listOutbox(10);
+      const mutationIdB = pendingB[0]!.mutationId;
+      expect(mutationIdB).not.toBe(mutationIdA);
+
+      // Now resolve the cloud push for mutation A
+      resolvePush!({
+        accepted: [{ mutationId: mutationIdA, eventId: 1 }],
+        acceptedMutationIds: [mutationIdA],
+      });
+
+      await syncPromise;
+
+      // Mutation B must remain in the outbox!
+      const outboxAfter = await localSyncStore.listOutbox(10);
+      expect(outboxAfter).toHaveLength(1);
+      expect(outboxAfter[0]?.mutationId).toBe(mutationIdB);
+    } finally {
+      engine.dispose();
+      indexedDB.deleteDatabase(dbName);
+    }
+  });
+
+  it("remote apply: applies pulled changes with recording-disabled store, keeping outbox empty", async () => {
+    const dbName = `test-remote-apply-${crypto.randomUUID()}`;
+    const localSyncStore = createLocalSyncStore(dbName);
+    const recordingStore = createIndexedDbAppStore({
+      databaseName: dbName,
+      recordSyncMutations: true,
+    });
+    const remoteApplyStore = createIndexedDbAppStore({
+      databaseName: dbName,
+      recordSyncMutations: false,
+    });
+
+    const fakeCloud: CloudSyncPort = {
+      async bootstrap() {
+        return { eventId: 0, activeDatasetId: null, datasets: [] };
+      },
+      async readKnownWords() {
+        return null;
+      },
+      async readDecisions() {
+        return [];
+      },
+      async readPreferences() {
+        return null;
+      },
+      async readQueues() {
+        return [];
+      },
+      async readAnki() {
+        return { config: null, snapshot: null };
+      },
+      async pull() {
+        return {
+          changes: [
+            {
+              id: 1,
+              kind: "decision.set",
+              decision: {
+                normalizedWord: "犬",
+                status: "mined",
+                updatedAt: "2026-09-17T00:00:00.000Z",
+              },
+            },
+          ],
+          nextEventId: 1,
+        };
+      },
+      async push() {
+        return { accepted: [], acceptedMutationIds: [] };
+      },
+      async uploadDataset() {
+        return { accepted: [], acceptedMutationIds: [] };
+      },
+      async *readDataset() {},
+    };
+
+    let remoteAppliedCalled = false;
+    const engine = createSyncEngine({
+      cloud: fakeCloud,
+      localAppStore: recordingStore,
+      remoteApplyStore,
+      localSyncStore,
+    });
+    engine.onRemoteApplied(() => {
+      remoteAppliedCalled = true;
+    });
+
+    try {
+      await engine.syncNow();
+
+      expect(remoteAppliedCalled).toBe(true);
+
+      const decision = await recordingStore.wordDecisions.get("犬");
+      expect(decision?.status).toBe("mined");
+
+      const outbox = await localSyncStore.listOutbox(10);
+      expect(outbox).toHaveLength(0);
+
+      const meta = await localSyncStore.getMeta();
+      expect(meta.serverEventId).toBe(1);
+    } finally {
+      engine.dispose();
+      indexedDB.deleteDatabase(dbName);
+    }
+  });
+
+  it("two-device convergence: device A writes known, device B writes mined, both converge on cloud's final state", async () => {
+    const dbA = `test-conv-a-${crypto.randomUUID()}`;
+    const dbB = `test-conv-b-${crypto.randomUUID()}`;
+
+    const syncA = createLocalSyncStore(dbA);
+    const recordA = createIndexedDbAppStore({ databaseName: dbA, recordSyncMutations: true });
+    const applyA = createIndexedDbAppStore({ databaseName: dbA, recordSyncMutations: false });
+
+    const syncB = createLocalSyncStore(dbB);
+    const recordB = createIndexedDbAppStore({ databaseName: dbB, recordSyncMutations: true });
+    const applyB = createIndexedDbAppStore({ databaseName: dbB, recordSyncMutations: false });
+
+    // Canonical cloud simulation
+    let cloudEventId = 0;
+    const cloudDecisions = new Map<string, WordDecision>();
+    const cloudEvents: Array<{ id: number; kind: "decision.set"; decision: WordDecision }> = [];
+
+    const makeCloud = (): CloudSyncPort => ({
+      async bootstrap() {
+        return { eventId: cloudEventId, activeDatasetId: null, datasets: [] };
+      },
+      async readKnownWords() {
+        return null;
+      },
+      async readDecisions() {
+        return [...cloudDecisions.values()];
+      },
+      async readPreferences() {
+        return null;
+      },
+      async readQueues() {
+        return [];
+      },
+      async readAnki() {
+        return { config: null, snapshot: null };
+      },
+      async pull(afterEventId) {
+        const changes = cloudEvents.filter((e) => e.id > afterEventId);
+        return { changes, nextEventId: cloudEventId };
+      },
+      async push(_deviceId, mutations) {
+        const accepted: Array<{ mutationId: string; eventId: number }> = [];
+        for (const m of mutations) {
+          if (m.kind === "decision.set") {
+            cloudDecisions.set(m.decision.normalizedWord, m.decision);
+            cloudEventId++;
+            cloudEvents.push({ id: cloudEventId, kind: "decision.set", decision: m.decision });
+            accepted.push({ mutationId: m.mutationId, eventId: cloudEventId });
+          }
+        }
+        return { accepted, acceptedMutationIds: accepted.map((a) => a.mutationId) };
+      },
+      async uploadDataset() {
+        return { accepted: [], acceptedMutationIds: [] };
+      },
+      async *readDataset() {},
+    });
+
+    const engineA = createSyncEngine({
+      cloud: makeCloud(),
+      localAppStore: recordA,
+      remoteApplyStore: applyA,
+      localSyncStore: syncA,
+    });
+
+    const engineB = createSyncEngine({
+      cloud: makeCloud(),
+      localAppStore: recordB,
+      remoteApplyStore: applyB,
+      localSyncStore: syncB,
+    });
+
+    try {
+      // Device A sets "猫" to "known"
+      await recordA.wordDecisions.set({
+        normalizedWord: "猫",
+        status: "known",
+        updatedAt: "2026-09-17T00:00:00.000Z",
+      });
+
+      // Device B sets "猫" to "mined"
+      await recordB.wordDecisions.set({
+        normalizedWord: "猫",
+        status: "mined",
+        updatedAt: "2026-09-17T00:00:01.000Z",
+      });
+
+      // A syncs (pushes known)
+      await engineA.syncNow();
+      expect((await recordA.wordDecisions.get("猫"))?.status).toBe("known");
+
+      // B syncs (pushes mined, which becomes the canonical state)
+      await engineB.syncNow();
+      expect((await recordB.wordDecisions.get("猫"))?.status).toBe("mined");
+
+      // A syncs again (pulls mined)
+      await engineA.syncNow();
+      expect((await recordA.wordDecisions.get("猫"))?.status).toBe("mined");
+
+      // Both converged on "mined"!
+      expect((await recordA.wordDecisions.get("猫"))?.status).toBe(
+        (await recordB.wordDecisions.get("猫"))?.status,
+      );
+    } finally {
+      engineA.dispose();
+      engineB.dispose();
+      indexedDB.deleteDatabase(dbA);
+      indexedDB.deleteDatabase(dbB);
+    }
+  });
+
+  it("flush pushes all pending mutations and verifies outbox is empty", async () => {
+    const dbName = `test-flush-${crypto.randomUUID()}`;
+    const localSyncStore = createLocalSyncStore(dbName);
+    const recordingStore = createIndexedDbAppStore({
+      databaseName: dbName,
+      recordSyncMutations: true,
+    });
+    const remoteApplyStore = createIndexedDbAppStore({
+      databaseName: dbName,
+      recordSyncMutations: false,
+    });
+
+    let pushed = false;
+    const fakeCloud: CloudSyncPort = {
+      async bootstrap() {
+        return { eventId: 0, activeDatasetId: null, datasets: [] };
+      },
+      async readKnownWords() {
+        return null;
+      },
+      async readDecisions() {
+        return [];
+      },
+      async readPreferences() {
+        return null;
+      },
+      async readQueues() {
+        return [];
+      },
+      async readAnki() {
+        return { config: null, snapshot: null };
+      },
+      async pull() {
+        return { changes: [], nextEventId: 0 };
+      },
+      async push(_deviceId, mutations) {
+        pushed = true;
+        return {
+          accepted: mutations.map((m) => ({ mutationId: m.mutationId, eventId: 1 })),
+          acceptedMutationIds: mutations.map((m) => m.mutationId),
+        };
+      },
+      async uploadDataset() {
+        return { accepted: [], acceptedMutationIds: [] };
+      },
+      async *readDataset() {},
+    };
+
+    await recordingStore.wordDecisions.set({
+      normalizedWord: "走る",
+      status: "mined",
+      updatedAt: "2026-09-17T00:00:00.000Z",
+    });
+
+    const engine = createSyncEngine({
+      cloud: fakeCloud,
+      localAppStore: recordingStore,
+      remoteApplyStore,
+      localSyncStore,
+    });
+
+    try {
+      await engine.flush();
+      expect(pushed).toBe(true);
+      const outbox = await localSyncStore.listOutbox(10);
+      expect(outbox).toHaveLength(0);
+    } finally {
+      engine.dispose();
+      indexedDB.deleteDatabase(dbName);
+    }
+  });
+
+  it("notifyOutbox debounces sync execution", async () => {
+    const dbName = `test-debounce-${crypto.randomUUID()}`;
+    const localSyncStore = createLocalSyncStore(dbName);
+    const recordingStore = createIndexedDbAppStore({
+      databaseName: dbName,
+      recordSyncMutations: true,
+    });
+    const remoteApplyStore = createIndexedDbAppStore({
+      databaseName: dbName,
+      recordSyncMutations: false,
+    });
+
+    let pushCount = 0;
+    const fakeCloud: CloudSyncPort = {
+      async bootstrap() {
+        return { eventId: 0, activeDatasetId: null, datasets: [] };
+      },
+      async readKnownWords() {
+        return null;
+      },
+      async readDecisions() {
+        return [];
+      },
+      async readPreferences() {
+        return null;
+      },
+      async readQueues() {
+        return [];
+      },
+      async readAnki() {
+        return { config: null, snapshot: null };
+      },
+      async pull() {
+        return { changes: [], nextEventId: 0 };
+      },
+      async push(_deviceId, mutations) {
+        pushCount++;
+        return {
+          accepted: mutations.map((m) => ({ mutationId: m.mutationId, eventId: 1 })),
+          acceptedMutationIds: mutations.map((m) => m.mutationId),
+        };
+      },
+      async uploadDataset() {
+        return { accepted: [], acceptedMutationIds: [] };
+      },
+      async *readDataset() {},
+    };
+
+    await recordingStore.wordDecisions.set({
+      normalizedWord: "走る",
+      status: "mined",
+      updatedAt: "2026-09-17T00:00:00.000Z",
+    });
+
+    const engine = createSyncEngine({
+      cloud: fakeCloud,
+      localAppStore: recordingStore,
+      remoteApplyStore,
+      localSyncStore,
+      debounceMs: 50,
+    });
+
+    try {
+      engine.notifyOutbox();
+      engine.notifyOutbox();
+      engine.notifyOutbox();
+
+      expect(pushCount).toBe(0);
+
+      await new Promise((resolve) => setTimeout(resolve, 80));
+
+      expect(pushCount).toBe(1);
+    } finally {
+      engine.dispose();
+      indexedDB.deleteDatabase(dbName);
+    }
+  });
+});
+
