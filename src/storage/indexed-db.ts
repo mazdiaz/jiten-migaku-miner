@@ -13,8 +13,17 @@ import type {
 } from "./contracts";
 import { StorageUnavailableError } from "./fallback";
 
-export const INDEXED_DB_NAME = "jiten-migaku-miner";
-export const INDEXED_DB_VERSION = 3;
+import {
+  INDEXED_DB_NAME,
+  INDEXED_DB_VERSION,
+  openDatabase,
+  requestError,
+  runTransaction,
+  withDatabase,
+  type IndexedDbStoreName,
+} from "./indexed-db-core";
+
+export { INDEXED_DB_NAME, INDEXED_DB_VERSION };
 
 const DATASETS_STORE = "datasets";
 const ENTRY_CHUNKS_STORE = "entryChunks";
@@ -29,14 +38,7 @@ const PREFERENCES_KEY = "current";
 const ANKI_SYNC_KEY = "current";
 const READ_BATCH_SIZE = 32;
 
-type StoreName =
-  | typeof DATASETS_STORE
-  | typeof ENTRY_CHUNKS_STORE
-  | typeof KNOWN_WORD_SETS_STORE
-  | typeof PREFERENCES_STORE
-  | typeof META_STORE
-  | typeof WORD_DECISIONS_STORE
-  | typeof ANKI_SYNC_STORE;
+type StoreName = IndexedDbStoreName;
 
 interface DatasetRecord extends DatasetMetadata {
   ready: boolean;
@@ -106,163 +108,8 @@ function datasetRange(datasetId: string): IDBKeyRange {
   return IDBKeyRange.bound([datasetId, 0], [datasetId, Number.MAX_SAFE_INTEGER]);
 }
 
-function requestError(request: { error: DOMException | null }): Error {
-  return request.error === null
-    ? new StorageUnavailableError("IndexedDB request failed")
-    : new StorageUnavailableError(`IndexedDB request failed: ${request.error.message}`, {
-        cause: request.error,
-      });
-}
-
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-function openDatabase(name: string): Promise<IDBDatabase> {
-  const factory = globalThis.indexedDB;
-  if (!factory) {
-    return Promise.reject(new StorageUnavailableError("IndexedDB is unavailable"));
-  }
-
-  return new Promise((resolve, reject) => {
-    const request = factory.open(name, INDEXED_DB_VERSION);
-    request.onupgradeneeded = () => {
-      const database = request.result;
-      if (!database.objectStoreNames.contains(DATASETS_STORE)) {
-        database.createObjectStore(DATASETS_STORE, { keyPath: "id" });
-      }
-      if (!database.objectStoreNames.contains(ENTRY_CHUNKS_STORE)) {
-        database.createObjectStore(ENTRY_CHUNKS_STORE, {
-          keyPath: ["datasetId", "chunkIndex"],
-        });
-      }
-      if (!database.objectStoreNames.contains(KNOWN_WORD_SETS_STORE)) {
-        database.createObjectStore(KNOWN_WORD_SETS_STORE, { keyPath: "id" });
-      }
-      if (!database.objectStoreNames.contains(PREFERENCES_STORE)) {
-        database.createObjectStore(PREFERENCES_STORE, { keyPath: "id" });
-      }
-      if (!database.objectStoreNames.contains(META_STORE)) {
-        database.createObjectStore(META_STORE, { keyPath: "key" });
-      }
-      if (!database.objectStoreNames.contains(WORD_DECISIONS_STORE)) {
-        database.createObjectStore(WORD_DECISIONS_STORE, {
-          keyPath: "normalizedWord",
-        });
-      }
-      if (!database.objectStoreNames.contains(ANKI_SYNC_STORE)) {
-        database.createObjectStore(ANKI_SYNC_STORE, { keyPath: "id" });
-      }
-    };
-    request.onerror = () => reject(requestError(request));
-    request.onblocked = () => reject(new StorageUnavailableError("IndexedDB open was blocked"));
-    request.onsuccess = () => {
-      const database = request.result;
-      database.onversionchange = () => database.close();
-      resolve(database);
-    };
-  });
-}
-
-async function withDatabase<T>(
-  name: string,
-  action: (database: IDBDatabase) => Promise<T>,
-): Promise<T> {
-  const database = await openDatabase(name);
-  try {
-    return await action(database);
-  } finally {
-    database.close();
-  }
-}
-
-function runTransaction<T>(
-  database: IDBDatabase,
-  storeNames: readonly StoreName[],
-  mode: IDBTransactionMode,
-  operation: (
-    transaction: IDBTransaction,
-    resolveResult: (value: T) => void,
-    abort: (reason: unknown) => void,
-  ) => void,
-): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const transaction = database.transaction([...storeNames], mode);
-    let result: T | undefined;
-    let hasResult = false;
-    let abortReason: unknown;
-    let hasAbortReason = false;
-    let settled = false;
-
-    const resolveResult = (value: T): void => {
-      result = value;
-      hasResult = true;
-    };
-
-    const abort = (reason: unknown): void => {
-      abortReason = reason;
-      hasAbortReason = true;
-      try {
-        transaction.abort();
-      } catch {
-        if (!settled) {
-          settled = true;
-          reject(reason);
-        }
-      }
-    };
-
-    transaction.oncomplete = () => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      resolve((hasResult ? result : undefined) as T);
-    };
-    transaction.onerror = () => {
-      if (settled || hasAbortReason) {
-        return;
-      }
-      settled = true;
-      reject(
-        transaction.error === null
-          ? new StorageUnavailableError("IndexedDB transaction failed")
-          : new StorageUnavailableError(
-              `IndexedDB transaction failed: ${transaction.error.message}`,
-              {
-                cause: transaction.error,
-              },
-            ),
-      );
-    };
-    transaction.onabort = () => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      // abortReason keeps its original identity: application code may have
-      // aborted the transaction with an invariant failure, and such errors
-      // must NOT be classified as storage-unavailable.
-      reject(
-        hasAbortReason
-          ? abortReason
-          : transaction.error === null
-            ? new StorageUnavailableError("IndexedDB transaction aborted")
-            : new StorageUnavailableError(
-                `IndexedDB transaction aborted: ${transaction.error.message}`,
-                {
-                  cause: transaction.error,
-                },
-              ),
-      );
-    };
-
-    try {
-      operation(transaction, resolveResult, abort);
-    } catch (error) {
-      abort(error);
-    }
-  });
 }
 
 function metadataFromRecord(record: DatasetRecord): DatasetMetadata {

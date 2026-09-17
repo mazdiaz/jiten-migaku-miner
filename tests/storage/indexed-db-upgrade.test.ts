@@ -214,4 +214,82 @@ describe("IndexedDB v2 to v3 upgrade", () => {
       await deleteDatabase(databaseName);
     }
   });
+
+  it("creates queues, workspace, syncMeta, and syncOutbox stores when upgrading from v3", async () => {
+    const databaseName = `v3-to-v4-upgrade-${crypto.randomUUID()}`;
+    try {
+      const dataset = {
+        id: "v3-dataset",
+        name: "v3 dataset",
+        sourceType: "file",
+        sourceName: "v3.csv",
+        headers: ["Word", "Occurrences"],
+        entryCount: 1,
+        createdAt: "2026-09-17T00:00:00.000Z",
+        updatedAt: "2026-09-17T00:00:00.000Z",
+        schemaVersion: 1,
+        ready: true,
+      };
+      const request = indexedDB.open(databaseName, 3);
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        db.createObjectStore("datasets", { keyPath: "id" });
+        db.createObjectStore("entryChunks", { keyPath: ["datasetId", "chunkIndex"] });
+        db.createObjectStore("knownWordSets", { keyPath: "id" });
+        db.createObjectStore("preferences", { keyPath: "id" });
+        db.createObjectStore("meta", { keyPath: "key" });
+        db.createObjectStore("wordDecisions", { keyPath: "normalizedWord" });
+        db.createObjectStore("ankiSync", { keyPath: "id" });
+      };
+      const database = await requestToPromise(request);
+      const transaction = database.transaction(["datasets"], "readwrite");
+      transaction.objectStore("datasets").put(dataset);
+      await transactionToPromise(transaction);
+      database.close();
+
+      const upgraded = new IndexedDbAppStore(databaseName);
+      expect(await upgraded.datasets.getActive()).toBeNull();
+      expect(await upgraded.datasets.list()).toEqual([
+        {
+          id: "v3-dataset",
+          name: "v3 dataset",
+          sourceType: "file",
+          sourceName: "v3.csv",
+          headers: ["Word", "Occurrences"],
+          entryCount: 1,
+          createdAt: "2026-09-17T00:00:00.000Z",
+          updatedAt: "2026-09-17T00:00:00.000Z",
+          schemaVersion: 1,
+        },
+      ]);
+
+      const checkReq = indexedDB.open(databaseName);
+      const db = await requestToPromise(checkReq);
+      try {
+        const stores = [...db.objectStoreNames].sort();
+        expect(stores).toEqual([
+          "ankiSync",
+          "datasets",
+          "entryChunks",
+          "knownWordSets",
+          "meta",
+          "preferences",
+          "queues",
+          "syncMeta",
+          "syncOutbox",
+          "wordDecisions",
+          "workspace",
+        ]);
+        const tx = db.transaction(["syncOutbox", "queues", "syncMeta", "workspace"], "readonly");
+        expect(tx.objectStore("syncOutbox").keyPath).toBe("dedupeKey");
+        expect(tx.objectStore("queues").keyPath).toBe("datasetId");
+        expect(tx.objectStore("syncMeta").keyPath).toBe("id");
+        expect(tx.objectStore("workspace").keyPath).toBe("id");
+      } finally {
+        db.close();
+      }
+    } finally {
+      await deleteDatabase(databaseName);
+    }
+  });
 });
