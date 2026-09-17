@@ -255,12 +255,48 @@ export function mountStudy(onStatus: (status: CloudStatus) => void) {
     activeStatusUpdater();
   };
 
+  if (typeof window !== "undefined") {
+    const target = window as unknown as {
+      __bootTimingEvents?: Array<{ stage: string; durationMs: number }>;
+    };
+    target.__bootTimingEvents = [
+      { stage: "local_boot", durationMs: 0 },
+      { stage: "worker_dataset_load", durationMs: 0 },
+      { stage: "first_query_ready", durationMs: 0 },
+    ];
+  }
+
+  const recordBootTiming = (
+    stage: "local_boot" | "worker_dataset_load" | "first_query_ready",
+    durationMs: number,
+  ) => {
+    if (typeof window !== "undefined") {
+      const target = window as unknown as {
+        __bootTimingEvents?: Array<{ stage: string; durationMs: number }>;
+      };
+      target.__bootTimingEvents = target.__bootTimingEvents ?? [];
+      const entry = target.__bootTimingEvents.find((e) => e.stage === stage);
+      if (entry) {
+        entry.durationMs = durationMs;
+      } else {
+        target.__bootTimingEvents.push({ stage, durationMs });
+      }
+    }
+  };
+
   const bootLocalFirst = async () => {
+    const bootStart = typeof performance !== "undefined" ? performance.now() : Date.now();
     let localSyncStore: LocalSyncStore;
     let meta: LocalSyncMeta;
     try {
       localSyncStore = createLocalSyncStore();
       meta = await localSyncStore.getMeta();
+      recordBootTiming(
+        "local_boot",
+        Math.round(
+          (typeof performance !== "undefined" ? performance.now() : Date.now()) - bootStart,
+        ),
+      );
     } catch (error) {
       if (isStorageUnavailableError(error)) {
         return bootRemote();
@@ -394,7 +430,14 @@ export function mountStudy(onStatus: (status: CloudStatus) => void) {
       legacyStorage: null,
       persistence: "indexeddb",
       initialViewportStart: currentViewportStart,
-      prepareDataset: (id) => engine.ensureDatasetCached(id),
+      prepareDataset: async (id) => {
+        const start = typeof performance !== "undefined" ? performance.now() : Date.now();
+        await engine.ensureDatasetCached(id);
+        recordBootTiming(
+          "worker_dataset_load",
+          Math.round((typeof performance !== "undefined" ? performance.now() : Date.now()) - start),
+        );
+      },
       onImportTiming: (event) => {
         if (typeof window !== "undefined") {
           const target = window as unknown as {
@@ -593,6 +636,10 @@ export function mountStudy(onStatus: (status: CloudStatus) => void) {
       dom.reviewOverlay.hidden = true;
     };
     await controller.init();
+    recordBootTiming(
+      "first_query_ready",
+      Math.round((typeof performance !== "undefined" ? performance.now() : Date.now()) - bootStart),
+    );
     if (new URL(window.location.href).searchParams.get("restored") === "1") {
       dom.backupStatus.textContent = "Complete backup restored.";
       window.history.replaceState(null, "", "/");

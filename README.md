@@ -106,6 +106,35 @@ npm run db:cleanup
 
 It retains ready datasets and active data. Database backups and provider restore points are also useful before deployments. Preview deployments must not share the production database. The app intentionally supports one owner per deployment.
 
+## Local-First Sync Rollout
+
+The application supports a local-first architecture where IndexedDB (`jiten-migaku-miner-local-first`, version 4) serves as the immediate working copy and PostgreSQL acts as the durable cross-device synchronization backend.
+
+### Production Rollout Procedure
+
+1. Deploy migration/event dual-write code with `NEXT_PUBLIC_LOCAL_FIRST_SYNC` unset or `0`.
+2. Run `npm run db:migrate` against production `DATABASE_URL`.
+3. Verify current server-first imports/decisions/queue/Anki/backups and verify `sync_events` receives rows.
+4. Deploy `/api/sync` and local-first code with the flag still `0`.
+5. Validate a preview deployment against a separate preview PostgreSQL database.
+6. Set `NEXT_PUBLIC_LOCAL_FIRST_SYNC=1` in production and redeploy.
+7. First production visit performs one bootstrap; subsequent visits use warm IndexedDB boot.
+8. Keep `RemoteAppStore` fallback and the old browser database during stabilization.
+9. Remove the rollout flag only in a later cleanup change.
+
+### UI Status Meaning
+
+The study status indicator communicates exact durability and cloud synchronization state:
+
+- **`Loading saved vocabulary…`**: The workspace is hydrating from local cache or initial bootstrap.
+- **`Saved locally`**: Changes are durable in IndexedDB on this device; no cloud synchronization has occurred yet.
+- **`Synced`**: Changes are durable locally and PostgreSQL has acknowledged all pending mutations.
+- **`Saved locally · Syncing…`**: Changes are saved locally and in flight to PostgreSQL.
+- **`Offline · changes saved locally`**: The browser is disconnected from the network; study, reviews, and decisions continue uninterrupted locally.
+- **`Sync error · changes remain on this device`**: Cloud communication encountered an error; changes remain durably preserved locally and the app remains interactive.
+
+`Saved locally` guarantees data durability on this browser, while `Synced` confirms cross-device persistence on PostgreSQL.
+
 ## Verification
 
 ```sh

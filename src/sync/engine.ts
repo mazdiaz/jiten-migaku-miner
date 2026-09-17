@@ -1,10 +1,7 @@
 import type { AppStore } from "../storage/contracts";
 import type { LocalSyncStore, SyncOutboxRecord } from "../storage/local-sync";
 import { RemoteStoreError } from "../storage/remote-store";
-import type {
-  CloudSyncPort,
-  MaterializedSyncMutation,
-} from "./contracts";
+import type { CloudSyncPort, MaterializedSyncMutation } from "./contracts";
 
 export type SyncStatus =
   | { state: "idle"; pending: number; lastSyncAt: string | null }
@@ -181,282 +178,312 @@ export function createSyncEngine(options: SyncEngineOptions): SyncEngine {
     }
   }
 
+  function recordSyncTiming(stage: "sync_push" | "sync_pull", durationMs: number): void {
+    if (typeof window !== "undefined") {
+      const target = window as unknown as {
+        __syncTimingEvents?: Array<{ stage: string; durationMs: number }>;
+      };
+      target.__syncTimingEvents = target.__syncTimingEvents ?? [];
+      target.__syncTimingEvents.push({ stage, durationMs });
+    }
+  }
+
   async function pushUntilDrained(): Promise<void> {
-    const meta = await localSyncStore.getMeta();
-    const deviceId = meta.deviceId;
+    const pushStart = typeof performance !== "undefined" ? performance.now() : Date.now();
+    try {
+      const meta = await localSyncStore.getMeta();
+      const deviceId = meta.deviceId;
 
-    while (true) {
-      const outbox = await localSyncStore.listOutbox(100);
-      if (outbox.length === 0) break;
+      while (true) {
+        const outbox = await localSyncStore.listOutbox(100);
+        if (outbox.length === 0) break;
 
-      const first = outbox[0]!;
-      if (first.kind === "dataset.upload") {
-        const datasetId = first.resourceId!;
-        const datasets = await localAppStore.datasets.list();
-        const datasetMeta = datasets.find((d) => d.id === datasetId);
+        const first = outbox[0]!;
+        if (first.kind === "dataset.upload") {
+          const datasetId = first.resourceId!;
+          const datasets = await localAppStore.datasets.list();
+          const datasetMeta = datasets.find((d) => d.id === datasetId);
 
-        if (!datasetMeta) {
-          await localSyncStore.acknowledge(first.dedupeKey, first.mutationId);
+          if (!datasetMeta) {
+            await localSyncStore.acknowledge(first.dedupeKey, first.mutationId);
+            continue;
+          }
+
+          const chunks = localAppStore.datasets.readChunks(datasetId, 2000);
+          const receipt = await cloud.uploadDataset(
+            deviceId,
+            first.mutationId,
+            datasetMeta,
+            chunks,
+          );
+
+          if (receipt.acceptedMutationIds.includes(first.mutationId)) {
+            await localSyncStore.acknowledge(first.dedupeKey, first.mutationId);
+          } else {
+            break;
+          }
           continue;
         }
 
-        const chunks = localAppStore.datasets.readChunks(datasetId, 2000);
-        const receipt = await cloud.uploadDataset(
-          deviceId,
-          first.mutationId,
-          datasetMeta,
-          chunks,
-        );
-
-        if (receipt.acceptedMutationIds.includes(first.mutationId)) {
-          await localSyncStore.acknowledge(first.dedupeKey, first.mutationId);
-        } else {
-          break;
+        const batchRecords: SyncOutboxRecord[] = [];
+        for (const record of outbox) {
+          if (record.kind === "dataset.upload") break;
+          batchRecords.push(record);
         }
-        continue;
-      }
 
-      const batchRecords: SyncOutboxRecord[] = [];
-      for (const record of outbox) {
-        if (record.kind === "dataset.upload") break;
-        batchRecords.push(record);
-      }
-
-      const mutations: MaterializedSyncMutation[] = [];
-      for (const record of batchRecords) {
-        switch (record.kind) {
-          case "dataset.remove":
-            mutations.push({
-              mutationId: record.mutationId,
-              kind: "dataset.remove",
-              datasetId: record.resourceId!,
-            });
-            break;
-
-          case "dataset.activate": {
-            const activeMeta = await localAppStore.datasets.getActive();
-            mutations.push({
-              mutationId: record.mutationId,
-              kind: "dataset.activate",
-              datasetId: activeMeta?.id ?? null,
-            });
-            break;
-          }
-
-          case "known.replace": {
-            const activeKnown = await localAppStore.knownWords.getActive();
-            mutations.push({
-              mutationId: record.mutationId,
-              kind: "known.replace",
-              value: activeKnown
-                ? { id: activeKnown.id, name: activeKnown.name, words: [...activeKnown.words] }
-                : null,
-            });
-            break;
-          }
-
-          case "decision.set": {
-            const decision = await localAppStore.wordDecisions.get(record.resourceId!);
-            if (decision) {
+        const mutations: MaterializedSyncMutation[] = [];
+        for (const record of batchRecords) {
+          switch (record.kind) {
+            case "dataset.remove":
               mutations.push({
                 mutationId: record.mutationId,
-                kind: "decision.set",
-                decision,
+                kind: "dataset.remove",
+                datasetId: record.resourceId!,
               });
-            } else {
+              break;
+
+            case "dataset.activate": {
+              const activeMeta = await localAppStore.datasets.getActive();
+              mutations.push({
+                mutationId: record.mutationId,
+                kind: "dataset.activate",
+                datasetId: activeMeta?.id ?? null,
+              });
+              break;
+            }
+
+            case "known.replace": {
+              const activeKnown = await localAppStore.knownWords.getActive();
+              mutations.push({
+                mutationId: record.mutationId,
+                kind: "known.replace",
+                value: activeKnown
+                  ? { id: activeKnown.id, name: activeKnown.name, words: [...activeKnown.words] }
+                  : null,
+              });
+              break;
+            }
+
+            case "decision.set": {
+              const decision = await localAppStore.wordDecisions.get(record.resourceId!);
+              if (decision) {
+                mutations.push({
+                  mutationId: record.mutationId,
+                  kind: "decision.set",
+                  decision,
+                });
+              } else {
+                mutations.push({
+                  mutationId: record.mutationId,
+                  kind: "decision.remove",
+                  normalizedWord: record.resourceId!,
+                });
+              }
+              break;
+            }
+
+            case "decision.remove":
               mutations.push({
                 mutationId: record.mutationId,
                 kind: "decision.remove",
                 normalizedWord: record.resourceId!,
               });
+              break;
+
+            case "preferences.replace": {
+              const prefs = await localAppStore.preferences.load();
+              if (prefs) {
+                mutations.push({
+                  mutationId: record.mutationId,
+                  kind: "preferences.replace",
+                  value: prefs,
+                });
+              }
+              break;
             }
-            break;
-          }
 
-          case "decision.remove":
-            mutations.push({
-              mutationId: record.mutationId,
-              kind: "decision.remove",
-              normalizedWord: record.resourceId!,
-            });
-            break;
+            case "queue.replace":
+            case "queue.remove": {
+              const queue = await localSyncStore.loadQueue(record.resourceId!);
+              if (queue) {
+                mutations.push({
+                  mutationId: record.mutationId,
+                  kind: "queue.replace",
+                  value: queue,
+                });
+              } else {
+                mutations.push({
+                  mutationId: record.mutationId,
+                  kind: "queue.remove",
+                  datasetId: record.resourceId!,
+                });
+              }
+              break;
+            }
 
-          case "preferences.replace": {
-            const prefs = await localAppStore.preferences.load();
-            if (prefs) {
+            case "anki.replace": {
+              const config = await localAppStore.ankiSync.loadConfig();
+              const snapshot = await localAppStore.ankiSync.loadSnapshot();
               mutations.push({
                 mutationId: record.mutationId,
-                kind: "preferences.replace",
-                value: prefs,
+                kind: "anki.replace",
+                config,
+                snapshot,
               });
+              break;
             }
-            break;
-          }
-
-          case "queue.replace":
-          case "queue.remove": {
-            const queue = await localSyncStore.loadQueue(record.resourceId!);
-            if (queue) {
-              mutations.push({
-                mutationId: record.mutationId,
-                kind: "queue.replace",
-                value: queue,
-              });
-            } else {
-              mutations.push({
-                mutationId: record.mutationId,
-                kind: "queue.remove",
-                datasetId: record.resourceId!,
-              });
-            }
-            break;
-          }
-
-          case "anki.replace": {
-            const config = await localAppStore.ankiSync.loadConfig();
-            const snapshot = await localAppStore.ankiSync.loadSnapshot();
-            mutations.push({
-              mutationId: record.mutationId,
-              kind: "anki.replace",
-              config,
-              snapshot,
-            });
-            break;
           }
         }
-      }
 
-      if (mutations.length === 0) {
-        for (const rec of batchRecords) {
-          await localSyncStore.acknowledge(rec.dedupeKey, rec.mutationId);
+        if (mutations.length === 0) {
+          for (const rec of batchRecords) {
+            await localSyncStore.acknowledge(rec.dedupeKey, rec.mutationId);
+          }
+          continue;
         }
-        continue;
-      }
 
-      const receipt = await cloud.push(deviceId, mutations);
+        const receipt = await cloud.push(deviceId, mutations);
 
-      let acceptedCount = 0;
-      for (const record of batchRecords) {
-        if (receipt.acceptedMutationIds.includes(record.mutationId)) {
-          await localSyncStore.acknowledge(record.dedupeKey, record.mutationId);
-          acceptedCount++;
+        let acceptedCount = 0;
+        for (const record of batchRecords) {
+          if (receipt.acceptedMutationIds.includes(record.mutationId)) {
+            await localSyncStore.acknowledge(record.dedupeKey, record.mutationId);
+            acceptedCount++;
+          }
+        }
+
+        if (acceptedCount === 0) {
+          break;
         }
       }
-
-      if (acceptedCount === 0) {
-        break;
-      }
+    } finally {
+      recordSyncTiming(
+        "sync_push",
+        Math.round(
+          (typeof performance !== "undefined" ? performance.now() : Date.now()) - pushStart,
+        ),
+      );
     }
   }
 
   async function pullUntilCaughtUp(): Promise<void> {
-    while (true) {
-      const meta = await localSyncStore.getMeta();
-      const page = await cloud.pull(meta.serverEventId, 200);
+    const pullStart = typeof performance !== "undefined" ? performance.now() : Date.now();
+    try {
+      while (true) {
+        const meta = await localSyncStore.getMeta();
+        const page = await cloud.pull(meta.serverEventId, 200);
 
-      if (page.changes.length === 0) {
-        if (page.nextEventId !== meta.serverEventId) {
-          await localSyncStore.setMeta({
-            ...meta,
-            serverEventId: page.nextEventId,
-            lastSyncAt: now(),
-          });
+        if (page.changes.length === 0) {
+          if (page.nextEventId !== meta.serverEventId) {
+            await localSyncStore.setMeta({
+              ...meta,
+              serverEventId: page.nextEventId,
+              lastSyncAt: now(),
+            });
+          }
+          break;
         }
-        break;
-      }
 
-      for (const change of page.changes) {
-        switch (change.kind) {
-          case "decision.set":
-            await remoteApplyStore.wordDecisions.set(change.decision);
-            break;
+        for (const change of page.changes) {
+          switch (change.kind) {
+            case "decision.set":
+              await remoteApplyStore.wordDecisions.set(change.decision);
+              break;
 
-          case "decision.remove":
-            await remoteApplyStore.wordDecisions.remove(change.normalizedWord);
-            break;
+            case "decision.remove":
+              await remoteApplyStore.wordDecisions.remove(change.normalizedWord);
+              break;
 
-          case "preferences.replace":
-            await remoteApplyStore.preferences.save(change.value);
-            break;
+            case "preferences.replace":
+              await remoteApplyStore.preferences.save(change.value);
+              break;
 
-          case "dataset.upsert":
-            if (remoteApplyStore.datasets.upsertMetadata) {
-              await remoteApplyStore.datasets.upsertMetadata(change.dataset);
+            case "dataset.upsert":
+              if (remoteApplyStore.datasets.upsertMetadata) {
+                await remoteApplyStore.datasets.upsertMetadata(change.dataset);
+              }
+              break;
+
+            case "dataset.remove":
+              await remoteApplyStore.datasets.remove(change.datasetId);
+              break;
+
+            case "dataset.activate":
+              if (change.datasetId !== null) {
+                await ensureDatasetCached(change.datasetId, cloud, remoteApplyStore);
+                await remoteApplyStore.datasets.activate(change.datasetId);
+              }
+              break;
+
+            case "known.replace": {
+              const canonicalKnown = await cloud.readKnownWords();
+              if (canonicalKnown) {
+                await remoteApplyStore.knownWords.save(
+                  canonicalKnown.id,
+                  canonicalKnown.name,
+                  canonicalKnown.words,
+                );
+              } else {
+                await remoteApplyStore.knownWords.clear?.();
+              }
+              break;
             }
-            break;
 
-          case "dataset.remove":
-            await remoteApplyStore.datasets.remove(change.datasetId);
-            break;
-
-          case "dataset.activate":
-            if (change.datasetId !== null) {
-              await ensureDatasetCached(change.datasetId, cloud, remoteApplyStore);
-              await remoteApplyStore.datasets.activate(change.datasetId);
+            case "queue.replace": {
+              const queues = await cloud.readQueues();
+              const q =
+                queues.find((candidate) => candidate.datasetId === change.datasetId) ?? null;
+              await localSyncStore.saveQueue(q, change.datasetId, false);
+              break;
             }
-            break;
 
-          case "known.replace": {
-            const canonicalKnown = await cloud.readKnownWords();
-            if (canonicalKnown) {
-              await remoteApplyStore.knownWords.save(
-                canonicalKnown.id,
-                canonicalKnown.name,
-                canonicalKnown.words,
-              );
-            } else {
-              await remoteApplyStore.knownWords.clear?.();
+            case "queue.remove":
+              await localSyncStore.saveQueue(null, change.datasetId, false);
+              break;
+
+            case "anki.replace": {
+              const canonicalAnki = await cloud.readAnki();
+              if (canonicalAnki.config) {
+                await remoteApplyStore.ankiSync.saveConfig(canonicalAnki.config);
+              } else {
+                await remoteApplyStore.ankiSync.clear();
+              }
+              if (canonicalAnki.snapshot) {
+                await remoteApplyStore.ankiSync.replaceSnapshot(canonicalAnki.snapshot);
+              } else {
+                await remoteApplyStore.ankiSync.replaceSnapshot(null);
+              }
+              break;
             }
-            break;
+
+            case "full-reset":
+              await bootstrapLocalCache({ cloud, remoteApplyStore, localSyncStore, now });
+              break;
           }
+        }
 
-          case "queue.replace": {
-            const queues = await cloud.readQueues();
-            const q =
-              queues.find((candidate) => candidate.datasetId === change.datasetId) ?? null;
-            await localSyncStore.saveQueue(q, change.datasetId, false);
-            break;
-          }
+        for (const listener of remoteAppliedListeners) {
+          await listener();
+        }
 
-          case "queue.remove":
-            await localSyncStore.saveQueue(null, change.datasetId, false);
-            break;
+        const currentMeta = await localSyncStore.getMeta();
+        await localSyncStore.setMeta({
+          ...currentMeta,
+          serverEventId: page.nextEventId,
+          lastSyncAt: now(),
+        });
 
-          case "anki.replace": {
-            const canonicalAnki = await cloud.readAnki();
-            if (canonicalAnki.config) {
-              await remoteApplyStore.ankiSync.saveConfig(canonicalAnki.config);
-            } else {
-              await remoteApplyStore.ankiSync.clear();
-            }
-            if (canonicalAnki.snapshot) {
-              await remoteApplyStore.ankiSync.replaceSnapshot(canonicalAnki.snapshot);
-            } else {
-              await remoteApplyStore.ankiSync.replaceSnapshot(null);
-            }
-            break;
-          }
-
-          case "full-reset":
-            await bootstrapLocalCache({ cloud, remoteApplyStore, localSyncStore, now });
-            break;
+        if (page.nextEventId <= meta.serverEventId) {
+          break;
         }
       }
-
-      for (const listener of remoteAppliedListeners) {
-        await listener();
-      }
-
-      const currentMeta = await localSyncStore.getMeta();
-      await localSyncStore.setMeta({
-        ...currentMeta,
-        serverEventId: page.nextEventId,
-        lastSyncAt: now(),
-      });
-
-      if (page.nextEventId <= meta.serverEventId) {
-        break;
-      }
+    } finally {
+      recordSyncTiming(
+        "sync_pull",
+        Math.round(
+          (typeof performance !== "undefined" ? performance.now() : Date.now()) - pullStart,
+        ),
+      );
     }
   }
 
@@ -484,7 +511,7 @@ export function createSyncEngine(options: SyncEngineOptions): SyncEngine {
         pending: remainingOutbox.length,
         lastSyncAt: nowIso,
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       const isNetwork =
         (error instanceof RemoteStoreError && error.code === "NETWORK_ERROR") ||
         (typeof navigator !== "undefined" && !navigator.onLine);
