@@ -429,6 +429,9 @@ test.describe("canonical miner", () => {
   }) => {
     test.setTimeout(60_000);
     await page.goto("/");
+    await expect(page.locator(".cloud-status")).toHaveText(
+      /^(Saved to PostgreSQL|Synced|Saved locally)\s*$/,
+    );
     await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
 
