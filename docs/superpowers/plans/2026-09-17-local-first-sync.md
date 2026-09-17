@@ -4,7 +4,7 @@
 
 **Goal:** Make warm launches and normal study actions use IndexedDB immediately while PostgreSQL synchronizes in the background across devices.
 
-**Architecture:** The miner controller will use an IndexedDB `AppStore` as its steady-state working copy. A separate `SyncEngine` owns cloud push/pull, using a durable coalescing outbox in the same IndexedDB database and an append-only PostgreSQL change feed. The existing `RemoteAppStore` stays available for first-device bootstrap, complete backup/restore, and fallback when IndexedDB is unavailable.
+**Architecture:** The miner controller uses an IndexedDB `AppStore` as its steady-state working copy. A separate `SyncEngine` owns cloud push/pull, backed by a durable coalescing IndexedDB outbox and an append-only PostgreSQL change feed. `RemoteAppStore` remains for complete backup/restore and as the server-first fallback when IndexedDB is unavailable.
 
 **Tech Stack:** Next.js 16, React 19, TypeScript 7, native IndexedDB, Web Worker, PostgreSQL, Drizzle ORM, postgres-js, Zod, Vitest, PGlite, Playwright.
 
@@ -12,18 +12,20 @@
 
 ## Global Constraints
 
-- Keep the current single-owner GitHub authentication and same-origin checks on every new API request.
-- Do not add a CRDT library, service worker, or new runtime dependency in this release.
-- Use a new production IndexedDB name: `jiten-migaku-miner-local-first`.
+- Keep the existing single-owner GitHub authentication and same-origin checks on every new API request.
+- Do not add a CRDT library, service worker, or runtime dependency in this release.
+- Use `jiten-migaku-miner-local-first` as the new production IndexedDB database name.
 - Keep the previous browser database untouched during the first local-first release.
-- Local application state and its cloud-sync intent must commit in the same IndexedDB transaction.
+- A local application mutation and its cloud-sync intent must commit in the same IndexedDB transaction.
 - Warm startup must not wait for `/api/store` or `/api/sync` before rendering cached study data.
-- Push pending local changes before pulling remote changes.
-- Cloud mutation retries must be idempotent by `mutationId`.
-- Do not purge `sync_events` in the first release.
-- A remote change applied locally must never generate a new outbox mutation.
-- Complete backup/export and complete restore remain cloud-backed in this release.
-- Preserve the existing 1,000,000-row dataset limit, 400 KB row limit, 750 KB request limit, and 256 MiB staged-state limit.
+- Push local pending changes before pulling remote changes.
+- Cloud retries must be idempotent by `mutationId`.
+- Keep `sync_events` indefinitely in this release.
+- Remote/bootstrap writes must never create outbox work.
+- Complete backup/export and complete restore remain cloud-backed.
+- `Clear saved data` remains online-only: cloud clear succeeds before local cache deletion.
+- Preserve the current limits: 1,000,000 rows per dataset, 400 KB per row, 750 KB wire request/response target, 256 MiB staged-state limit.
+- Do not change the controller's persistence enum; local-first still uses `persistence: "indexeddb"`. Cloud status stays outside `AppState`.
 
 ---
 
@@ -31,37 +33,36 @@
 
 ### New files
 
-- `src/sync/contracts.ts` — wire/domain types shared by browser sync and server sync.
-- `src/sync/cloud-client.ts` — authenticated browser transport for `/api/sync`; no controller/UI logic.
-- `src/sync/engine.ts` — push-first/pull-second orchestration, retry state, dataset hydration.
-- `src/storage/indexed-db-core.ts` — IndexedDB database name/version, object-store creation, transaction helpers.
-- `src/storage/local-sync.ts` — local queue/workspace/sync-meta/outbox APIs and compare-and-delete acknowledgement.
-- `src/server/sync.ts` — server-side bootstrap/pull/push/idempotency operations.
-- `src/app/api/sync/route.ts` — auth/origin/content-type/size boundary around `src/server/sync.ts`.
-- `migrations/0002_local_first_sync.sql` — sync event and mutation ledger tables.
-- `tests/storage/local-sync.test.ts` — IndexedDB sync stores and atomic outbox invariants.
-- `tests/server/sync.test.ts` — PostgreSQL event feed, idempotency, push/pull behavior.
-- `tests/sync/engine.test.ts` — two-device convergence and retry behavior.
-- `tests/e2e/local-first-sync.spec.ts` — warm boot, offline local writes, second-context sync.
+- `src/sync/contracts.ts` — sync wire/domain types.
+- `src/sync/cloud-client.ts` — browser transport for `/api/sync`.
+- `src/sync/engine.ts` — push-first/pull-second orchestration and dataset hydration.
+- `src/storage/indexed-db-core.ts` — database name/version, object-store creation, transactions.
+- `src/storage/local-sync.ts` — queue/workspace/sync-meta/outbox APIs.
+- `src/server/sync.ts` — server bootstrap/read/pull/push/dataset-sync operations.
+- `src/app/api/sync/route.ts` — authenticated/same-origin sync API boundary.
+- `migrations/0002_local_first_sync.sql` — sync event/idempotency tables.
+- `tests/storage/local-sync.test.ts` — IndexedDB outbox/meta/workspace/queue tests.
+- `tests/server/sync.test.ts` — server sync protocol/idempotency tests.
+- `tests/sync/engine.test.ts` — engine convergence/retry tests.
+- `tests/e2e/local-first-sync.spec.ts` — warm boot/offline/cross-device tests.
 
 ### Existing files to modify
 
-- `src/storage/indexed-db.ts` — consume extracted IndexedDB core, add cache state and optional mutation recording.
-- `src/storage/contracts.ts` — expose local cache-state capability needed for on-demand dataset hydration.
-- `src/server/db/schema.ts` — mirror migration `0001` dataset counters and define sync tables.
-- `src/server/store.ts` — dual-write compact sync events for every canonical mutation.
-- `src/server/storage/validation.ts` — validation for any sync payload reused by server operations.
-- `src/components/study-runtime.ts` — local-first boot path, cloud status, fallback, bootstrap, sync-engine lifecycle.
-- `src/miner/controller.ts` — accept initial viewport state and dataset-preparation hook; do not add HTTP knowledge.
-- `src/miner/state.ts` — add `local-first` persistence label if UI/tests need to distinguish it.
-- `src/platform/session-queue.ts` — keep the synchronous controller-facing facade, but document/use an async durable backing adapter from runtime.
-- `src/storage/remote-store.ts` — expose only the minimal helpers required for cloud bootstrap/backup compatibility; preserve old server-first behavior.
-- `tests/storage/indexed-db.test.ts` — verify cached vs metadata-only datasets.
-- `tests/storage/indexed-db-upgrade.test.ts` — verify all local-first stores are created.
-- `tests/server/postgres-store.test.ts` — verify legacy `/api/store` writes emit sync events.
-- `tests/e2e/cloud.spec.ts` — preserve server-first fallback behavior.
-- `tests/e2e/backup-restore.spec.ts` — verify flush-before-export and rebootstrap-after-restore.
-- `README.md` — rollout flag, migration order, local-first status semantics.
+- `src/storage/indexed-db.ts` — use extracted core, metadata-only dataset cache, optional mutation recording.
+- `src/storage/contracts.ts` — dataset cache-state helpers.
+- `src/server/db/schema.ts` — mirror migration `0001` counters and define sync tables.
+- `src/server/store.ts` — dual-write compact sync events from legacy `/api/store` operations.
+- `src/server/storage/validation.ts` — shared size/schema validation used by sync server operations.
+- `src/components/study-runtime.ts` — local-first boot, fallback, resume persistence, sync lifecycle/status.
+- `src/miner/controller.ts` — initial viewport, prepare-dataset hook, refresh-from-storage.
+- `src/storage/remote-store.ts` — no semantic rewrite; only expose existing backup/clear helpers if runtime composition needs typed access.
+- `tests/storage/indexed-db.test.ts` — metadata-only/cache-ready behavior.
+- `tests/storage/indexed-db-upgrade.test.ts` — all new stores.
+- `tests/server/postgres-store.test.ts` — legacy writes emit events.
+- `tests/app/controller.test.ts` — first-query viewport and refresh behavior.
+- `tests/e2e/cloud.spec.ts` — server-first fallback remains functional.
+- `tests/e2e/backup-restore.spec.ts` — flush-before-export and rebootstrap-after-restore.
+- `README.md` — migration/flag/rollout/status docs.
 
 ---
 
@@ -74,48 +75,65 @@
 - Test: `tests/server/postgres-store.test.ts`
 
 **Interfaces:**
-- Consumes: existing `StoreDatabase`, `createPostgresStore()`, and `app_state.revision`.
-- Produces: `recordSyncEvent(transaction, event)` plus durable `sync_events` rows that Task 2 reads.
+- Consumes: `StoreDatabase`, current `createPostgresStore()`, current `app_state.revision`.
+- Produces: `sync_events`, `sync_mutations`, and a `recordSyncEvent()` helper used by Task 2.
 
-- [ ] **Step 1: Write failing PostgreSQL tests for legacy dual-write**
+- [ ] **Step 1: Add failing legacy dual-write tests**
 
-Add tests that perform these existing operations through `createPostgresStore()` and then query `sync_events` directly:
+In `tests/server/postgres-store.test.ts`, define:
 
 ```ts
-it("emits a decision event in the same transaction", async () => {
+const NOW = "2026-09-17T00:00:00.000Z";
+```
+
+Add the decision test:
+
+```ts
+it("emits a decision sync event in the same committed operation", async () => {
+  const dispatch = createPostgresStore(database);
+  await dispatch({ operation: "initialize" });
   await dispatch({
     operation: "decision.set",
     revision: 0,
     decision: { normalizedWord: "騒ぐ", status: "known", updatedAt: NOW },
   });
 
-  const rows = await database.query<{
-    resource: string;
-    resource_key: string | null;
-    action: string;
-  }>("SELECT resource, resource_key, action FROM sync_events ORDER BY id");
-
-  expect(rows.rows).toEqual([
+  const result = await database.execute(
+    sql`SELECT resource, resource_key, action FROM sync_events ORDER BY id`,
+  );
+  const records = Array.isArray(result) ? result : result.rows;
+  expect(records).toEqual([
     { resource: "decision", resource_key: "騒ぐ", action: "set" },
   ]);
 });
 ```
 
-Add equivalent assertions for `preferences.save`, successful `dataset.finish`, `dataset.activate`, `dataset.remove`, known-word `state.finish`, queue `state.finish`, Anki `state.finish`, and complete restore/clear producing `full-reset`.
+Add the following exact operation/event matrix as separate tests. Each test performs the operation through `createPostgresStore()`, reads `sync_events`, and asserts one logical event after the operation becomes visible:
 
-- [ ] **Step 2: Run the server test and verify failure**
+| Operation | `resource` | `resource_key` | `action` |
+| --- | --- | --- | --- |
+| `preferences.save` | `preferences` | `null` | `replace` |
+| successful `dataset.finish` | `dataset` | dataset id | `upsert` |
+| `dataset.activate` | `dataset-active` | dataset id | `set` |
+| `dataset.remove` | `dataset` | dataset id | `remove` |
+| `decision.remove` | `decision` | normalized word | `remove` |
+| `known.remove` or known `state.finish` | `known` | `null` | `replace` |
+| queue `state.finish` with value | `queue` | dataset id | `replace` |
+| queue `state.finish` with null | `queue` | dataset id | `remove` |
+| `ankiConfig.save`, Anki snapshot finish/clear | `anki` | `null` | `replace` |
+| complete restore or `state.clear all` | `state` | `null` | `full-reset` |
 
-Run:
+Assert `dataset.begin`, `dataset.chunk`, `dataset.chunks`, and `state.chunk` emit no event because staging is not yet visible state.
+
+- [ ] **Step 2: Run the server test and confirm the schema failure**
 
 ```bash
 npx vitest run tests/server/postgres-store.test.ts
 ```
 
-Expected: FAIL because `sync_events` does not exist.
+Expected: FAIL on `sync_events` because the table does not exist.
 
-- [ ] **Step 3: Add the migration**
-
-Create `migrations/0002_local_first_sync.sql` exactly as:
+- [ ] **Step 3: Add migration `0002_local_first_sync.sql`**
 
 ```sql
 CREATE TABLE sync_events (
@@ -138,9 +156,9 @@ CREATE TABLE sync_mutations (
 );
 ```
 
-- [ ] **Step 4: Bring the Drizzle schema in sync with migrations `0001` and `0002`**
+- [ ] **Step 4: Bring `src/server/db/schema.ts` in sync with migrations**
 
-In `src/server/db/schema.ts`, add the already-deployed upload-counter columns to `datasets`:
+Add the already-deployed `0001` columns to `datasets`:
 
 ```ts
 uploadedRows: bigint("uploaded_rows", { mode: "number" }).notNull().default(0),
@@ -148,16 +166,16 @@ uploadedBytes: bigint("uploaded_bytes", { mode: "number" }).notNull().default(0)
 nextOrdinal: integer("next_ordinal").notNull().default(0),
 ```
 
-Then define `syncEvents` and `syncMutations` matching the SQL migration. Do not generate or rewrite prior migration files.
+Define `syncEvents` and `syncMutations` with the same columns/foreign key as `0002`. Do not edit `0000` or `0001`.
 
-- [ ] **Step 5: Add a compact event helper in `src/server/store.ts`**
+- [ ] **Step 5: Add `recordSyncEvent()` and emit events before revision commit**
 
-Add:
+Add to `src/server/store.ts`:
 
 ```ts
 type SyncEventInput = {
   resource: string;
-  resourceKey?: string | null;
+  resourceKey: string | null;
   action: string;
   originDeviceId?: string | null;
 };
@@ -167,38 +185,21 @@ async function recordSyncEvent(
   appRevision: number,
   event: SyncEventInput,
 ): Promise<number> {
-  const result = await rows<{ id: string | number }>(
+  const inserted = await rows<{ id: string | number }>(
     database,
     sql`INSERT INTO sync_events(app_revision, resource, resource_key, action, origin_device_id)
-        VALUES (${appRevision}, ${event.resource}, ${event.resourceKey ?? null}, ${event.action}, ${event.originDeviceId ?? null})
+        VALUES (${appRevision}, ${event.resource}, ${event.resourceKey}, ${event.action}, ${event.originDeviceId ?? null})
         RETURNING id`,
   );
-  return Number(result[0]!.id);
+  return Number(inserted[0]!.id);
 }
 ```
 
-Call it only after the canonical mutation has succeeded and before the transaction returns. Use the post-mutation revision that will be committed for the operation.
+The existing store increments the revision after the switch. For a visible mutation, use `const nextRevision = revision + 1`, emit the event with `nextRevision`, then execute the existing `UPDATE app_state SET revision = revision + 1`. The event and canonical mutation remain inside the same PostgreSQL transaction.
 
-Map existing operations to events as follows:
+For `state.finish`, derive the event from `upload.target`; for complete backup/user-state operations that change several resource families, emit one `full-reset` event instead of many per-row events.
 
-| Existing operation | Event |
-| --- | --- |
-| `dataset.finish` | `dataset/<id>/upsert` |
-| `dataset.activate` | `dataset-active/<id>/set` |
-| `dataset.remove` | `dataset/<id>/remove` |
-| `decision.set` | `decision/<word>/set` |
-| `decision.remove` | `decision/<word>/remove` |
-| `preferences.save` | `preferences/null/replace` |
-| known-word `state.finish` | `known/null/replace` |
-| queue `state.finish` or clear | `queue/<datasetId>/replace` or `remove` |
-| Anki snapshot/config finish/clear | `anki/null/replace` |
-| complete restore or `state.clear all` | `state/null/full-reset` |
-
-Do not emit events for staging-only chunk writes; only emit when a logical resource becomes visible.
-
-- [ ] **Step 6: Run server tests**
-
-Run:
+- [ ] **Step 6: Run server storage tests**
 
 ```bash
 npx vitest run tests/server/postgres-store.test.ts
@@ -225,38 +226,47 @@ git commit -m "feat: record cloud sync events"
 - Test: `tests/server/sync.test.ts`
 
 **Interfaces:**
-- Consumes: `sync_events`, `sync_mutations`, existing canonical PostgreSQL tables, existing auth/access helpers.
-- Produces: `CloudBootstrap`, `RemoteChange`, `MaterializedSyncMutation`, `SyncPullPage`, `SyncPushReceipt`, and authenticated `/api/sync` operations.
+- Consumes: canonical PostgreSQL tables plus `sync_events`/`sync_mutations`.
+- Produces: metadata bootstrap, paginated resource reads, pull, idempotent push, and idempotent staged dataset upload.
 
-- [ ] **Step 1: Write failing protocol/server tests**
+- [ ] **Step 1: Write failing server-sync tests with concrete fixtures**
 
-Cover four cases:
+Use two decisions:
 
 ```ts
-it("pulls events strictly after the supplied cursor", async () => { /* seed two events; afterEventId=first returns second */ });
-it("replaying the same mutationId is idempotent", async () => { /* push twice; canonical row and event count change once */ });
-it("push accepts a stale device without revision-conflict rejection", async () => { /* mutate server between bootstrap and push */ });
-it("bootstrap returns the current event cursor and canonical metadata", async () => { /* assert active dataset, library, state cursor */ });
+const firstDecision = {
+  normalizedWord: "猫",
+  status: "known" as const,
+  updatedAt: "2026-09-17T00:00:00.000Z",
+};
+const secondDecision = {
+  normalizedWord: "犬",
+  status: "mined" as const,
+  updatedAt: "2026-09-17T00:01:00.000Z",
+};
 ```
 
-- [ ] **Step 2: Run and verify failure**
+Write these tests:
+
+1. Insert event id 1 for `猫`, event id 2 for `犬`; `pull(afterEventId:1)` returns only the `犬` change and `nextEventId === 2`.
+2. Push `{ mutationId:"00000000-0000-4000-8000-000000000001", kind:"decision.set", decision:firstDecision }` twice; the canonical decision exists once, `sync_mutations` contains one row, and only one new `sync_events` row exists.
+3. Bootstrap a device, mutate a preference directly through the legacy store to advance app revision, then push `secondDecision`; push succeeds instead of returning `REVISION_CONFLICT`.
+4. Seed two ready dataset metadata rows and activate one; bootstrap returns both metadata rows, active id, and the current max event id without returning dataset entries.
+5. Seed more than one sync-read page of decisions and assert `state.read` pagination returns every item without any response exceeding the existing response-size guard.
+
+- [ ] **Step 2: Run and confirm failure**
 
 ```bash
 npx vitest run tests/server/sync.test.ts
 ```
 
-Expected: FAIL because the sync contracts and server dispatcher do not exist.
+Expected: FAIL because `src/server/sync.ts` and sync contracts do not exist.
 
-- [ ] **Step 3: Add exact shared contracts**
+- [ ] **Step 3: Add `src/sync/contracts.ts`**
 
-Create `src/sync/contracts.ts` with these exported shapes:
+Define these exact exported names:
 
 ```ts
-import type { AnkiSyncConfig, AnkiSyncSnapshot } from "../domain/anki";
-import type { Entry, QueryState, ViewState, WordDecision } from "../domain/types";
-import type { SessionQueueSnapshot } from "../platform/session-queue";
-import type { DatasetMetadata } from "../storage/contracts";
-
 export type PreferencesValue = { query: QueryState; view: ViewState; page: number };
 
 export type SyncMutationKind =
@@ -271,6 +281,12 @@ export type SyncMutationKind =
   | "queue.remove"
   | "anki.replace";
 
+export interface CloudBootstrapManifest {
+  eventId: number;
+  activeDatasetId: string | null;
+  datasets: DatasetMetadata[];
+}
+
 export type MaterializedSyncMutation =
   | { mutationId: string; kind: "dataset.remove"; datasetId: string }
   | { mutationId: string; kind: "dataset.activate"; datasetId: string | null }
@@ -281,83 +297,52 @@ export type MaterializedSyncMutation =
   | { mutationId: string; kind: "queue.replace"; value: SessionQueueSnapshot }
   | { mutationId: string; kind: "queue.remove"; datasetId: string }
   | { mutationId: string; kind: "anki.replace"; config: AnkiSyncConfig | null; snapshot: AnkiSyncSnapshot | null };
-
-export type RemoteChange =
-  | { id: number; kind: "dataset.upsert"; dataset: DatasetMetadata }
-  | { id: number; kind: "dataset.remove"; datasetId: string }
-  | { id: number; kind: "dataset.activate"; datasetId: string | null }
-  | { id: number; kind: "known.replace" }
-  | { id: number; kind: "decision.set"; decision: WordDecision }
-  | { id: number; kind: "decision.remove"; normalizedWord: string }
-  | { id: number; kind: "preferences.replace"; value: PreferencesValue }
-  | { id: number; kind: "queue.replace"; datasetId: string }
-  | { id: number; kind: "queue.remove"; datasetId: string }
-  | { id: number; kind: "anki.replace" }
-  | { id: number; kind: "full-reset" };
-
-export interface CloudBootstrap {
-  eventId: number;
-  activeDatasetId: string | null;
-  datasets: DatasetMetadata[];
-  knownWords: { id: string; name: string; words: string[] } | null;
-  decisions: WordDecision[];
-  preferences: PreferencesValue | null;
-  queues: SessionQueueSnapshot[];
-  anki: { config: AnkiSyncConfig | null; snapshot: AnkiSyncSnapshot | null };
-}
-
-export interface SyncPullPage {
-  changes: RemoteChange[];
-  nextEventId: number;
-  hasMore: boolean;
-}
-
-export interface SyncPushReceipt {
-  accepted: Array<{ mutationId: string; eventId: number | null }>;
-}
 ```
 
-Dataset content is not included in `MaterializedSyncMutation`; it uses the dedicated staged upload methods added in Step 5.
+Also define `RemoteChange`, `SyncPullPage`, and `SyncPushReceipt` exactly as specified in the design doc.
 
-- [ ] **Step 4: Implement `dispatchSyncOperation()`**
+- [ ] **Step 4: Implement the server operation schema**
 
-In `src/server/sync.ts`, expose:
+`dispatchSyncOperation(input)` accepts this discriminated set:
 
-```ts
-export async function dispatchSyncOperation(input: unknown): Promise<unknown>;
-```
-
-Validate a discriminated union with operations:
-
-```ts
-"bootstrap"
-"pull"
-"push"
-"dataset.begin"
-"dataset.chunks"
-"dataset.finish"
-"dataset.read"
+```text
+bootstrap
+state.read
+pull
+push
+dataset.begin
+dataset.chunks
+dataset.finish
+dataset.read
 ```
 
 Rules:
 
-- `bootstrap` reads one consistent canonical snapshot and `SELECT COALESCE(MAX(id), 0) FROM sync_events` in one transaction.
-- `pull` returns at most 200 events with `id > afterEventId`, ordered ascending; hydrate small payloads (`decision`, `preferences`, dataset metadata) from canonical data and mark large resources (`known`, `queue`, `anki`, `full-reset`) for client refetch.
-- `push` takes at most 100 mutations; before applying each, query `sync_mutations`. If present, return the prior `accepted_event_id` without reapplying.
-- A fresh mutation applies canonical state, writes one event with `origin_device_id`, then inserts the mutation ledger row in the same transaction.
-- `push` does not compare the client's old app revision.
-- `dataset.begin/chunks/finish` reuses the existing chunk/count/byte limits but keys idempotency by `mutationId` instead of a client revision. An already-ready identical dataset is success; same id with different metadata is `409 DATASET_CONFLICT`.
-- `dataset.read` pages canonical ready chunks and keeps each response below the existing wire limit.
+- `bootstrap`: return `CloudBootstrapManifest` only; do not include known words, decisions, queues, Anki statuses, or dataset entries.
+- `state.read`: page one logical resource without a client revision requirement. Supported resources: `knownWords`, `decisions`, `preferences`, `ankiConfig`, `ankiSnapshot`, `queues`, `queue`. Reuse the current page sizing/response-size logic.
+- `pull`: at most 200 events, strictly `id > afterEventId`, ascending. Hydrate small resources (`decision`, `preferences`, dataset metadata) into `RemoteChange`; leave large resources as marker changes.
+- `push`: at most 100 materialized mutations. Before applying each mutation, check `sync_mutations`. Duplicate id returns its prior receipt and does not mutate canonical state again.
+- Fresh push mutation: apply canonical state, increment `app_state.revision`, emit one sync event with `origin_device_id`, insert `sync_mutations`, all in the same transaction.
+- `dataset.begin/chunks/finish`: use `mutationId` as stable upload identity, retain existing row/chunk/byte checks, and record `sync_mutations` only when finish makes the dataset ready.
+- Ready same-id dataset with identical metadata is successful idempotency; same id with different metadata returns `409 DATASET_CONFLICT`.
+- `dataset.read`: page ready chunks with existing response-size limits and no revision requirement.
 
-- [ ] **Step 5: Add the API route with the same security boundary as `/api/store`**
+- [ ] **Step 5: Add the authenticated route**
 
-`src/app/api/sync/route.ts` must:
+`src/app/api/sync/route.ts` uses the same order as `/api/store`:
 
-```ts
-const MAX_BODY_BYTES = 1024 * 1024;
+```text
+auth()
+-> isOwner()
+-> isSameOrigin()
+-> content-type starts application/json
+-> bounded body read (1 MiB)
+-> JSON.parse
+-> dispatchSyncOperation()
+-> Cache-Control: no-store
 ```
 
-Then perform, in order: `auth()`, `isOwner`, `isSameOrigin`, JSON content-type check, bounded body read, `JSON.parse`, `dispatchSyncOperation`, `Cache-Control: no-store`. Return typed `StoreError`/sync errors without exposing PostgreSQL internals.
+Return domain error messages/codes; log unexpected server exceptions without sending raw SQL/provider messages to the browser.
 
 - [ ] **Step 6: Run server tests**
 
@@ -376,7 +361,7 @@ git commit -m "feat: add idempotent cloud sync api"
 
 ---
 
-### Task 3: Create the local-first IndexedDB schema and local sync stores
+### Task 3: Extract IndexedDB core and create the local-first schema
 
 **Files:**
 - Create: `src/storage/indexed-db-core.ts`
@@ -386,15 +371,15 @@ git commit -m "feat: add idempotent cloud sync api"
 - Test: `tests/storage/local-sync.test.ts`
 
 **Interfaces:**
-- Consumes: existing IndexedDB store implementations.
-- Produces: one local-first database, `LocalSyncStore`, durable queue store, workspace store, and compare-and-delete outbox acknowledgement.
+- Consumes: current IndexedDB implementation.
+- Produces: one local-first database plus queue/workspace/sync-meta/outbox stores.
 
 - [ ] **Step 1: Write failing schema tests**
 
-Assert a newly opened database contains exactly these stores:
+Assert a fresh database contains these exact stores:
 
 ```ts
-[
+expect([...database.objectStoreNames]).toEqual([
   "ankiSync",
   "datasets",
   "entryChunks",
@@ -406,45 +391,53 @@ Assert a newly opened database contains exactly these stores:
   "syncOutbox",
   "wordDecisions",
   "workspace",
-]
+]);
 ```
 
-Also assert `syncOutbox` keyPath is `dedupeKey`, `queues` keyPath is `datasetId`, and `workspace`/`syncMeta` keyPath is `id`.
+Sort the actual names before comparison if the test environment does not preserve creation order. Assert key paths:
 
-- [ ] **Step 2: Run and verify failure**
+```text
+syncOutbox -> dedupeKey
+queues     -> datasetId
+syncMeta   -> id
+workspace  -> id
+```
+
+- [ ] **Step 2: Run and confirm failure**
 
 ```bash
 npx vitest run tests/storage/indexed-db-upgrade.test.ts tests/storage/local-sync.test.ts
 ```
 
-Expected: FAIL because the new stores/core module do not exist.
+Expected: FAIL because the new stores/modules do not exist.
 
-- [ ] **Step 3: Extract the database mechanics without changing existing store behavior**
+- [ ] **Step 3: Extract shared database mechanics**
 
-Move the reusable database/open/transaction code from `src/storage/indexed-db.ts` into `src/storage/indexed-db-core.ts` and export:
+Create `src/storage/indexed-db-core.ts` with:
 
 ```ts
 export const INDEXED_DB_NAME = "jiten-migaku-miner-local-first";
 export const INDEXED_DB_VERSION = 4;
-export type IndexedDbStoreName = /* union of all 11 names */;
-export function withDatabase<T>(name: string, action: (db: IDBDatabase) => Promise<T>): Promise<T>;
-export function runTransaction<T>(
-  database: IDBDatabase,
-  storeNames: readonly IndexedDbStoreName[],
-  mode: IDBTransactionMode,
-  operation: (
-    transaction: IDBTransaction,
-    resolveResult: (value: T) => void,
-    abort: (reason: unknown) => void,
-  ) => void,
-): Promise<T>;
+
+export type IndexedDbStoreName =
+  | "datasets"
+  | "entryChunks"
+  | "knownWordSets"
+  | "preferences"
+  | "meta"
+  | "wordDecisions"
+  | "ankiSync"
+  | "queues"
+  | "workspace"
+  | "syncOutbox"
+  | "syncMeta";
 ```
 
-The upgrade callback creates all old stores plus `queues`, `workspace`, `syncOutbox`, and `syncMeta`. Keep `database.onversionchange = () => database.close()`.
+Move `openDatabase`, `withDatabase`, `runTransaction`, request-error classification, and object-store creation from `indexed-db.ts` without changing their transaction/error semantics. Keep `database.onversionchange = () => database.close()`.
 
-- [ ] **Step 4: Add local sync types and CRUD**
+- [ ] **Step 4: Implement `LocalSyncStore`**
 
-`src/storage/local-sync.ts` defines:
+`src/storage/local-sync.ts` exports:
 
 ```ts
 export interface SyncOutboxRecord {
@@ -472,7 +465,7 @@ export interface WorkspaceResumeState {
 }
 ```
 
-Create `createLocalSyncStore({ databaseName, now, createId })` with:
+`createLocalSyncStore()` provides:
 
 ```ts
 getMeta(): Promise<LocalSyncMeta>;
@@ -483,30 +476,35 @@ loadWorkspace(): Promise<WorkspaceResumeState | null>;
 saveWorkspace(value: WorkspaceResumeState): Promise<void>;
 loadQueue(datasetId: string): Promise<SessionQueueSnapshot | null>;
 listQueues(): Promise<SessionQueueSnapshot[]>;
-saveQueue(snapshot: SessionQueueSnapshot | null, datasetId: string): Promise<void>;
+saveQueue(snapshot: SessionQueueSnapshot | null, datasetId: string, recordMutation: boolean): Promise<void>;
 clearLocalData(): Promise<void>;
 ```
 
-`getMeta()` creates a stable `deviceId` via `crypto.randomUUID()` the first time and returns `{ bootstrapComplete:false, serverEventId:0, lastSyncAt:null }`.
-
-`acknowledge()` must compare mutation ids inside one readwrite transaction:
+First `getMeta()` creates a stable `deviceId` with `crypto.randomUUID()` and stores:
 
 ```ts
-const current = await get(dedupeKey);
-if (current?.mutationId === mutationId) store.delete(dedupeKey);
+{
+  id: "current",
+  deviceId,
+  bootstrapComplete: false,
+  serverEventId: 0,
+  lastSyncAt: null,
+}
 ```
 
-- [ ] **Step 5: Test acknowledgement race safety**
+- [ ] **Step 5: Implement compare-and-delete acknowledgement**
 
-Write this exact behavior:
+Inside one readwrite transaction over `syncOutbox`:
 
 ```ts
-await putOutbox({ dedupeKey: "preferences", mutationId: "old", ...base });
-const sent = (await sync.listOutbox(10))[0]!;
-await putOutbox({ dedupeKey: "preferences", mutationId: "new", ...base });
-await sync.acknowledge(sent.dedupeKey, sent.mutationId);
-expect((await sync.listOutbox(10))[0]?.mutationId).toBe("new");
+const request = store.get(dedupeKey) as IDBRequest<SyncOutboxRecord | undefined>;
+request.onsuccess = () => {
+  if (request.result?.mutationId === mutationId) store.delete(dedupeKey);
+  resolveResult(undefined);
+};
 ```
+
+Test the race by writing mutation `old`, reading it as the in-flight item, replacing it with mutation `new`, acknowledging `old`, and asserting `new` remains.
 
 - [ ] **Step 6: Run storage tests**
 
@@ -519,13 +517,13 @@ Expected: PASS.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add src/storage/indexed-db-core.ts src/storage/local-sync.ts src/storage/indexed-db.ts tests/storage/indexed-db-upgrade.test.ts tests/storage/local-sync.test.ts tests/storage/indexed-db.test.ts
-git commit -m "feat: add local-first indexeddb schema"
+git add src/storage/indexed-db-core.ts src/storage/local-sync.ts src/storage/indexed-db.ts tests/storage/indexed-db-upgrade.test.ts tests/storage/indexed-db.test.ts tests/storage/local-sync.test.ts
+git commit -m "feat: add local-first indexeddb substrate"
 ```
 
 ---
 
-### Task 4: Make local writes atomically record sync intent
+### Task 4: Record cloud sync intent atomically with every local mutation
 
 **Files:**
 - Modify: `src/storage/indexed-db.ts`
@@ -534,36 +532,35 @@ git commit -m "feat: add local-first indexeddb schema"
 - Test: `tests/storage/indexed-db.test.ts`
 
 **Interfaces:**
-- Consumes: `SyncOutboxRecord`, `syncOutbox` object store.
-- Produces: recording-enabled UI store and recording-disabled remote-apply store sharing the same database.
+- Consumes: `syncOutbox` object store and sync mutation kinds.
+- Produces: recording-enabled controller store plus recording-disabled bootstrap/remote-apply store.
 
-- [ ] **Step 1: Add failing atomicity tests**
+- [ ] **Step 1: Add failing mutation/outbox matrix tests**
 
-For each resource, write a local value through a recording-enabled store and assert the application record and expected outbox record appear after the same transaction. Minimum cases:
+For a recording-enabled store, assert these exact pairs:
 
-```text
-dataset stage success -> dataset:<id> / dataset.upload
-dataset activate      -> activeDataset / dataset.activate
-dataset remove        -> dataset:<id> / dataset.remove
-known save/remove     -> known / known.replace
-decision set/remove   -> decision:<word> / decision.set|decision.remove
-preferences save      -> preferences / preferences.replace
-Anki config/snapshot  -> anki / anki.replace
-```
+| Local operation | Dedupe key | Kind |
+| --- | --- | --- |
+| successful dataset stage | `dataset:<id>` | `dataset.upload` |
+| dataset activate | `activeDataset` | `dataset.activate` |
+| dataset remove | `dataset:<id>` | `dataset.remove` |
+| known save/remove | `known` | `known.replace` |
+| decision set | `decision:<word>` | `decision.set` |
+| decision remove | `decision:<word>` | `decision.remove` |
+| preferences save/clear | `preferences` | `preferences.replace` |
+| Anki config/snapshot/clear | `anki` | `anki.replace` |
 
-Also inject a transaction abort and assert neither application data nor outbox mutation remains.
+For each test, read both application data and `syncOutbox` after the method resolves. Add an injected transaction-abort test and assert neither side committed.
 
-- [ ] **Step 2: Run and verify failure**
+- [ ] **Step 2: Run and confirm failure**
 
 ```bash
-npx vitest run tests/storage/local-sync.test.ts
+npx vitest run tests/storage/local-sync.test.ts tests/storage/indexed-db.test.ts
 ```
 
-Expected: FAIL because IndexedDB writes do not record outbox intent.
+Expected: FAIL because application writes currently have no outbox side effect.
 
-- [ ] **Step 3: Add explicit IndexedDB store options**
-
-Use:
+- [ ] **Step 3: Add explicit store construction options**
 
 ```ts
 export interface IndexedDbAppStoreOptions {
@@ -574,35 +571,38 @@ export interface IndexedDbAppStoreOptions {
 }
 ```
 
-`createIndexedDbAppStore()` defaults `recordSyncMutations` to `false` for compatibility tests. The local-first runtime will explicitly pass `true`.
+`createIndexedDbAppStore()` defaults `recordSyncMutations` to `false`. The local-first UI runtime explicitly passes `true`; bootstrap and remote-apply stores pass `false`.
 
-- [ ] **Step 4: Add one mutation-record builder**
-
-Implement deterministic dedupe keys:
+- [ ] **Step 4: Add deterministic outbox identity**
 
 ```ts
 function outboxIdentity(kind: SyncMutationKind, resourceId: string | null): string {
-  if (kind.startsWith("decision.")) return `decision:${resourceId}`;
-  if (kind.startsWith("dataset.") && kind !== "dataset.activate") return `dataset:${resourceId}`;
   if (kind === "dataset.activate") return "activeDataset";
-  if (kind.startsWith("queue.")) return `queue:${resourceId}`;
   if (kind === "known.replace") return "known";
   if (kind === "preferences.replace") return "preferences";
-  return "anki";
+  if (kind === "anki.replace") return "anki";
+  if (kind === "decision.set" || kind === "decision.remove") return `decision:${resourceId}`;
+  if (kind === "queue.replace" || kind === "queue.remove") return `queue:${resourceId}`;
+  return `dataset:${resourceId}`;
 }
 ```
 
-Each recorded write uses a new `mutationId`. Rapid subsequent writes replace the same dedupe key.
+Each local write creates a new `mutationId`; repeated writes overwrite the same dedupe key.
 
-- [ ] **Step 5: Include `syncOutbox` in the same write transaction**
+- [ ] **Step 5: Put application data and outbox in the same transaction**
 
-Do not perform a second transaction after application persistence. For example `decision.set` becomes one transaction over `wordDecisions` and `syncOutbox`, and `dataset.activate` becomes one transaction over `datasets`, `meta`, and `syncOutbox`.
+Examples:
 
-`dataset.stage` records `dataset.upload` only in the final transaction that flips the dataset to ready. A failed staging sequence therefore leaves no cloud upload intent.
+- `decision.set`: stores `wordDecisions`, `syncOutbox`.
+- `preferences.save`: stores `preferences`, `syncOutbox`.
+- `dataset.activate`: stores `datasets`, `meta`, `syncOutbox`.
+- dataset staging: do not record anything during chunk writes; the final transaction that sets `ready:true/cacheState:"ready"` also records `dataset.upload`.
+
+Do not perform an outbox transaction after the application transaction.
 
 - [ ] **Step 6: Add metadata-only dataset support**
 
-Extend the local dataset record:
+Use:
 
 ```ts
 interface DatasetRecord extends DatasetMetadata {
@@ -611,20 +611,33 @@ interface DatasetRecord extends DatasetMetadata {
 }
 ```
 
-Expose through `DatasetStore`:
+Extend `DatasetStore` with:
 
 ```ts
 cacheState?(datasetId: string): Promise<"metadata-only" | "ready" | null>;
 upsertMetadata?(metadata: DatasetMetadata): Promise<void>;
 ```
 
-`upsertMetadata()` is an internal bootstrap/remote-apply operation and must not record outbox intent. `readChunks()` throws `DatasetNotCachedError` for metadata-only records.
+`upsertMetadata()` is recording-disabled only. `list()` returns ready and metadata-only metadata. `readChunks()` throws a named `DatasetNotCachedError` for metadata-only content.
 
-- [ ] **Step 7: Verify remote-apply writes are silent**
+- [ ] **Step 7: Make atomic legacy `restoreUserState()` produce cloud intent**
 
-Create a second store instance with `recordSyncMutations:false`, apply a decision and metadata update, then assert `syncOutbox` remains empty.
+Within the existing single IndexedDB transaction:
 
-- [ ] **Step 8: Run storage tests**
+1. read old decision keys before clearing;
+2. compute `new Map(snapshot.decisions.map(decision => [decision.normalizedWord, decision]))`;
+3. for every old key absent from the new map, write `decision.remove` to `syncOutbox`;
+4. for every new decision, write `decision.set` to its per-word dedupe key;
+5. write one `known.replace`, one `preferences.replace`, and one `anki.replace` outbox record;
+6. commit restored state and all outbox records together.
+
+This preserves legacy backup restore semantics without adding a large `userState.replace` payload to the sync protocol.
+
+- [ ] **Step 8: Verify remote/bootstrap writes are silent**
+
+Create a second store instance against the same database with `recordSyncMutations:false`; write a decision and metadata, then assert `listOutbox(10)` remains empty.
+
+- [ ] **Step 9: Run storage tests**
 
 ```bash
 npx vitest run tests/storage/indexed-db.test.ts tests/storage/local-sync.test.ts
@@ -632,143 +645,195 @@ npx vitest run tests/storage/indexed-db.test.ts tests/storage/local-sync.test.ts
 
 Expected: PASS.
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 10: Commit**
 
 ```bash
 git add src/storage/indexed-db.ts src/storage/contracts.ts tests/storage/indexed-db.test.ts tests/storage/local-sync.test.ts
-git commit -m "feat: record local changes for background sync"
+git commit -m "feat: record local mutations for cloud sync"
 ```
 
 ---
 
-### Task 5: Implement cloud bootstrap and on-demand dataset hydration
+### Task 5: Build cloud client, first-device bootstrap, and dataset hydration
 
 **Files:**
 - Create: `src/sync/cloud-client.ts`
-- Modify: `src/storage/remote-store.ts`
 - Test: `tests/sync/engine.test.ts`
 
 **Interfaces:**
-- Consumes: `/api/sync`, recording-disabled local store, `LocalSyncStore`.
-- Produces: `createCloudSyncClient()`, `bootstrapLocalCache()`, and `ensureDatasetCached()`.
+- Consumes: `/api/sync`, recording-disabled IndexedDB store, `LocalSyncStore`.
+- Produces: `CloudSyncPort`, `bootstrapLocalCache()`, `ensureDatasetCached()`.
 
 - [ ] **Step 1: Write failing bootstrap tests**
 
-Test:
+Use a fake `CloudSyncPort` with:
 
-1. empty local database + populated cloud -> bootstrap writes state, dataset library metadata, active dataset content, queues, and cursor;
-2. failed active-dataset download -> `bootstrapComplete` remains `false`;
-3. non-active datasets remain `metadata-only` after bootstrap;
-4. `ensureDatasetCached(id)` downloads a metadata-only dataset once and subsequent calls do not hit the network.
+```text
+eventId = 12
+activeDatasetId = dataset-a
+dataset-a = 3 entries
+dataset-b = metadata only
+known words = { 猫, 犬 }
+decision = 騒ぐ:known
+preferences = page 4, hideKnown true
+queue(dataset-a) = [騒ぐ]
+Anki snapshot = null
+```
 
-- [ ] **Step 2: Run and verify failure**
+Assert:
+
+- bootstrap writes all user state locally;
+- `dataset-a` becomes cache-ready with exactly three entries;
+- `dataset-b` stays metadata-only;
+- sync meta becomes `bootstrapComplete:true, serverEventId:12` only after active content is durable;
+- if the third active-dataset chunk throws, bootstrap leaves `bootstrapComplete:false`;
+- `ensureDatasetCached("dataset-b")` downloads once, and the second call performs zero cloud dataset reads.
+
+- [ ] **Step 2: Run and confirm failure**
 
 ```bash
 npx vitest run tests/sync/engine.test.ts
 ```
 
-Expected: FAIL because cloud sync client/bootstrap functions do not exist.
+Expected: FAIL because cloud client/bootstrap helpers do not exist.
 
-- [ ] **Step 3: Implement `createCloudSyncClient()`**
+- [ ] **Step 3: Implement `CloudSyncPort` in `src/sync/cloud-client.ts`**
 
 Expose:
 
 ```ts
-export interface CloudSyncPort {
-  bootstrap(): Promise<CloudBootstrap>;
-  pull(afterEventId: number, limit?: number): Promise<SyncPullPage>;
-  push(deviceId: string, mutations: readonly MaterializedSyncMutation[]): Promise<SyncPushReceipt>;
-  uploadDataset(
-    deviceId: string,
-    mutationId: string,
-    metadata: DatasetMetadata,
-    chunks: AsyncIterable<readonly Entry[]>,
-  ): Promise<SyncPushReceipt>;
-  readDataset(datasetId: string, chunkSize: number): AsyncIterable<Entry[]>;
+bootstrap(): Promise<CloudBootstrapManifest>;
+readKnownWords(): Promise<{ id: string; name: string; words: string[] } | null>;
+readDecisions(): Promise<WordDecision[]>;
+readPreferences(): Promise<PreferencesValue | null>;
+readQueues(): Promise<SessionQueueSnapshot[]>;
+readAnki(): Promise<{ config: AnkiSyncConfig | null; snapshot: AnkiSyncSnapshot | null }>;
+pull(afterEventId: number, limit?: number): Promise<SyncPullPage>;
+push(deviceId: string, mutations: readonly MaterializedSyncMutation[]): Promise<SyncPushReceipt>;
+uploadDataset(deviceId: string, mutationId: string, metadata: DatasetMetadata, chunks: AsyncIterable<readonly Entry[]>): Promise<SyncPushReceipt>;
+readDataset(datasetId: string, chunkSize: number): AsyncIterable<Entry[]>;
+```
+
+Use paginated `state.read`/`dataset.read`; never construct a single bootstrap response containing all state.
+
+Use the same error categories as `remote-store.ts`: `NETWORK_ERROR`, `INVALID_RESPONSE`, server-provided domain code/status. Use `credentials:"same-origin"`.
+
+- [ ] **Step 4: Implement `bootstrapLocalCache()` in `src/sync/engine.ts` or a private helper in that module**
+
+Order:
+
+```text
+manifest = cloud.bootstrap()
+known = cloud.readKnownWords()
+decisions = cloud.readDecisions()
+preferences = cloud.readPreferences()
+queues = cloud.readQueues()
+anki = cloud.readAnki()
+write state with recording-disabled local stores
+upsert every dataset metadata as metadata-only
+if activeDatasetId != null: download/stage active dataset with recording disabled, then activate locally
+save active queue/workspace
+write sync meta bootstrapComplete=true/serverEventId=manifest.eventId LAST
+```
+
+Do not clear the old browser database. Clear only an incomplete new local-first cache before retrying bootstrap.
+
+- [ ] **Step 5: Implement `ensureDatasetCached()`**
+
+```ts
+async function ensureDatasetCached(datasetId: string): Promise<void> {
+  const state = await remoteApplyStore.datasets.cacheState!(datasetId);
+  if (state === "ready") return;
+
+  const metadata = (await remoteApplyStore.datasets.list()).find(
+    (candidate) => candidate.id === datasetId,
+  );
+  if (!metadata) throw new Error(`Dataset metadata missing: ${datasetId}`);
+
+  await remoteApplyStore.datasets.stage(metadata, cloud.readDataset(datasetId, 2_000));
 }
 ```
 
-Use the same response/error discipline as `remote-store.ts`: same-origin credentials, JSON validation, bounded request bodies, and explicit `NETWORK_ERROR`/`INVALID_RESPONSE` errors.
+The store used here has `recordSyncMutations:false`.
 
-- [ ] **Step 4: Implement first-device bootstrap**
-
-`bootstrapLocalCache()` performs:
-
-```text
-cloud.bootstrap()
--> clear incomplete local-first cache only
--> write preferences/known/decisions/Anki/queues through recording-disabled stores
--> upsert all dataset metadata as metadata-only
--> download active dataset, stage locally, activate locally
--> write workspace activeDatasetId
--> set syncMeta { bootstrapComplete:true, serverEventId:cloud.eventId, lastSyncAt:now }
-```
-
-The final sync-meta write occurs last. On any error, leave `bootstrapComplete:false`.
-
-- [ ] **Step 5: Implement on-demand dataset hydration**
-
-`ensureDatasetCached(datasetId)`:
-
-```ts
-const state = await localStore.datasets.cacheState!(datasetId);
-if (state === "ready") return;
-const metadata = (await localStore.datasets.list()).find((item) => item.id === datasetId);
-if (!metadata) throw new Error(`Dataset metadata missing: ${datasetId}`);
-await localStore.datasets.stage(metadata, cloud.readDataset(datasetId, 2_000));
-```
-
-Use the recording-disabled store for cloud-originated hydration so it does not enqueue `dataset.upload`.
-
-- [ ] **Step 6: Run sync tests**
+- [ ] **Step 6: Run bootstrap tests**
 
 ```bash
 npx vitest run tests/sync/engine.test.ts
 ```
 
-Expected: bootstrap/hydration cases PASS.
+Expected: bootstrap/hydration tests PASS.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add src/sync/cloud-client.ts src/storage/remote-store.ts tests/sync/engine.test.ts
+git add src/sync/cloud-client.ts src/sync/engine.ts tests/sync/engine.test.ts
 git commit -m "feat: bootstrap local cache from cloud"
 ```
 
 ---
 
-### Task 6: Implement the background SyncEngine
+### Task 6: Implement push-first/pull-second SyncEngine
 
 **Files:**
-- Create: `src/sync/engine.ts`
+- Modify: `src/sync/engine.ts`
 - Modify: `src/storage/local-sync.ts`
 - Test: `tests/sync/engine.test.ts`
 
 **Interfaces:**
-- Consumes: recording-enabled local UI store, recording-disabled remote-apply store, `LocalSyncStore`, `CloudSyncPort`.
-- Produces: `SyncEngine` with `start()`, `syncNow()`, `flush()`, `ensureDatasetCached()`, `subscribe()` and `dispose()`.
+- Consumes: recording-enabled UI store, recording-disabled remote-apply store, local sync store, cloud sync port.
+- Produces: background synchronization, status stream, remote-applied notifications.
 
-- [ ] **Step 1: Write failing two-device and retry tests**
+- [ ] **Step 1: Add deterministic engine tests**
 
-Add tests for:
+Use a fake cloud object that records method calls in `calls: string[]`.
+
+Test push-before-pull:
 
 ```ts
-it("pushes local outbox before pulling remote changes", async () => { /* assert call order */ });
-it("keeps outbox durable after a network failure", async () => { /* fail push; recreate engine; retry */ });
-it("does not delete a newer mutation when an older request is acknowledged", async () => { /* race */ });
-it("applies pulled remote changes without creating outbox entries", async () => { /* remote-apply store */ });
-it("converges two devices on the server-accepted final decision", async () => { /* device A/B fake IndexedDB names */ });
+await engine.syncNow();
+expect(calls.slice(0, 2)).toEqual(["push", "pull"]);
 ```
 
-- [ ] **Step 2: Run and verify failure**
+Test durable retry:
+
+```text
+write decision:猫 outbox
+first cloud push throws NETWORK_ERROR
+construct a new engine against the same IndexedDB name
+second cloud push succeeds
+outbox is empty only after second acknowledgement
+```
+
+Test acknowledgement race:
+
+```text
+engine reads mutationId A
+before cloud resolves, local write replaces same dedupe key with mutationId B
+cloud acknowledges A
+outbox still contains B
+```
+
+Test remote apply:
+
+```text
+cloud pull returns decision.set 犬:mined
+engine applies through recording-disabled store
+local decision is mined
+outbox remains empty
+```
+
+Test two-device convergence with two separate IndexedDB names and one fake canonical cloud: device A writes `known`, device B writes `mined`, both sync, then A pulls again and both end `mined` because that was the cloud's final accepted mutation.
+
+- [ ] **Step 2: Run and confirm failure**
 
 ```bash
 npx vitest run tests/sync/engine.test.ts
 ```
 
-Expected: FAIL because `SyncEngine` does not exist.
+Expected: FAIL until engine orchestration is implemented.
 
-- [ ] **Step 3: Implement explicit sync status**
+- [ ] **Step 3: Add sync status**
 
 ```ts
 export type SyncStatus =
@@ -778,67 +843,74 @@ export type SyncStatus =
   | { state: "error"; pending: number; lastSyncAt: string | null; message: string };
 ```
 
-Do not put this status in `AppState`; it belongs to the runtime/cloud-sync layer.
-
-- [ ] **Step 4: Implement outbox materialization**
-
-For each `SyncOutboxRecord`, read the latest local state immediately before sending:
-
-| kind | materialized from |
-| --- | --- |
-| `dataset.upload` | dataset metadata + local entry chunks; handled by `uploadDataset()` |
-| `dataset.remove` | record resource id |
-| `dataset.activate` | local active dataset id |
-| `known.replace` | `knownWords.getActive()` |
-| `decision.set` | `wordDecisions.get(word)`; if absent convert to remove |
-| `decision.remove` | record resource id |
-| `preferences.replace` | `preferences.load()` |
-| `queue.replace/remove` | local queue store |
-| `anki.replace` | config + snapshot |
-
-Send small mutations in batches of at most 100. Process dataset uploads separately because they stream chunks.
-
-- [ ] **Step 5: Implement push-first/pull-second**
-
-The core loop must be structurally equivalent to:
+Expose:
 
 ```ts
-async function syncNow(): Promise<void> {
-  if (running) return running;
-  running = (async () => {
-    await pushUntilDrained();
-    await pullUntilCaughtUp();
-    await syncMeta.setLastSyncAt(now());
-  })().finally(() => {
-    running = null;
-  });
-  return running;
-}
+start(): void;
+syncNow(): Promise<void>;
+flush(): Promise<void>;
+ensureDatasetCached(datasetId: string): Promise<void>;
+subscribe(listener: (status: SyncStatus) => void): () => void;
+onRemoteApplied(listener: () => Promise<void> | void): () => void;
+dispose(): void;
 ```
 
-After each push receipt, call `acknowledge(dedupeKey, mutationId)`. After each pull page, apply all changes and update `serverEventId` only after local application succeeds.
+- [ ] **Step 4: Materialize the current local value at send time**
 
-- [ ] **Step 6: Apply remote changes deterministically**
+| Kind | Source |
+| --- | --- |
+| `dataset.upload` | dataset metadata + local entry chunks; send via `uploadDataset()` |
+| `dataset.remove` | outbox resource id |
+| `dataset.activate` | local active dataset id |
+| `known.replace` | `knownWords.getActive()` |
+| `decision.set` | `wordDecisions.get(word)`; if missing send remove |
+| `decision.remove` | outbox resource id |
+| `preferences.replace` | `preferences.load()` |
+| `queue.replace/remove` | `LocalSyncStore.loadQueue(datasetId)` |
+| `anki.replace` | `ankiSync.loadConfig()` + `loadSnapshot()` |
 
-- `decision.set/remove`, `preferences.replace`, dataset metadata/remove/activate use recording-disabled local APIs.
-- `known.replace`, `queue.replace`, `anki.replace` fetch current canonical values through the cloud client before applying.
-- `dataset.activate` calls `ensureDatasetCached()` before local activation.
-- `full-reset` reruns bootstrap into the local cache, then reports a runtime refresh requirement.
+Batch at most 100 small mutations. Stream dataset uploads separately.
 
-- [ ] **Step 7: Add conservative triggers**
+- [ ] **Step 5: Implement the serialized engine loop**
+
+Use one `running: Promise<void> | null` so overlapping triggers share the same run. The body is:
+
+```ts
+await pushUntilDrained();
+await pullUntilCaughtUp();
+const meta = await localSync.getMeta();
+await localSync.setMeta({ ...meta, lastSyncAt: now() });
+```
+
+`flush()` runs `pushUntilDrained()` and then verifies `listOutbox(1).length === 0`; it does not require pull completion.
+
+- [ ] **Step 6: Pull/apply pages safely**
+
+For each page:
+
+1. apply every remote change with recording-disabled stores;
+2. fetch canonical known/queue/Anki state when the page contains those marker events;
+3. `dataset.activate` calls `ensureDatasetCached()` before local activation;
+4. `full-reset` runs `bootstrapLocalCache()` and marks controller refresh required;
+5. await every registered `onRemoteApplied` listener;
+6. only then write `serverEventId = page.nextEventId`.
+
+If any step fails, leave the old cursor so the page safely replays.
+
+- [ ] **Step 7: Add conservative browser triggers**
 
 `start()` registers:
 
 ```text
-window online      -> syncNow()
-document visible   -> syncNow()
-15-second timer    -> syncNow() while page is visible
-local outbox write -> debounce syncNow() by 250 ms
+online event       -> syncNow()
+visibility visible -> syncNow()
+15 second interval while visible -> syncNow()
+outbox-created callback -> syncNow() after 250 ms debounce
 ```
 
-Do not schedule more frequently than 250 ms. `dispose()` removes listeners and timers.
+`dispose()` removes every listener/timer.
 
-- [ ] **Step 8: Run sync tests**
+- [ ] **Step 8: Run engine tests**
 
 ```bash
 npx vitest run tests/sync/engine.test.ts tests/storage/local-sync.test.ts
@@ -855,25 +927,35 @@ git commit -m "feat: sync local changes in background"
 
 ---
 
-### Task 7: Switch the study runtime to warm local boot and persist resume state
+### Task 7: Add controller refresh/resume support and switch the runtime to warm local boot
 
 **Files:**
-- Modify: `src/components/study-runtime.ts`
 - Modify: `src/miner/controller.ts`
-- Modify: `src/miner/state.ts`
-- Modify: `src/platform/session-queue.ts`
+- Modify: `src/components/study-runtime.ts`
 - Test: `tests/app/controller.test.ts`
 - Test: `tests/e2e/local-first-sync.spec.ts`
 
 **Interfaces:**
-- Consumes: local UI store, sync engine, workspace store, cloud client.
-- Produces: instant cached startup, on-demand dataset preparation, 400 ms viewport resume persistence, user-visible local/cloud status.
+- Consumes: local UI store, sync engine, workspace store.
+- Produces: first-query resume position, live remote refresh, local-first feature-gated runtime.
 
-- [ ] **Step 1: Write the controller resume tests**
+- [ ] **Step 1: Add controller tests for initial viewport**
 
-Construct a controller with `initialViewportStart: 3500`, load an all-results dataset, and assert the first worker query receives `window.start === 3500`. Add a second test proving normal page-size mode ignores the saved viewport.
+Create a controller with `initialViewportStart: 3500`, `pageSize:"all"`, a 5,000-entry worker fixture, then assert the very first worker query receives:
 
-- [ ] **Step 2: Add controller options without network knowledge**
+```ts
+expect(query.window).toEqual({ start: 3500, size: 100 });
+```
+
+Create a second controller with `pageSize:50` and assert `query.window` is `undefined`.
+
+- [ ] **Step 2: Add controller tests for `refreshFromStorage()`**
+
+Case A: same active dataset, local store changes one decision. After `refreshFromStorage()`, assert the controller state contains the new decision and worker `loadDataset` call count does not increase; worker query call count does increase.
+
+Case B: local store changes active dataset. After `refreshFromStorage()`, assert `prepareDataset(newId)` ran once, worker `loadDataset` received the new id, and queue was loaded with `sessionQueue.loadForDataset(newId)`.
+
+- [ ] **Step 3: Implement controller-only hooks**
 
 Extend `MinerControllerOptions`:
 
@@ -882,19 +964,41 @@ initialViewportStart?: number;
 prepareDataset?: (datasetId: string) => Promise<void>;
 ```
 
-Initialize the private viewport from `initialViewportStart ?? 0`. In `loadAndQuery()`, run `await this.prepareDataset?.(datasetId)` immediately before reading chunks. The controller must not import sync/cloud modules.
+Extend `MinerController`:
 
-- [ ] **Step 3: Write a failing warm-start E2E test**
+```ts
+refreshFromStorage(): Promise<void>;
+```
 
-The test should:
+Initialize the private viewport from `initialViewportStart ?? 0`. In `loadAndQuery()`, call `await prepareDataset?.(datasetId)` before reading chunks.
 
-1. seed the new local-first IndexedDB and mark bootstrap complete;
-2. make `/api/sync` return a network failure;
-3. reload;
-4. assert vocabulary becomes visible and usable from local cache;
-5. assert status contains `Offline · changes saved locally` rather than a blocking workspace error.
+Factor the persisted-state read currently inside `initialize()` into a private helper reused by `refreshFromStorage()`. Refresh behavior:
 
-- [ ] **Step 4: Add feature-gated local-first boot**
+- re-read active metadata, known words, decisions, preferences, dataset library, Anki config/snapshot, and active queue;
+- if active id changed: prepare/read/load worker dataset, then query;
+- if active id unchanged: keep worker dataset and rerun query/coverage only;
+- restore queue with `sessionQueue.loadForDataset` when available.
+
+The controller imports no sync/cloud module.
+
+- [ ] **Step 4: Add failing warm-offline E2E test**
+
+Test flow:
+
+```text
+bootstrap local-first cache successfully
+reload once to prove cached state exists
+route /api/sync to abort/fail
+reload page
+wait for vocabulary result text
+set a decision
+assert study controls remain interactive
+assert status text = Offline · changes saved locally
+```
+
+This test must fail before the runtime changes because current startup is server-first.
+
+- [ ] **Step 5: Add the feature-gated local-first boot path**
 
 In `study-runtime.ts`:
 
@@ -902,47 +1006,47 @@ In `study-runtime.ts`:
 const localFirstEnabled = process.env.NEXT_PUBLIC_LOCAL_FIRST_SYNC === "1";
 ```
 
-When false, keep the existing `createRemoteAppStore()` path byte-for-byte equivalent in behavior.
+Flag off: preserve the current remote runtime path.
 
-When true:
+Flag on:
 
 ```text
-open local sync meta
-if bootstrapComplete=false -> await one-time bootstrap
-load workspace + active queue locally
+open LocalSyncStore
+if bootstrapComplete=false -> await bootstrapLocalCache()
+load workspace and active queue from IndexedDB
 create recording-enabled IndexedDbAppStore for controller
-create recording-disabled IndexedDbAppStore for SyncEngine remote application
-create controller with initialViewportStart + prepareDataset
+create recording-disabled IndexedDbAppStore for SyncEngine
+create controller(initialViewportStart, prepareDataset=engine.ensureDatasetCached)
 await controller.init()
-mark UI ready immediately after local controller readiness
-start SyncEngine without awaiting its first network round trip
+mark local UI ready
+register engine.onRemoteApplied(() => controller.refreshFromStorage())
+engine.start()
+void engine.syncNow()
 ```
 
-If opening IndexedDB throws a storage-unavailable error, log the local failure and enter the existing server-first runtime path.
+Do not await the final `syncNow()` before setting local readiness.
 
-- [ ] **Step 5: Replace the queue's remote-in-critical-path behavior**
+If IndexedDB open throws `StorageUnavailableError`, enter the existing server-first remote-store path.
 
-At boot, load the active dataset's queue from IndexedDB. Keep the controller-facing `SessionQueueStore` synchronous by maintaining the in-memory `queue` variable exactly as the current runtime does. `save()`/`clear()` update memory immediately and fire the durable IndexedDB queue write; that write atomically records `queue.replace/remove` in the outbox.
+- [ ] **Step 6: Persist queue and workspace locally**
 
-- [ ] **Step 6: Persist workspace resume state**
+Keep the current synchronous in-memory `SessionQueueStore` facade. At boot, seed it from `LocalSyncStore.loadQueue(activeDatasetId)`. On `save()` or `clear()`, update the in-memory queue first and fire the IndexedDB queue transaction, which also writes `queue.replace/remove` outbox intent.
 
-On controller state changes, persist `activeDatasetId` and `queue.mode`. In the virtual-list `onRequestWindow`, debounce `viewportStart` writes by 400 ms. Store only:
+Persist workspace:
 
 ```ts
 {
   id: "current",
-  activeDatasetId,
+  activeDatasetId: latest.dataset?.id ?? null,
   viewportStart,
-  queueMode,
+  queueMode: latest.queue.mode,
   updatedAt: new Date().toISOString(),
 }
 ```
 
-Do not duplicate query/view/page; they already live in preferences.
+Save viewport with a 400 ms debounce from the virtual-list `onRequestWindow` callback. Query/view/page remain in preferences.
 
-- [ ] **Step 7: Separate local readiness from cloud sync copy**
-
-Map `SyncStatus` to exactly these messages:
+- [ ] **Step 7: Map cloud status to exact UI copy**
 
 ```text
 idle + pending=0 + lastSyncAt=null -> Saved locally
@@ -952,9 +1056,9 @@ offline                        -> Offline · changes saved locally
 error                          -> Sync error · changes remain on this device
 ```
 
-Do not set the entire workspace to `inert` on background sync failure.
+Never make the app shell inert due solely to background sync failure.
 
-- [ ] **Step 8: Run focused tests**
+- [ ] **Step 8: Run controller and warm-start tests**
 
 ```bash
 npx vitest run tests/app/controller.test.ts tests/sync/engine.test.ts
@@ -966,40 +1070,39 @@ Expected: PASS.
 - [ ] **Step 9: Commit**
 
 ```bash
-git add src/components/study-runtime.ts src/miner/controller.ts src/miner/state.ts src/platform/session-queue.ts tests/app/controller.test.ts tests/e2e/local-first-sync.spec.ts
+git add src/miner/controller.ts src/components/study-runtime.ts tests/app/controller.test.ts tests/e2e/local-first-sync.spec.ts
 git commit -m "feat: boot study workspace from local cache"
 ```
 
 ---
 
-### Task 8: Preserve complete backup, restore, and destructive clear semantics
+### Task 8: Preserve complete backup/restore and clear semantics
 
 **Files:**
 - Modify: `src/components/study-runtime.ts`
-- Modify: `src/storage/remote-store.ts`
+- Modify: `src/storage/remote-store.ts` only if typed access to existing complete backup/clear operations is missing
 - Modify: `tests/e2e/backup-restore.spec.ts`
 - Modify: `tests/e2e/cloud.spec.ts`
 
 **Interfaces:**
-- Consumes: `SyncEngine.flush()`, existing remote complete backup/restore methods.
-- Produces: no backup regression and a safe local-cache reset after cloud restore.
+- Consumes: `SyncEngine.flush()`, current remote complete backup/restore/clear operations.
+- Produces: no backup regression and safe local cache reset.
 
-- [ ] **Step 1: Add failing backup compatibility tests**
+- [ ] **Step 1: Add failing compatibility E2E cases**
 
-Cover:
+Add these exact scenarios:
 
-- local unsynced decision -> Export -> export contains the decision because export waits for `flush()`;
-- complete restore -> PostgreSQL restore succeeds -> local-first DB is rebuilt -> restored dataset appears after reload;
-- network failure before complete restore -> existing local cache remains untouched;
-- IndexedDB-unavailable server-first fallback still exports/restores as before.
+1. Local-first mode, mark `猫` known, intercept sync so the outbox is initially pending, click Export, release sync, download backup, parse JSON, assert the exported decision is present.
+2. Complete restore to a backup containing dataset `restore-dataset`; after restore/reload assert that dataset is active and local sync meta is bootstrap-complete again.
+3. Abort the restore request; assert the pre-restore cached dataset still renders and local-first database has not been cleared.
+4. Force IndexedDB open failure; assert existing server-first fallback can still save a decision and export a complete backup.
+5. Force cloud clear failure; assert local cached data still exists after the rejected clear action.
 
-- [ ] **Step 2: Run and verify failure**
+- [ ] **Step 2: Run and confirm local-first cases fail**
 
 ```bash
 npx playwright test tests/e2e/backup-restore.spec.ts tests/e2e/cloud.spec.ts --project=chromium
 ```
-
-Expected: at least the local-first cases FAIL.
 
 - [ ] **Step 3: Wrap complete export**
 
@@ -1007,30 +1110,38 @@ In local-first mode:
 
 ```text
 await syncEngine.flush()
-assert outbox count === 0
+assert localSync.listOutbox(1) is empty
 return cloudStore.exportCompleteBackup()
 ```
 
-If flush fails, show `Backup requires cloud sync; changes remain saved locally.` and do not return a stale backup.
+If flush fails, show `Backup requires cloud sync; changes remain saved locally.` and do not return a stale cloud backup.
 
 - [ ] **Step 4: Wrap complete restore**
 
-For a version-3 backup:
+For backup version 3:
 
 ```text
 await cloudStore.restoreCompleteBackup(text)
 await localSync.clearLocalData()
-await bootstrapLocalCache(...)
+await bootstrapLocalCache()
 window.location.assign("/?restored=1")
 ```
 
-Do not clear local data before the cloud restore succeeds.
+Do not clear local data before cloud restore success.
 
-Legacy backup restore continues through the controller/local store and therefore records ordinary resource outbox mutations.
+Legacy backup versions continue through controller `restoreUserState()`; Task 4 makes those writes generate ordinary outbox mutations.
 
 - [ ] **Step 5: Preserve destructive clear**
 
-In local-first mode, require the existing remote `clearAll()` to succeed first, then clear the local-first database and reload. If remote clear fails, keep local data. This rare destructive action is intentionally online-only in the first release.
+In local-first mode:
+
+```text
+await cloudStore.clearAll()
+await localSync.clearLocalData()
+window.location.reload()
+```
+
+If cloud clear fails, return the error and keep local cache intact.
 
 - [ ] **Step 6: Run compatibility tests**
 
@@ -1044,92 +1155,92 @@ Expected: PASS.
 
 ```bash
 git add src/components/study-runtime.ts src/storage/remote-store.ts tests/e2e/backup-restore.spec.ts tests/e2e/cloud.spec.ts
-git commit -m "fix: preserve cloud backup semantics with local-first storage"
+git commit -m "fix: preserve cloud safety operations in local-first mode"
 ```
 
 ---
 
-### Task 9: Add cross-device E2E coverage and performance acceptance checks
+### Task 9: Add cross-device acceptance, performance instrumentation, and rollout docs
 
 **Files:**
 - Modify: `tests/e2e/local-first-sync.spec.ts`
 - Modify: `tests/e2e/miner.spec.ts`
 - Modify: `src/components/study-runtime.ts`
+- Modify: `src/sync/engine.ts`
 - Modify: `README.md`
 
 **Interfaces:**
-- Consumes: completed local-first runtime and sync engine.
-- Produces: rollout evidence and documented operational procedure.
+- Consumes: complete local-first runtime.
+- Produces: end-to-end proof and operational rollout procedure.
 
-- [ ] **Step 1: Add a two-browser-context convergence test**
+- [ ] **Step 1: Add two-browser-context convergence E2E**
 
-Use two authenticated Playwright contexts backed by separate browser storage but the same disposable PostgreSQL database:
+Use two authenticated Playwright browser contexts sharing the same disposable PostgreSQL database but separate browser storage:
 
 ```text
-Context A: bootstrap -> mark 騒ぐ known -> wait for Synced
-Context B: bootstrap -> trigger sync -> assert 騒ぐ is known
-Context B: change same word to mined -> wait for Synced
-Context A: trigger visibility sync -> assert mined wins
+Context A: bootstrap -> set 騒ぐ known -> wait for Synced
+Context B: bootstrap -> assert 騒ぐ known
+Context B: set 騒ぐ mined -> wait for Synced
+Context A: bring page to foreground / trigger sync -> assert 騒ぐ mined
 ```
 
-- [ ] **Step 2: Add an offline durability test**
+- [ ] **Step 2: Add offline durability E2E**
 
 ```text
 bootstrap
-set browser offline
-make decision + change filter
-reload while API remains unavailable
-assert decision/filter restored locally
-bring browser online
+set browser context offline
+set 猫 known and set hideKnown=true
+reload while offline
+assert decision and filter are restored locally
+bring context online
 wait for Synced
-reload fresh second context
-assert cloud received the decision
+open fresh second context
+assert cloud-synced 猫 decision is present
 ```
 
-- [ ] **Step 3: Instrument warm boot without adding analytics dependencies**
+- [ ] **Step 3: Instrument boot/sync timing without adding analytics**
 
-Record to a test-readable window array:
+Expose a test-readable array:
 
 ```ts
 window.__bootTimingEvents = [
-  { stage: "local_boot", durationMs },
-  { stage: "worker_dataset_load", durationMs },
-  { stage: "first_query_ready", durationMs },
+  { stage: "local_boot", durationMs: 0 },
+  { stage: "worker_dataset_load", durationMs: 0 },
+  { stage: "first_query_ready", durationMs: 0 },
 ];
 ```
 
-Keep the existing import timing instrumentation. Sync engine similarly records `sync_push` and `sync_pull` timing events.
+Replace the zero values with measured durations at runtime. Keep the current `__importTimingEvents`. Add equivalent `sync_push` and `sync_pull` timing events from the engine.
 
-- [ ] **Step 4: Add the warm-start performance assertion**
+- [ ] **Step 4: Add dedicated warm-start performance acceptance**
 
-Using the existing large fixture/performance scenario, assert:
+Use the existing large performance fixture. Record the start before local store open and `first_query_ready` when the controller first publishes ready results. Assert:
 
 ```ts
 expect(firstQueryReady.durationMs).toBeLessThan(500);
 ```
 
-Also intercept requests and assert a warm cached launch reaches visible study results before the first `/api/sync` response resolves.
+Also delay `/api/sync` by 5 seconds in the test and assert visible vocabulary appears before that response is released. Keep this in the dedicated performance scenario, not every functional E2E run.
 
-Treat the 500 ms check as a dedicated performance test, not a flaky assertion in every functional E2E run.
+- [ ] **Step 5: Document rollout in README**
 
-- [ ] **Step 5: Document exact rollout order in README**
-
-Add:
+Add this exact production order:
 
 ```text
-1. Deploy migration 0002 with NEXT_PUBLIC_LOCAL_FIRST_SYNC unset/0.
-2. Run npm run db:migrate against the production DATABASE_URL.
-3. Verify server-first app and sync-event dual-write in production logs/database.
-4. Deploy the sync API/local-first code with the flag still 0.
+1. Deploy migration/event dual-write code with NEXT_PUBLIC_LOCAL_FIRST_SYNC unset or 0.
+2. Run npm run db:migrate against production DATABASE_URL.
+3. Verify current server-first imports/decisions/queue/Anki/backups and verify sync_events receives rows.
+4. Deploy /api/sync and local-first code with the flag still 0.
 5. Validate a preview deployment against a separate preview PostgreSQL database.
 6. Set NEXT_PUBLIC_LOCAL_FIRST_SYNC=1 in production and redeploy.
-7. First production visit performs one cloud bootstrap; subsequent visits use local warm boot.
-8. Keep the old IndexedDB database and RemoteAppStore fallback through the stabilization window.
+7. First production visit performs one bootstrap; subsequent visits use warm IndexedDB boot.
+8. Keep RemoteAppStore fallback and the old browser database during stabilization.
+9. Remove the rollout flag only in a later cleanup change.
 ```
 
-Document the new status messages and that offline changes are local until `Synced` appears.
+Document all six status strings from the design spec and explain that `Saved locally` is durable on this browser while `Synced` means PostgreSQL has acknowledged pending work.
 
-- [ ] **Step 6: Run the complete verification suite**
+- [ ] **Step 6: Run the full verification suite**
 
 ```bash
 npm run lint
@@ -1139,31 +1250,29 @@ npm run build
 npm run test:e2e:prod
 ```
 
-Expected: all commands exit 0.
+Expected: every command exits 0.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add tests/e2e/local-first-sync.spec.ts tests/e2e/miner.spec.ts src/components/study-runtime.ts README.md
+git add tests/e2e/local-first-sync.spec.ts tests/e2e/miner.spec.ts src/components/study-runtime.ts src/sync/engine.ts README.md
 git commit -m "test: verify local-first cross-device sync"
 ```
 
 ---
 
-## Rollout Order
+## Deployment Gates
 
-The task order is intentionally not the same as “turn everything on at once.” Use these deployment gates:
-
-1. **Gate A — database/event compatibility:** complete Task 1, apply `0002`, deploy with current runtime unchanged. Verify normal imports, decisions, queue, Anki, and backups still work.
-2. **Gate B — dormant sync backend:** complete Task 2. Deploy `/api/sync` with local-first feature flag still off. Verify bootstrap/pull/push against a preview/disposable database and production read-only bootstrap.
-3. **Gate C — browser local substrate:** complete Tasks 3-4. No runtime behavior changes yet. Run all unit/storage tests.
-4. **Gate D — local-first preview:** complete Tasks 5-8. Enable `NEXT_PUBLIC_LOCAL_FIRST_SYNC=1` only in preview. Exercise first bootstrap, warm reload, offline edit, dataset switch, backup/restore, and a second browser context.
-5. **Gate E — production owner opt-in:** enable the flag in production and redeploy. Keep the old IndexedDB database untouched. Export a complete backup before the first production enablement.
-6. **Gate F — stabilization:** after at least several normal study sessions with no pending outbox stuck and successful cross-device sync, remove the feature flag branch from runtime in a separate cleanup PR. Do not combine that cleanup with this implementation.
+1. **Gate A — compatibility foundation:** Task 1 only. Apply `0002`; current runtime remains server-first. Verify server-first behavior and sync-event dual-write.
+2. **Gate B — dormant sync backend:** Task 2. Deploy `/api/sync` with local-first flag off. Exercise bootstrap/read/push/pull against preview DB.
+3. **Gate C — browser substrate:** Tasks 3-4. No production runtime behavior change. Run storage/unit suite.
+4. **Gate D — preview local-first:** Tasks 5-8. Enable `NEXT_PUBLIC_LOCAL_FIRST_SYNC=1` only in preview. Exercise cold bootstrap, warm reload, offline edits, remote-only dataset switch, backup/restore, clear, and two contexts.
+5. **Gate E — production owner enablement:** Export a complete backup, enable the flag in production, redeploy, complete the one-time bootstrap, then warm-reload and verify no network response is required before cached results render.
+6. **Gate F — stabilization:** After several normal study sessions and at least one second-device sync with no stuck outbox, remove the flag in a separate cleanup PR. Do not delete the old browser DB in this implementation.
 
 ## Migration Safety Checklist
 
-Before enabling local-first in production:
+Before Gate E:
 
 ```bash
 npm run db:migrate
@@ -1171,28 +1280,26 @@ npm run test:db
 npm run build
 ```
 
-Then verify:
+Verify all of the following:
 
-- `sync_events` and `sync_mutations` exist;
-- a normal server-first decision produces one `sync_events` row;
-- `0000`, `0001`, and `0002` are present in the migration ledger;
-- preview and production databases are different;
-- production has a recent provider restore point or backup;
-- `NEXT_PUBLIC_LOCAL_FIRST_SYNC` is still `0` until the sync backend and local cache tests pass.
-
-On the first local-first production launch, do not delete or reset the old browser database. A failed bootstrap must leave `bootstrapComplete=false` and fall back/retry without destroying the prior cloud data.
+- `sync_events` and `sync_mutations` exist.
+- migration ledger contains `0000`, `0001`, and `0002`.
+- a server-first decision produces one event row.
+- preview and production use different PostgreSQL databases.
+- production has a recent provider backup/restore point.
+- `NEXT_PUBLIC_LOCAL_FIRST_SYNC` remains `0` until Gate D passes.
+- old `jiten-migaku-miner` browser database is still present and untouched.
 
 ## Completion Criteria
 
-Implementation is complete only when all of these are true:
-
-- A warm reload with `/api/sync` intentionally delayed still shows cached vocabulary and accepts local decisions.
-- Pending local changes survive a full browser reload while offline.
-- Two browser contexts converge after reconnect/sync.
-- Dataset imports become usable after local IndexedDB commit; cloud upload continues in the background.
-- Switching to a remote-only saved dataset downloads it once, caches it, and subsequent switches are local.
-- Query/view/page preferences restore; all-results viewport resumes close to the previous position.
-- The status distinguishes local durability from cloud synchronization.
-- Complete backup waits for pending sync and complete restore rebuilds the local cache from the restored cloud state.
-- IndexedDB failure still leaves the existing server-first path usable.
+- Warm reload with `/api/sync` delayed still renders cached vocabulary and accepts local decisions.
+- Pending local changes survive a browser reload while offline.
+- Two browser contexts converge without manual reload after background pull/controller refresh.
+- Dataset import becomes usable after local IndexedDB commit; cloud upload continues in background.
+- A remote-only saved dataset downloads once and is local on subsequent switches.
+- Query/view/page restore from preferences; all-results viewport resumes from workspace state.
+- UI distinguishes local durability from cloud synchronization.
+- Complete backup waits for pending push; complete restore rebuilds local cache from restored cloud state.
+- Legacy user-state restore synchronizes its replacements.
+- IndexedDB failure still uses the current server-first path.
 - `npm run lint`, `npm run typecheck`, `npm test`, `npm run build`, and `npm run test:e2e:prod` all pass.
