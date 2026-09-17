@@ -50,6 +50,27 @@ type StateRow = Row & {
   anki_synced_at: string | null;
 };
 
+export type SyncEventInput = {
+  resource: string;
+  resourceKey: string | null;
+  action: string;
+  originDeviceId?: string | null;
+};
+
+export async function recordSyncEvent(
+  database: StoreDatabase,
+  appRevision: number,
+  event: SyncEventInput,
+): Promise<number> {
+  const inserted = await rows<{ id: string | number }>(
+    database,
+    sql`INSERT INTO sync_events(app_revision, resource, resource_key, action, origin_device_id)
+        VALUES (${appRevision}, ${event.resource}, ${event.resourceKey}, ${event.action}, ${event.originDeviceId ?? null})
+        RETURNING id`,
+  );
+  return Number(inserted[0]!.id);
+}
+
 function parse<T>(schema: z.ZodType<T>, value: unknown): T {
   const result = schema.safeParse(value);
   if (!result.success)
@@ -336,7 +357,8 @@ export function createPostgresStore(database: StoreDatabase) {
       if (operation.operation === "initialize") return { revision, value: null };
       if (revision !== operation.revision) throw conflict();
       let value: unknown = null,
-        mutated = false;
+        mutated = false,
+        syncEvent: SyncEventInput | null = null;
       switch (operation.operation) {
         case "dataset.begin": {
           if (
@@ -545,6 +567,7 @@ FROM jsonb_array_elements(${json(payload)}) AS value`,
           await transaction.execute(
             sql`UPDATE datasets SET status = 'ready' WHERE id = ${dataset.id}`,
           );
+          syncEvent = { resource: "dataset", resourceKey: dataset.id, action: "upsert" };
           mutated = true;
           break;
         }
@@ -561,11 +584,13 @@ FROM jsonb_array_elements(${json(payload)}) AS value`,
           await transaction.execute(
             sql`UPDATE app_state SET active_dataset_id = ${operation.datasetId} WHERE id = 1`,
           );
+          syncEvent = { resource: "dataset-active", resourceKey: operation.datasetId, action: "set" };
           mutated = true;
           break;
         }
         case "dataset.remove":
           await transaction.execute(sql`DELETE FROM datasets WHERE id = ${operation.datasetId}`);
+          syncEvent = { resource: "dataset", resourceKey: operation.datasetId, action: "remove" };
           mutated = true;
           break;
         case "dataset.active":
@@ -625,37 +650,54 @@ FROM jsonb_array_elements(${json(payload)}) AS value`,
           await transaction.execute(
             sql`INSERT INTO word_decisions(word, decision) VALUES (${operation.decision.normalizedWord}, ${json(operation.decision)}) ON CONFLICT(word) DO UPDATE SET decision = excluded.decision`,
           );
+          syncEvent = { resource: "decision", resourceKey: operation.decision.normalizedWord, action: "set" };
           mutated = true;
           break;
         case "decision.remove":
           await transaction.execute(sql`DELETE FROM word_decisions WHERE word = ${operation.word}`);
+          syncEvent = { resource: "decision", resourceKey: operation.word, action: "remove" };
           mutated = true;
           break;
         case "known.remove":
           if (state.known_metadata?.id === operation.id) await replaceKnown(transaction, null);
+          syncEvent = { resource: "known", resourceKey: null, action: "replace" };
           mutated = true;
           break;
         case "preferences.save":
           await transaction.execute(
             sql`UPDATE app_state SET preferences = ${json(operation.value)} WHERE id = 1`,
           );
+          syncEvent = { resource: "preferences", resourceKey: null, action: "replace" };
           mutated = true;
           break;
         case "ankiConfig.save":
           await transaction.execute(
             sql`UPDATE app_state SET anki_config = ${json(operation.value)} WHERE id = 1`,
           );
+          syncEvent = { resource: "anki", resourceKey: null, action: "replace" };
           mutated = true;
           break;
         case "state.clear": {
-          if (operation.resource === "all") await clearAll(transaction);
-          if (operation.resource === "knownWords") await replaceKnown(transaction, null);
-          if (operation.resource === "decisions") await replaceDecisions(transaction, []);
-          if (operation.resource === "preferences")
+          if (operation.resource === "all") {
+            await clearAll(transaction);
+            syncEvent = { resource: "state", resourceKey: null, action: "full-reset" };
+          }
+          if (operation.resource === "knownWords") {
+            await replaceKnown(transaction, null);
+            syncEvent = { resource: "known", resourceKey: null, action: "replace" };
+          }
+          if (operation.resource === "decisions") {
+            await replaceDecisions(transaction, []);
+            syncEvent = { resource: "state", resourceKey: null, action: "full-reset" };
+          }
+          if (operation.resource === "preferences") {
             await transaction.execute(sql`UPDATE app_state SET preferences = NULL WHERE id = 1`);
+            syncEvent = { resource: "preferences", resourceKey: null, action: "replace" };
+          }
           if (operation.resource === "ankiSync") {
             await replaceSnapshot(transaction, null);
             await transaction.execute(sql`UPDATE app_state SET anki_config = NULL WHERE id = 1`);
+            syncEvent = { resource: "anki", resourceKey: null, action: "replace" };
           }
           mutated = true;
           break;
@@ -732,28 +774,41 @@ FROM jsonb_array_elements(${json(payload)}) AS value`,
           switch (upload.target) {
             case "knownWords":
               value = await replaceKnown(transaction, parse(knownSchema.nullable(), payload));
+              syncEvent = { resource: "known", resourceKey: null, action: "replace" };
               break;
             case "decisions":
               await replaceDecisions(
                 transaction,
                 parse(decisionSchema.array().max(1_000_000), payload),
               );
+              syncEvent = { resource: "state", resourceKey: null, action: "full-reset" };
               break;
             case "ankiSnapshot":
               await replaceSnapshot(transaction, parse(snapshotSchema.nullable(), payload));
+              syncEvent = { resource: "anki", resourceKey: null, action: "replace" };
               break;
-            case "queue":
+            case "queue": {
+              const queueValue = parse(queueSchema.nullable(), payload);
+              const queueDatasetId = queueValue?.datasetId ?? state.active_dataset_id;
               await replaceQueue(
                 transaction,
-                parse(queueSchema.nullable(), payload),
+                queueValue,
                 state.active_dataset_id,
               );
+              syncEvent = {
+                resource: "queue",
+                resourceKey: queueDatasetId,
+                action: queueValue ? "replace" : "remove",
+              };
               break;
+            }
             case "userState":
               await restoreUser(transaction, parse(userStateSchema, payload));
+              syncEvent = { resource: "state", resourceKey: null, action: "full-reset" };
               break;
             case "completeBackup":
               await restoreComplete(transaction, parse(completeBackupSchema, payload));
+              syncEvent = { resource: "state", resourceKey: null, action: "full-reset" };
               break;
             default:
               throw new StoreError("Invalid upload target");
@@ -765,8 +820,13 @@ FROM jsonb_array_elements(${json(payload)}) AS value`,
           break;
         }
       }
-      if (mutated)
+      if (mutated) {
+        const nextRevision = revision + 1;
+        if (syncEvent) {
+          await recordSyncEvent(transaction, nextRevision, syncEvent);
+        }
         await transaction.execute(sql`UPDATE app_state SET revision = revision + 1 WHERE id = 1`);
+      }
       const response = { revision: revision + (mutated ? 1 : 0), value };
       if (bytes(response) > 750_000)
         throw new StoreError("Response exceeds size limit", 413, "PAYLOAD_TOO_LARGE");

@@ -1,7 +1,9 @@
 import { sql } from "drizzle-orm";
 import {
   bigint,
+  bigserial,
   check,
+  index,
   integer,
   jsonb,
   pgTable,
@@ -21,6 +23,9 @@ export const datasets = pgTable(
     uploadId: uuid("upload_id").notNull(),
     metadata: jsonb("metadata").$type<DatasetMetadata>().notNull(),
     status: text("status").notNull().default("staging"),
+    uploadedRows: bigint("uploaded_rows", { mode: "number" }).notNull().default(0),
+    uploadedBytes: bigint("uploaded_bytes", { mode: "number" }).notNull().default(0),
+    nextOrdinal: integer("next_ordinal").notNull().default(0),
     baseRevision: bigint("base_revision", { mode: "number" }).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -103,3 +108,28 @@ export const stateUploadChunks = pgTable(
   },
   (table) => [primaryKey({ columns: [table.uploadId, table.ordinal] })],
 );
+
+export const syncEvents = pgTable(
+  "sync_events",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    appRevision: bigint("app_revision", { mode: "number" }).notNull(),
+    resource: text("resource").notNull(),
+    resourceKey: text("resource_key"),
+    action: text("action").notNull(),
+    originDeviceId: text("origin_device_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("sync_events_created_order_idx").on(table.id)],
+);
+
+export const syncMutations = pgTable("sync_mutations", {
+  mutationId: uuid("mutation_id").primaryKey(),
+  deviceId: text("device_id").notNull(),
+  acceptedEventId: bigint("accepted_event_id", { mode: "number" }).references(
+    () => syncEvents.id,
+    { onDelete: "set null" },
+  ),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
