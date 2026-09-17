@@ -1,9 +1,9 @@
 import { readFile } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
+import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/pglite";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { Entry } from "../../src/domain/types";
-import { sql } from "drizzle-orm";
 import { createPostgresStore, KNOWN_WORD_INSERT_BATCH_SIZE } from "../../src/server/store";
 import { createRemoteAppStore } from "../../src/storage/remote-store";
 
@@ -984,9 +984,7 @@ describe("PostgreSQL store over the real HTTP adapter", () => {
       sql`SELECT resource, resource_key, action FROM sync_events ORDER BY id`,
     );
     const records = Array.isArray(result) ? result : result.rows;
-    expect(records).toEqual([
-      { resource: "decision", resource_key: "騒ぐ", action: "set" },
-    ]);
+    expect(records).toEqual([{ resource: "decision", resource_key: "騒ぐ", action: "set" }]);
   });
 
   it("emits a preferences sync event on preferences.save", async () => {
@@ -1002,9 +1000,7 @@ describe("PostgreSQL store over the real HTTP adapter", () => {
       sql`SELECT resource, resource_key, action FROM sync_events ORDER BY id`,
     );
     const records = Array.isArray(result) ? result : result.rows;
-    expect(records).toEqual([
-      { resource: "preferences", resource_key: null, action: "replace" },
-    ]);
+    expect(records).toEqual([{ resource: "preferences", resource_key: null, action: "replace" }]);
   });
 
   it("emits a dataset sync event on successful dataset.finish", async () => {
@@ -1034,9 +1030,7 @@ describe("PostgreSQL store over the real HTTP adapter", () => {
       sql`SELECT resource, resource_key, action FROM sync_events ORDER BY id`,
     );
     const records = Array.isArray(result) ? result : result.rows;
-    expect(records).toEqual([
-      { resource: "dataset", resource_key: "ds-1", action: "upsert" },
-    ]);
+    expect(records).toEqual([{ resource: "dataset", resource_key: "ds-1", action: "upsert" }]);
   });
 
   it("emits a dataset-active sync event on dataset.activate", async () => {
@@ -1109,9 +1103,7 @@ describe("PostgreSQL store over the real HTTP adapter", () => {
       sql`SELECT resource, resource_key, action FROM sync_events WHERE action = 'remove' ORDER BY id`,
     );
     const records = Array.isArray(result) ? result : result.rows;
-    expect(records).toEqual([
-      { resource: "dataset", resource_key: "ds-rem", action: "remove" },
-    ]);
+    expect(records).toEqual([{ resource: "dataset", resource_key: "ds-rem", action: "remove" }]);
   });
 
   it("emits a decision sync event on decision.remove", async () => {
@@ -1223,9 +1215,7 @@ describe("PostgreSQL store over the real HTTP adapter", () => {
       sql`SELECT resource, resource_key, action FROM sync_events WHERE resource = 'queue' ORDER BY id`,
     );
     const records = Array.isArray(result) ? result : result.rows;
-    expect(records).toEqual([
-      { resource: "queue", resource_key: "q-ds", action: "replace" },
-    ]);
+    expect(records).toEqual([{ resource: "queue", resource_key: "q-ds", action: "replace" }]);
   });
 
   it("emits a queue remove sync event on queue state.finish with null", async () => {
@@ -1280,9 +1270,7 @@ describe("PostgreSQL store over the real HTTP adapter", () => {
       sql`SELECT resource, resource_key, action FROM sync_events WHERE resource = 'queue' ORDER BY id`,
     );
     const records = Array.isArray(result) ? result : result.rows;
-    expect(records).toEqual([
-      { resource: "queue", resource_key: "q-ds-null", action: "remove" },
-    ]);
+    expect(records).toEqual([{ resource: "queue", resource_key: "q-ds-null", action: "remove" }]);
   });
 
   it("emits an anki sync event on ankiConfig.save and anki snapshot finish/clear", async () => {

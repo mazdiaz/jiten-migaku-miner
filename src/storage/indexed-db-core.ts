@@ -1,7 +1,7 @@
 import { StorageUnavailableError } from "./fallback";
 
 export const INDEXED_DB_NAME = "jiten-migaku-miner-local-first";
-export const INDEXED_DB_VERSION = 4;
+export const INDEXED_DB_VERSION = 5;
 
 export type IndexedDbStoreName =
   | "datasets"
@@ -65,8 +65,14 @@ export function openDatabase(name: string = INDEXED_DB_NAME): Promise<IDBDatabas
       if (!database.objectStoreNames.contains("workspace")) {
         database.createObjectStore("workspace", { keyPath: "id" });
       }
+      let outboxStore: IDBObjectStore;
       if (!database.objectStoreNames.contains("syncOutbox")) {
-        database.createObjectStore("syncOutbox", { keyPath: "dedupeKey" });
+        outboxStore = database.createObjectStore("syncOutbox", { keyPath: "dedupeKey" });
+      } else {
+        outboxStore = request.transaction!.objectStore("syncOutbox");
+      }
+      if (!outboxStore.indexNames.contains("sequence")) {
+        outboxStore.createIndex("sequence", "sequence", { unique: false });
       }
       if (!database.objectStoreNames.contains("syncMeta")) {
         database.createObjectStore("syncMeta", { keyPath: "id" });

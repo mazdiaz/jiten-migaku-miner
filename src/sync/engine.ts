@@ -1,7 +1,13 @@
+import type { WordDecision } from "../domain/types";
 import type { AppStore } from "../storage/contracts";
 import type { LocalSyncStore, SyncOutboxRecord } from "../storage/local-sync";
 import { RemoteStoreError } from "../storage/remote-store";
-import type { CloudSyncPort, MaterializedSyncMutation } from "./contracts";
+import type {
+  CloudSyncPort,
+  MaterializedSyncMutation,
+  PreferencesValue,
+  SessionQueueSnapshot,
+} from "./contracts";
 
 export type SyncStatus =
   | { state: "idle"; pending: number; lastSyncAt: string | null }
@@ -50,6 +56,7 @@ export interface BootstrapLocalCacheOptions {
   cloud: CloudSyncPort;
   remoteApplyStore: AppStore;
   localSyncStore: LocalSyncStore;
+  localAppStore?: AppStore | undefined;
   now?: (() => string) | undefined;
 }
 
@@ -70,6 +77,7 @@ export async function bootstrapLocalCache(
         };
 
   const { cloud, remoteApplyStore, localSyncStore } = options;
+  const readerStore = options.localAppStore ?? remoteApplyStore;
   const now = options.now ?? (() => new Date().toISOString());
 
   // 1. Fetch cloud manifest & data first
@@ -80,15 +88,49 @@ export async function bootstrapLocalCache(
   const queues = await cloud.readQueues();
   const anki = await cloud.readAnki();
 
-  // Clear incomplete new local-first cache before writing state
+  // Snapshot pending unpushed outbox items before clearing domain cache so we can restore them
   const currentMeta = await localSyncStore.getMeta();
-  await remoteApplyStore.clearAll();
+  const pendingOutbox = await localSyncStore.listOutbox(1000);
+  const pendingDecisions: WordDecision[] = [];
+  let pendingKnown: { id: string; name: string; words: string[] } | null = null;
+  let pendingPrefs: PreferencesValue | null = null;
+  const pendingQueues: SessionQueueSnapshot[] = [];
+
+  for (const record of pendingOutbox) {
+    if (record.kind === "decision.set" && record.resourceId) {
+      const decision = await readerStore.wordDecisions.get(record.resourceId);
+      if (decision) pendingDecisions.push(decision);
+    } else if (record.kind === "known.replace") {
+      const active = await readerStore.knownWords.getActive();
+      if (active) pendingKnown = { id: active.id, name: active.name, words: [...active.words] };
+    } else if (record.kind === "preferences.replace") {
+      const p = await readerStore.preferences.load();
+      if (p) pendingPrefs = p;
+    } else if (record.kind === "queue.replace" && record.resourceId) {
+      const q = await localSyncStore.loadQueue(record.resourceId);
+      if (q) pendingQueues.push(q);
+    }
+  }
+
+  // Clear domain cache only - preserving syncOutbox and deviceId
+  if (remoteApplyStore.clearDomainCache) {
+    await remoteApplyStore.clearDomainCache();
+  } else {
+    await remoteApplyStore.clearAll();
+  }
+  if (localSyncStore.clearCachedDomainState) {
+    await localSyncStore.clearCachedDomainState();
+  }
+
   await localSyncStore.setMeta({
     id: "current",
     deviceId: currentMeta.deviceId,
     bootstrapComplete: false,
     serverEventId: 0,
     lastSyncAt: null,
+    ...(currentMeta.nextOutboxSequence !== undefined
+      ? { nextOutboxSequence: currentMeta.nextOutboxSequence }
+      : {}),
   });
 
   // 2. Write state with recording-disabled local stores
@@ -134,13 +176,31 @@ export async function bootstrapLocalCache(
     updatedAt: now(),
   });
 
-  // 6. Write sync meta bootstrapComplete=true/serverEventId=manifest.eventId LAST
+  // 6. Re-apply preserved pending local mutations on top of fresh cloud state
+  for (const decision of pendingDecisions) {
+    await remoteApplyStore.wordDecisions.set(decision);
+  }
+  if (pendingKnown) {
+    await remoteApplyStore.knownWords.save(pendingKnown.id, pendingKnown.name, pendingKnown.words);
+  }
+  if (pendingPrefs) {
+    await remoteApplyStore.preferences.save(pendingPrefs);
+  }
+  for (const q of pendingQueues) {
+    await localSyncStore.saveQueue(q, q.datasetId, false);
+  }
+
+  // 7. Write sync meta bootstrapComplete=true/serverEventId=manifest.eventId LAST
+  const metaAfter = await localSyncStore.getMeta();
   await localSyncStore.setMeta({
     id: "current",
     deviceId: currentMeta.deviceId,
     bootstrapComplete: true,
     serverEventId: manifest.eventId,
     lastSyncAt: now(),
+    ...(metaAfter.nextOutboxSequence !== undefined
+      ? { nextOutboxSequence: metaAfter.nextOutboxSequence }
+      : {}),
   });
 }
 
@@ -198,36 +258,50 @@ export function createSyncEngine(options: SyncEngineOptions): SyncEngine {
         const outbox = await localSyncStore.listOutbox(100);
         if (outbox.length === 0) break;
 
-        const first = outbox[0]!;
-        if (first.kind === "dataset.upload") {
-          const datasetId = first.resourceId!;
-          const datasets = await localAppStore.datasets.list();
-          const datasetMeta = datasets.find((d) => d.id === datasetId);
-
-          if (!datasetMeta) {
-            await localSyncStore.acknowledge(first.dedupeKey, first.mutationId);
-            continue;
-          }
-
-          const chunks = localAppStore.datasets.readChunks(datasetId, 2000);
-          const receipt = await cloud.uploadDataset(
-            deviceId,
-            first.mutationId,
-            datasetMeta,
-            chunks,
+        const pendingUpload = outbox.find((record) => record.kind === "dataset.upload");
+        if (pendingUpload) {
+          const activatesPendingUpload = outbox.some(
+            (record) =>
+              record.kind === "dataset.activate" &&
+              (record.resourceId === pendingUpload.resourceId || !record.resourceId),
           );
 
-          if (receipt.acceptedMutationIds.includes(first.mutationId)) {
-            await localSyncStore.acknowledge(first.dedupeKey, first.mutationId);
-          } else {
-            break;
+          if (outbox[0] === pendingUpload || activatesPendingUpload) {
+            const datasetId = pendingUpload.resourceId!;
+            const datasets = await localAppStore.datasets.list();
+            const datasetMeta = datasets.find((d) => d.id === datasetId);
+
+            if (!datasetMeta) {
+              await localSyncStore.acknowledge(pendingUpload.dedupeKey, pendingUpload.mutationId);
+              continue;
+            }
+
+            const chunks = localAppStore.datasets.readChunks(datasetId, 2000);
+            const receipt = await cloud.uploadDataset(
+              deviceId,
+              pendingUpload.mutationId,
+              datasetMeta,
+              chunks,
+            );
+
+            if (receipt.acceptedMutationIds.includes(pendingUpload.mutationId)) {
+              await localSyncStore.acknowledge(pendingUpload.dedupeKey, pendingUpload.mutationId);
+            } else {
+              break;
+            }
+            continue;
           }
-          continue;
         }
 
         const batchRecords: SyncOutboxRecord[] = [];
         for (const record of outbox) {
           if (record.kind === "dataset.upload") break;
+          if (
+            record.kind === "dataset.activate" &&
+            outbox.some((u) => u.kind === "dataset.upload" && u.resourceId === record.resourceId)
+          ) {
+            break;
+          }
           batchRecords.push(record);
         }
 
@@ -457,7 +531,13 @@ export function createSyncEngine(options: SyncEngineOptions): SyncEngine {
             }
 
             case "full-reset":
-              await bootstrapLocalCache({ cloud, remoteApplyStore, localSyncStore, now });
+              await bootstrapLocalCache({
+                cloud,
+                remoteApplyStore,
+                localSyncStore,
+                localAppStore,
+                now,
+              });
               break;
           }
         }

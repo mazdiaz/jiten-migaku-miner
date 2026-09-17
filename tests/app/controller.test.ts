@@ -4644,5 +4644,90 @@ describe("source adapters", () => {
       expect(worker.loadCalls[worker.loadCalls.length - 1]!.datasetId).toBe("ds-2");
       expect(sessionQueueStore.loadForDataset).toHaveBeenCalledWith("ds-2");
     });
+
+    it("resets in-memory known words to empty set and null name when known words become null in storage", async () => {
+      const store = createMemoryAppStore();
+      const meta = metadata("ds-1", "ds-1");
+      await store.datasets.stage(meta, copiedEntryChunks([[entry("e-1", "猫")]]));
+      await store.datasets.activate("ds-1");
+      await store.knownWords.save("kw-1", "My Known Words", ["猫", "犬"]);
+
+      const worker = new FakeWorkerClient();
+      const controller = createMinerController({
+        store,
+        worker,
+        legacyStorage: null,
+      });
+
+      let latestState!: AppState;
+      controller.subscribe((state) => {
+        latestState = state;
+      });
+
+      await controller.init();
+      expect(latestState.knownWords.size).toBe(2);
+      expect(latestState.knownWordsName).toBe("My Known Words");
+
+      // Clear known words in store
+      store.knownWords.clear?.();
+
+      await controller.refreshFromStorage?.();
+
+      expect(latestState.knownWords.size).toBe(0);
+      expect(latestState.knownWordsName).toBeNull();
+    });
+
+    it("resets in-memory query and view to default when preferences become null in storage", async () => {
+      const store = createMemoryAppStore();
+      const meta = metadata("ds-1", "ds-1");
+      await store.datasets.stage(meta, copiedEntryChunks([[entry("e-1", "猫")]]));
+      await store.datasets.activate("ds-1");
+      await store.preferences.save({
+        query: {
+          search: "test",
+          hideKnown: false,
+          hideKanaOnly: true,
+          sentence: "has",
+          minOccurrences: 5,
+          sort: "occ-asc",
+          pageSize: 100,
+          page: 3,
+          decision: "known",
+        },
+        view: {
+          showFurigana: false,
+          pillHighlight: false,
+          showHighlight: false,
+          showDefinitions: false,
+          sentenceSize: "large",
+          density: "compact",
+        },
+        page: 3,
+      });
+
+      const worker = new FakeWorkerClient();
+      const controller = createMinerController({
+        store,
+        worker,
+        legacyStorage: null,
+      });
+
+      let latestState!: AppState;
+      controller.subscribe((state) => {
+        latestState = state;
+      });
+
+      await controller.init();
+      expect(latestState.query.search).toBe("test");
+      expect(latestState.view.density).toBe("compact");
+
+      // Clear preferences in store
+      store.preferences.clear?.();
+
+      await controller.refreshFromStorage?.();
+
+      expect(latestState.query).toEqual(DEFAULT_QUERY);
+      expect(latestState.view).toEqual(DEFAULT_VIEW);
+    });
   });
 });

@@ -889,6 +889,8 @@ class MinerControllerImpl implements MinerController {
         this.state.knownWordsName = known.name;
       } else {
         this.activeKnownId = null;
+        this.state.knownWords = new Set();
+        this.state.knownWordsName = null;
       }
 
       this.state.wordDecisions = new Map(
@@ -902,6 +904,9 @@ class MinerControllerImpl implements MinerController {
           page: preferences.page,
         };
         this.state.view = { ...DEFAULT_VIEW, ...preferences.view };
+      } else {
+        this.state.query = { ...DEFAULT_QUERY };
+        this.state.view = { ...DEFAULT_VIEW };
       }
 
       this.state.dataset = active;

@@ -1,6 +1,7 @@
 import { isDeepStrictEqual } from "node:util";
 import { sql } from "drizzle-orm";
 import type { Entry, WordDecision } from "../domain/types";
+import type { DatasetMetadata } from "../storage/contracts";
 import type {
   AcceptedMutationReceipt,
   CloudBootstrapManifest,
@@ -9,18 +10,12 @@ import type {
   SyncPullPage,
   SyncPushReceipt,
 } from "../sync/contracts";
-import type { DatasetMetadata } from "../storage/contracts";
 import { getDatabase } from "./db/client";
-import {
-  bytes,
-  parseSyncOperation,
-  StoreError,
-} from "./storage/validation";
+import { bytes, parseSyncOperation, StoreError } from "./storage/validation";
 import {
   json,
   page,
   recordSyncEvent,
-  replaceDecisions,
   replaceKnown,
   replaceQueue,
   replaceSnapshot,
@@ -63,9 +58,7 @@ export function createPostgresSyncServer(database: StoreDatabase) {
       }
 
       case "state.read": {
-        await database.execute(
-          sql`INSERT INTO app_state(id) VALUES (1) ON CONFLICT DO NOTHING`,
-        );
+        await database.execute(sql`INSERT INTO app_state(id) VALUES (1) ON CONFLICT DO NOTHING`);
         const state = (
           await rows<StateRow>(database, sql`SELECT * FROM app_state WHERE id = 1`)
         )[0]!;
@@ -232,7 +225,8 @@ export function createPostgresSyncServer(database: StoreDatabase) {
           }
         }
 
-        const nextEventId = events.length > 0 ? Number(events[events.length - 1]!.id) : afterEventId;
+        const nextEventId =
+          events.length > 0 ? Number(events[events.length - 1]!.id) : afterEventId;
         const result: SyncPullPage = { changes, nextEventId };
         return result;
       }
@@ -258,7 +252,8 @@ export function createPostgresSyncServer(database: StoreDatabase) {
             if (existing) {
               receipts.push({
                 mutationId: mutation.mutationId,
-                eventId: existing.accepted_event_id !== null ? Number(existing.accepted_event_id) : null,
+                eventId:
+                  existing.accepted_event_id !== null ? Number(existing.accepted_event_id) : null,
               });
               continue;
             }
@@ -389,9 +384,7 @@ export function createPostgresSyncServer(database: StoreDatabase) {
             receipts.push({ mutationId: mutation.mutationId, eventId });
           }
 
-          await transaction.execute(
-            sql`UPDATE app_state SET revision = ${revision} WHERE id = 1`,
-          );
+          await transaction.execute(sql`UPDATE app_state SET revision = ${revision} WHERE id = 1`);
           const receipt: SyncPushReceipt = {
             accepted: receipts,
             acceptedMutationIds: receipts.map((r) => r.mutationId),
@@ -416,7 +409,22 @@ export function createPostgresSyncServer(database: StoreDatabase) {
         if (existing) {
           if (existing.status === "ready") {
             if (isDeepStrictEqual(existing.metadata, operation.metadata)) {
-              return { uploadId: existing.upload_id, alreadyReady: true };
+              const mut = (
+                await rows<{ accepted_event_id: string | number | null }>(
+                  database,
+                  sql`SELECT accepted_event_id FROM sync_mutations WHERE mutation_id = ${operation.mutationId} LIMIT 1`,
+                )
+              )[0];
+              const receipt: SyncPushReceipt = {
+                accepted: [
+                  {
+                    mutationId: operation.mutationId,
+                    eventId: mut?.accepted_event_id ? Number(mut.accepted_event_id) : null,
+                  },
+                ],
+                acceptedMutationIds: [operation.mutationId],
+              };
+              return { uploadId: existing.upload_id, alreadyReady: true, receipt };
             }
             throw new StoreError(
               "Dataset already exists with different metadata",
@@ -459,8 +467,7 @@ export function createPostgresSyncServer(database: StoreDatabase) {
 
         if (!existing) throw notFound("Dataset upload");
         if (existing.status === "ready") {
-          if (isDeepStrictEqual(existing.metadata, existing.metadata)) return { ok: true };
-          throw new StoreError("Dataset conflict", 409, "DATASET_CONFLICT");
+          return { ok: true };
         }
 
         const seen = new Set<number>();

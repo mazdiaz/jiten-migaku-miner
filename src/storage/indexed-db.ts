@@ -13,17 +13,14 @@ import type {
   WordDecisionStore,
 } from "./contracts";
 import { DatasetNotCachedError } from "./contracts";
-import { StorageUnavailableError } from "./fallback";
 import {
   INDEXED_DB_NAME,
   INDEXED_DB_VERSION,
-  openDatabase,
-  requestError,
+  type IndexedDbStoreName,
   runTransaction,
   withDatabase,
-  type IndexedDbStoreName,
 } from "./indexed-db-core";
-import type { SyncOutboxRecord } from "./local-sync";
+import type { LocalSyncMeta, SyncOutboxRecord } from "./local-sync";
 
 export { INDEXED_DB_NAME, INDEXED_DB_VERSION };
 
@@ -58,14 +55,34 @@ function writeOutboxRecord(
   createMutationId: () => string,
 ): void {
   const dedupeKey = outboxIdentity(kind, resourceId);
-  const record: SyncOutboxRecord = {
-    dedupeKey,
-    mutationId: createMutationId(),
-    kind,
-    resourceId,
-    createdAt: now(),
+  const metaStore = transaction.objectStore("syncMeta");
+  const metaReq = metaStore.get("current") as IDBRequest<LocalSyncMeta | undefined>;
+  metaReq.onsuccess = () => {
+    const meta = metaReq.result;
+    const currentSeq = meta?.nextOutboxSequence ?? 1;
+    if (meta) {
+      meta.nextOutboxSequence = currentSeq + 1;
+      metaStore.put(meta);
+    } else {
+      metaStore.put({
+        id: "current",
+        deviceId: crypto.randomUUID(),
+        bootstrapComplete: false,
+        serverEventId: 0,
+        lastSyncAt: null,
+        nextOutboxSequence: currentSeq + 1,
+      });
+    }
+    const record: SyncOutboxRecord = {
+      dedupeKey,
+      mutationId: createMutationId(),
+      kind,
+      resourceId,
+      createdAt: now(),
+      sequence: currentSeq,
+    };
+    transaction.objectStore("syncOutbox").put(record);
   };
-  transaction.objectStore("syncOutbox").put(record);
 }
 
 const DATASETS_STORE = "datasets";
@@ -80,8 +97,6 @@ const ACTIVE_KNOWN_WORD_SET_KEY = "activeKnownWordSetId";
 const PREFERENCES_KEY = "current";
 const ANKI_SYNC_KEY = "current";
 const READ_BATCH_SIZE = 32;
-
-type StoreName = IndexedDbStoreName;
 
 interface DatasetRecord extends DatasetMetadata {
   ready: boolean;
@@ -287,7 +302,7 @@ class IndexedDbDatasetStore implements DatasetStore {
           }
 
           const commitStores: IndexedDbStoreName[] = this.options?.recordSyncMutations
-            ? [DATASETS_STORE, "syncOutbox"]
+            ? [DATASETS_STORE, "syncOutbox", "syncMeta"]
             : [DATASETS_STORE];
 
           await runTransaction<void>(
@@ -341,7 +356,7 @@ class IndexedDbDatasetStore implements DatasetStore {
   async activate(datasetId: string): Promise<void> {
     await withDatabase(this.databaseName, async (database) => {
       const storeNames: IndexedDbStoreName[] = this.options?.recordSyncMutations
-        ? [DATASETS_STORE, META_STORE, "syncOutbox"]
+        ? [DATASETS_STORE, META_STORE, "syncOutbox", "syncMeta"]
         : [DATASETS_STORE, META_STORE];
 
       await runTransaction<void>(
@@ -521,7 +536,7 @@ class IndexedDbDatasetStore implements DatasetStore {
   async remove(datasetId: string): Promise<void> {
     await withDatabase(this.databaseName, async (database) => {
       const storeNames: IndexedDbStoreName[] = this.options?.recordSyncMutations
-        ? [DATASETS_STORE, ENTRY_CHUNKS_STORE, META_STORE, "syncOutbox"]
+        ? [DATASETS_STORE, ENTRY_CHUNKS_STORE, META_STORE, "syncOutbox", "syncMeta"]
         : [DATASETS_STORE, ENTRY_CHUNKS_STORE, META_STORE];
 
       await runTransaction<void>(
@@ -566,7 +581,7 @@ class IndexedDbKnownWordStore implements KnownWordStore {
     const record: KnownWordSetRecord = { id, name, words: uniqueWords };
     await withDatabase(this.databaseName, async (database) => {
       const storeNames: IndexedDbStoreName[] = this.options?.recordSyncMutations
-        ? [KNOWN_WORD_SETS_STORE, META_STORE, "syncOutbox"]
+        ? [KNOWN_WORD_SETS_STORE, META_STORE, "syncOutbox", "syncMeta"]
         : [KNOWN_WORD_SETS_STORE, META_STORE];
       await runTransaction<void>(
         database,
@@ -627,7 +642,7 @@ class IndexedDbKnownWordStore implements KnownWordStore {
   async remove(id: string): Promise<void> {
     await withDatabase(this.databaseName, async (database) => {
       const storeNames: IndexedDbStoreName[] = this.options?.recordSyncMutations
-        ? [KNOWN_WORD_SETS_STORE, META_STORE, "syncOutbox"]
+        ? [KNOWN_WORD_SETS_STORE, META_STORE, "syncOutbox", "syncMeta"]
         : [KNOWN_WORD_SETS_STORE, META_STORE];
       await runTransaction<void>(
         database,
@@ -661,7 +676,7 @@ class IndexedDbKnownWordStore implements KnownWordStore {
   async clear(): Promise<void> {
     await withDatabase(this.databaseName, async (database) => {
       const storeNames: IndexedDbStoreName[] = this.options?.recordSyncMutations
-        ? [KNOWN_WORD_SETS_STORE, META_STORE, "syncOutbox"]
+        ? [KNOWN_WORD_SETS_STORE, META_STORE, "syncOutbox", "syncMeta"]
         : [KNOWN_WORD_SETS_STORE, META_STORE];
       await runTransaction<void>(
         database,
@@ -730,7 +745,7 @@ class IndexedDbPreferencesStore implements PreferencesStore {
     };
     await withDatabase(this.databaseName, async (database) => {
       const storeNames: IndexedDbStoreName[] = this.options?.recordSyncMutations
-        ? [PREFERENCES_STORE, "syncOutbox"]
+        ? [PREFERENCES_STORE, "syncOutbox", "syncMeta"]
         : [PREFERENCES_STORE];
       await runTransaction<void>(
         database,
@@ -756,7 +771,7 @@ class IndexedDbPreferencesStore implements PreferencesStore {
   async clear(): Promise<void> {
     await withDatabase(this.databaseName, async (database) => {
       const storeNames: IndexedDbStoreName[] = this.options?.recordSyncMutations
-        ? [PREFERENCES_STORE, "syncOutbox"]
+        ? [PREFERENCES_STORE, "syncOutbox", "syncMeta"]
         : [PREFERENCES_STORE];
       await runTransaction<void>(
         database,
@@ -824,7 +839,7 @@ class IndexedDbWordDecisionStore implements WordDecisionStore {
   async set(decision: WordDecision): Promise<void> {
     await withDatabase(this.databaseName, async (database) => {
       const storeNames: IndexedDbStoreName[] = this.options?.recordSyncMutations
-        ? [WORD_DECISIONS_STORE, "syncOutbox"]
+        ? [WORD_DECISIONS_STORE, "syncOutbox", "syncMeta"]
         : [WORD_DECISIONS_STORE];
       await runTransaction<void>(
         database,
@@ -850,7 +865,7 @@ class IndexedDbWordDecisionStore implements WordDecisionStore {
   async remove(normalizedWord: string): Promise<void> {
     await withDatabase(this.databaseName, async (database) => {
       const storeNames: IndexedDbStoreName[] = this.options?.recordSyncMutations
-        ? [WORD_DECISIONS_STORE, "syncOutbox"]
+        ? [WORD_DECISIONS_STORE, "syncOutbox", "syncMeta"]
         : [WORD_DECISIONS_STORE];
       await runTransaction<void>(
         database,
@@ -877,7 +892,7 @@ class IndexedDbWordDecisionStore implements WordDecisionStore {
     const records = decisions.map(cloneDecision);
     await withDatabase(this.databaseName, async (database) => {
       const storeNames: IndexedDbStoreName[] = this.options?.recordSyncMutations
-        ? [WORD_DECISIONS_STORE, "syncOutbox"]
+        ? [WORD_DECISIONS_STORE, "syncOutbox", "syncMeta"]
         : [WORD_DECISIONS_STORE];
       await runTransaction<void>(
         database,
@@ -942,7 +957,7 @@ class IndexedDbWordDecisionStore implements WordDecisionStore {
     const options = this.options;
     await withDatabase(this.databaseName, async (database) => {
       const storeNames: IndexedDbStoreName[] = options?.recordSyncMutations
-        ? [WORD_DECISIONS_STORE, "syncOutbox"]
+        ? [WORD_DECISIONS_STORE, "syncOutbox", "syncMeta"]
         : [WORD_DECISIONS_STORE];
       await runTransaction<void>(
         database,
@@ -1002,7 +1017,7 @@ class IndexedDbAnkiSyncStore implements AnkiSyncStore {
     const nextConfig = cloneConfig(config);
     await withDatabase(this.databaseName, async (database) => {
       const storeNames: IndexedDbStoreName[] = this.options?.recordSyncMutations
-        ? [ANKI_SYNC_STORE, "syncOutbox"]
+        ? [ANKI_SYNC_STORE, "syncOutbox", "syncMeta"]
         : [ANKI_SYNC_STORE];
       await runTransaction<void>(
         database,
@@ -1054,7 +1069,7 @@ class IndexedDbAnkiSyncStore implements AnkiSyncStore {
     const nextSnapshot = cloneSnapshot(snapshot);
     await withDatabase(this.databaseName, async (database) => {
       const storeNames: IndexedDbStoreName[] = this.options?.recordSyncMutations
-        ? [ANKI_SYNC_STORE, "syncOutbox"]
+        ? [ANKI_SYNC_STORE, "syncOutbox", "syncMeta"]
         : [ANKI_SYNC_STORE];
       await runTransaction<void>(
         database,
@@ -1088,7 +1103,7 @@ class IndexedDbAnkiSyncStore implements AnkiSyncStore {
   async clear(): Promise<void> {
     await withDatabase(this.databaseName, async (database) => {
       const storeNames: IndexedDbStoreName[] = this.options?.recordSyncMutations
-        ? [ANKI_SYNC_STORE, "syncOutbox"]
+        ? [ANKI_SYNC_STORE, "syncOutbox", "syncMeta"]
         : [ANKI_SYNC_STORE];
       await runTransaction<void>(
         database,
@@ -1173,6 +1188,7 @@ export class IndexedDbAppStore implements AppStore {
           PREFERENCES_STORE,
           ANKI_SYNC_STORE,
           "syncOutbox",
+          "syncMeta",
         ]
       : [
           KNOWN_WORD_SETS_STORE,
@@ -1272,6 +1288,34 @@ export class IndexedDbAppStore implements AppStore {
           } else {
             applyRest();
           }
+        },
+      );
+    });
+  }
+
+  async clearDomainCache(): Promise<void> {
+    return withDatabase(this.databaseName, async (database) => {
+      return runTransaction<void>(
+        database,
+        [
+          DATASETS_STORE,
+          ENTRY_CHUNKS_STORE,
+          KNOWN_WORD_SETS_STORE,
+          PREFERENCES_STORE,
+          META_STORE,
+          WORD_DECISIONS_STORE,
+          ANKI_SYNC_STORE,
+        ],
+        "readwrite",
+        (transaction, resolveResult) => {
+          transaction.objectStore(DATASETS_STORE).clear();
+          transaction.objectStore(ENTRY_CHUNKS_STORE).clear();
+          transaction.objectStore(KNOWN_WORD_SETS_STORE).clear();
+          transaction.objectStore(PREFERENCES_STORE).clear();
+          transaction.objectStore(META_STORE).clear();
+          transaction.objectStore(WORD_DECISIONS_STORE).clear();
+          transaction.objectStore(ANKI_SYNC_STORE).clear();
+          resolveResult(undefined);
         },
       );
     });

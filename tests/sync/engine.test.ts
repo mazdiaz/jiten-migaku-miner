@@ -1,7 +1,7 @@
 import "fake-indexeddb/auto";
 import { describe, expect, it, vi } from "vitest";
 import type { Entry, QueryState, ViewState, WordDecision } from "../../src/domain/types";
-import { DatasetNotCachedError, type DatasetMetadata } from "../../src/storage/contracts";
+import { type DatasetMetadata, DatasetNotCachedError } from "../../src/storage/contracts";
 import { createIndexedDbAppStore } from "../../src/storage/indexed-db";
 import { createLocalSyncStore } from "../../src/storage/local-sync";
 import { RemoteStoreError } from "../../src/storage/remote-store";
@@ -15,11 +15,7 @@ import type {
   SyncPullPage,
   SyncPushReceipt,
 } from "../../src/sync/contracts";
-import {
-  bootstrapLocalCache,
-  createSyncEngine,
-  ensureDatasetCached,
-} from "../../src/sync/engine";
+import { bootstrapLocalCache, createSyncEngine, ensureDatasetCached } from "../../src/sync/engine";
 
 function sampleMetadata(id: string, entryCount: number): DatasetMetadata {
   return {
@@ -195,6 +191,8 @@ describe("Task 5: Cloud client and bootstrap local cache hydration", () => {
       expect(chunksA.flat().map((e) => e.word)).toEqual(["猫", "犬", "鳥"]);
 
       // 3. dataset-b stays metadata-only
+      expect(datasetAReadCalls).toBe(1);
+      expect(datasetBReadCalls).toBe(0);
       const stateB = await remoteApplyStore.datasets.cacheState!("dataset-b");
       expect(stateB).toBe("metadata-only");
       await expect(async () => {
@@ -426,16 +424,16 @@ describe("Task 5: Cloud client and bootstrap local cache hydration", () => {
           );
 
         case "dataset.begin":
-          return new Response(
-            JSON.stringify({ uploadId: parsedBody.mutationId }),
-            { status: 200, headers: { "Content-Type": "application/json" } },
-          );
+          return new Response(JSON.stringify({ uploadId: parsedBody.mutationId }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
 
         case "dataset.chunks":
-          return new Response(
-            JSON.stringify({ ok: true }),
-            { status: 200, headers: { "Content-Type": "application/json" } },
-          );
+          return new Response(JSON.stringify({ ok: true }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
 
         case "dataset.finish":
           return new Response(
@@ -554,10 +552,10 @@ describe("Task 5: Cloud client and bootstrap local cache hydration", () => {
 
   it("createCloudSyncClient wraps server domain errors with RemoteStoreError", async () => {
     const errorTransport = vi.fn(async () => {
-      return new Response(
-        JSON.stringify({ error: "Dataset conflict", code: "DATASET_CONFLICT" }),
-        { status: 409, headers: { "Content-Type": "application/json" } },
-      );
+      return new Response(JSON.stringify({ error: "Dataset conflict", code: "DATASET_CONFLICT" }), {
+        status: 409,
+        headers: { "Content-Type": "application/json" },
+      });
     });
     const client = createCloudSyncClient("/api/sync", errorTransport as any);
 
@@ -785,7 +783,7 @@ describe("Task 6: Push-first/pull-second SyncEngine", () => {
         return { changes: [], nextEventId: 0 };
       },
       async push() {
-        return await pushPromise as any;
+        return (await pushPromise) as any;
       },
       async uploadDataset() {
         return { accepted: [], acceptedMutationIds: [] };
@@ -1179,5 +1177,282 @@ describe("Task 6: Push-first/pull-second SyncEngine", () => {
       indexedDB.deleteDatabase(dbName);
     }
   });
-});
 
+  it("preserves causal ordering: uploads dataset before pushing dataset.activate", async () => {
+    const dbName = `test-causal-${crypto.randomUUID()}`;
+    const localSyncStore = createLocalSyncStore(dbName);
+    const recordingStore = createIndexedDbAppStore({
+      databaseName: dbName,
+      recordSyncMutations: true,
+    });
+    const remoteApplyStore = createIndexedDbAppStore({
+      databaseName: dbName,
+      recordSyncMutations: false,
+    });
+
+    const callOrder: string[] = [];
+    const fakeCloud: CloudSyncPort = {
+      async bootstrap() {
+        return { eventId: 0, activeDatasetId: null, datasets: [] };
+      },
+      async readKnownWords() {
+        return null;
+      },
+      async readDecisions() {
+        return [];
+      },
+      async readPreferences() {
+        return null;
+      },
+      async readQueues() {
+        return [];
+      },
+      async readAnki() {
+        return { config: null, snapshot: null };
+      },
+      async pull() {
+        return { changes: [], nextEventId: 0 };
+      },
+      async push(_deviceId, mutations) {
+        for (const m of mutations) {
+          callOrder.push(`push:${m.kind}`);
+        }
+        return {
+          accepted: mutations.map((m) => ({ mutationId: m.mutationId, eventId: 1 })),
+          acceptedMutationIds: mutations.map((m) => m.mutationId),
+          headEventId: 1,
+          clientMutationId: mutations[0]?.mutationId ?? "",
+        };
+      },
+      async uploadDataset(_deviceId, mutationId) {
+        callOrder.push("uploadDataset");
+        return {
+          accepted: [{ mutationId, eventId: 1 }],
+          acceptedMutationIds: [mutationId],
+          headEventId: 1,
+          clientMutationId: mutationId,
+        };
+      },
+      async *readDataset() {},
+    };
+
+    const dsMeta = sampleMetadata("dataset-causal", 1);
+    const entries = [sampleEntry("e-1", "本")];
+    async function* chunkGen() {
+      yield entries;
+    }
+    await recordingStore.datasets.stage(dsMeta, chunkGen());
+    await recordingStore.datasets.activate(dsMeta.id);
+
+    const outbox = await localSyncStore.listOutbox(10);
+    expect(outbox.some((r) => r.kind === "dataset.upload")).toBe(true);
+    expect(outbox.some((r) => r.kind === "dataset.activate")).toBe(true);
+
+    const engine = createSyncEngine({
+      cloud: fakeCloud,
+      localAppStore: recordingStore,
+      remoteApplyStore,
+      localSyncStore,
+    });
+
+    try {
+      await engine.syncNow();
+      expect(callOrder).toEqual(["uploadDataset", "push:dataset.activate"]);
+    } finally {
+      engine.dispose();
+      indexedDB.deleteDatabase(dbName);
+    }
+  });
+
+  it("full-reset does not delete brand new unsynced local mutations or change deviceId", async () => {
+    const dbName = `test-race-${crypto.randomUUID()}`;
+    const localSyncStore = createLocalSyncStore(dbName);
+    const recordingStore = createIndexedDbAppStore({
+      databaseName: dbName,
+      recordSyncMutations: true,
+    });
+    const remoteApplyStore = createIndexedDbAppStore({
+      databaseName: dbName,
+      recordSyncMutations: false,
+    });
+
+    const initialMeta = await localSyncStore.getMeta();
+    const initialDeviceId = initialMeta.deviceId;
+
+    let resolvePullGate: () => void;
+    const pullGate = new Promise<void>((resolve) => {
+      resolvePullGate = resolve;
+    });
+
+    let pullStartedResolve: () => void;
+    const pullStarted = new Promise<void>((resolve) => {
+      pullStartedResolve = resolve;
+    });
+
+    const pushedMutations: MaterializedSyncMutation[] = [];
+
+    const fakeCloud: CloudSyncPort = {
+      async bootstrap() {
+        return {
+          eventId: 5,
+          activeDatasetId: null,
+          datasets: [],
+        };
+      },
+      async readKnownWords() {
+        return null;
+      },
+      async readDecisions() {
+        return [{ normalizedWord: "雲", status: "known", updatedAt: "2026-09-17T00:00:00.000Z" }];
+      },
+      async readPreferences() {
+        return null;
+      },
+      async readQueues() {
+        return [];
+      },
+      async readAnki() {
+        return { config: null, snapshot: null };
+      },
+      async pull(afterEventId) {
+        if (afterEventId === 0) {
+          pullStartedResolve();
+          await pullGate;
+          return {
+            changes: [{ id: 1, kind: "full-reset" }],
+            nextEventId: 5,
+          };
+        }
+        return { changes: [], nextEventId: afterEventId };
+      },
+      async push(_deviceId, mutations) {
+        pushedMutations.push(...mutations);
+        return {
+          accepted: mutations.map((m) => ({ mutationId: m.mutationId, eventId: 6 })),
+          acceptedMutationIds: mutations.map((m) => m.mutationId),
+          headEventId: 6,
+          clientMutationId: mutations[0]?.mutationId ?? "",
+        };
+      },
+      async uploadDataset() {
+        return { accepted: [], acceptedMutationIds: [], headEventId: 1, clientMutationId: "" };
+      },
+      async *readDataset() {},
+    };
+
+    const engine = createSyncEngine({
+      cloud: fakeCloud,
+      localAppStore: recordingStore,
+      remoteApplyStore,
+      localSyncStore,
+    });
+
+    try {
+      // 1. Start sync (which will enter pull and pause at pullGate)
+      const syncPromise = engine.syncNow();
+      await pullStarted;
+
+      // 2. Create a new local decision during the pull pause
+      await recordingStore.wordDecisions.set({
+        normalizedWord: "星",
+        status: "mined",
+        updatedAt: "2026-09-17T01:00:00.000Z",
+      });
+
+      // 3. Resume reset
+      resolvePullGate!();
+      await syncPromise;
+
+      // 4. Verify decision and outbox still exist afterward
+      const decisionStar = await recordingStore.wordDecisions.get("星");
+      expect(decisionStar).not.toBeNull();
+      expect(decisionStar?.status).toBe("mined");
+
+      const decisionCloud = await recordingStore.wordDecisions.get("雲");
+      expect(decisionCloud).not.toBeNull();
+      expect(decisionCloud?.status).toBe("known");
+
+      const outbox = await localSyncStore.listOutbox(10);
+      expect(outbox.some((r) => r.resourceId === "星")).toBe(true);
+
+      const metaAfterReset = await localSyncStore.getMeta();
+      expect(metaAfterReset.deviceId).toBe(initialDeviceId);
+
+      // 5. Next sync pushes the new decision
+      await engine.syncNow();
+      expect(
+        pushedMutations.some(
+          (m) =>
+            m.kind === "decision.set" &&
+            (m as { decision: WordDecision }).decision.normalizedWord === "星",
+        ),
+      ).toBe(true);
+    } finally {
+      engine.dispose();
+      indexedDB.deleteDatabase(dbName);
+    }
+  });
+
+  it("deviceId remains stable across multiple bootstrapLocalCache calls", async () => {
+    const dbName = `test-device-id-${crypto.randomUUID()}`;
+    const localSyncStore = createLocalSyncStore(dbName);
+    const remoteApplyStore = createIndexedDbAppStore({
+      databaseName: dbName,
+      recordSyncMutations: false,
+    });
+
+    const fakeCloud: CloudSyncPort = {
+      async bootstrap() {
+        return { eventId: 1, activeDatasetId: null, datasets: [] };
+      },
+      async readKnownWords() {
+        return null;
+      },
+      async readDecisions() {
+        return [];
+      },
+      async readPreferences() {
+        return null;
+      },
+      async readQueues() {
+        return [];
+      },
+      async readAnki() {
+        return { config: null, snapshot: null };
+      },
+      async pull() {
+        return { changes: [], nextEventId: 1 };
+      },
+      async push() {
+        return { accepted: [], acceptedMutationIds: [], headEventId: 1, clientMutationId: "" };
+      },
+      async uploadDataset() {
+        return { accepted: [], acceptedMutationIds: [], headEventId: 1, clientMutationId: "" };
+      },
+      async *readDataset() {},
+    };
+
+    const metaBefore = await localSyncStore.getMeta();
+    const originalDeviceId = metaBefore.deviceId;
+
+    await bootstrapLocalCache({
+      cloud: fakeCloud,
+      remoteApplyStore,
+      localSyncStore,
+    });
+
+    const metaAfter1 = await localSyncStore.getMeta();
+    expect(metaAfter1.deviceId).toBe(originalDeviceId);
+
+    await bootstrapLocalCache({
+      cloud: fakeCloud,
+      remoteApplyStore,
+      localSyncStore,
+    });
+
+    const metaAfter2 = await localSyncStore.getMeta();
+    expect(metaAfter2.deviceId).toBe(originalDeviceId);
+
+    indexedDB.deleteDatabase(dbName);
+  });
+});

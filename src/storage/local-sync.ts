@@ -1,11 +1,5 @@
 import type { SessionQueueSnapshot, SyncMutationKind } from "../sync/contracts";
-import {
-  INDEXED_DB_NAME,
-  openDatabase,
-  requestError,
-  runTransaction,
-  withDatabase,
-} from "./indexed-db-core";
+import { INDEXED_DB_NAME, requestError, runTransaction, withDatabase } from "./indexed-db-core";
 
 export interface SyncOutboxRecord {
   dedupeKey: string;
@@ -13,6 +7,7 @@ export interface SyncOutboxRecord {
   kind: SyncMutationKind;
   resourceId: string | null;
   createdAt: string;
+  sequence: number;
 }
 
 export interface LocalSyncMeta {
@@ -21,6 +16,7 @@ export interface LocalSyncMeta {
   bootstrapComplete: boolean;
   serverEventId: number;
   lastSyncAt: string | null;
+  nextOutboxSequence?: number;
 }
 
 export interface WorkspaceResumeState {
@@ -46,6 +42,7 @@ export interface LocalSyncStore {
     recordMutation: boolean,
   ): Promise<void>;
   clearLocalData(): Promise<void>;
+  clearCachedDomainState?(): Promise<void>;
 }
 
 export function createLocalSyncStore(databaseName: string = INDEXED_DB_NAME): LocalSyncStore {
@@ -71,6 +68,7 @@ export function createLocalSyncStore(databaseName: string = INDEXED_DB_NAME): Lo
                 bootstrapComplete: false,
                 serverEventId: 0,
                 lastSyncAt: null,
+                nextOutboxSequence: 1,
               };
               const putRequest = store.put(initial);
               putRequest.onerror = () => abort(requestError(putRequest));
@@ -106,7 +104,8 @@ export function createLocalSyncStore(databaseName: string = INDEXED_DB_NAME): Lo
           (transaction, resolveResult, abort) => {
             const store = transaction.objectStore("syncOutbox");
             const records: SyncOutboxRecord[] = [];
-            const request = store.openCursor();
+            const index = store.index("sequence");
+            const request = index.openCursor();
             request.onerror = () => abort(requestError(request));
             request.onsuccess = () => {
               const cursor = request.result;
@@ -231,14 +230,14 @@ export function createLocalSyncStore(databaseName: string = INDEXED_DB_NAME): Lo
     ): Promise<void> {
       return withDatabase(databaseName, async (database) => {
         const storeNames = recordMutation
-          ? (["queues", "syncOutbox"] as const)
+          ? (["queues", "syncOutbox", "syncMeta"] as const)
           : (["queues"] as const);
 
         return runTransaction<void>(
           database,
           storeNames,
           "readwrite",
-          (transaction, resolveResult, abort) => {
+          (transaction, resolveResult, _abort) => {
             const queuesStore = transaction.objectStore("queues");
             if (snapshot) {
               queuesStore.put({ ...snapshot, datasetId });
@@ -248,17 +247,68 @@ export function createLocalSyncStore(databaseName: string = INDEXED_DB_NAME): Lo
 
             if (recordMutation) {
               const outboxStore = transaction.objectStore("syncOutbox");
-              const dedupeKey = `queue:${datasetId}`;
-              const outboxRecord: SyncOutboxRecord = {
-                dedupeKey,
-                mutationId: crypto.randomUUID(),
-                kind: snapshot ? "queue.replace" : "queue.remove",
-                resourceId: datasetId,
-                createdAt: new Date().toISOString(),
+              const metaStore = transaction.objectStore("syncMeta");
+              const metaReq = metaStore.get("current") as IDBRequest<LocalSyncMeta | undefined>;
+              metaReq.onerror = () => _abort(requestError(metaReq));
+              metaReq.onsuccess = () => {
+                const meta = metaReq.result;
+                const currentSeq = meta?.nextOutboxSequence ?? 1;
+                if (meta) {
+                  meta.nextOutboxSequence = currentSeq + 1;
+                  metaStore.put(meta);
+                } else {
+                  metaStore.put({
+                    id: "current",
+                    deviceId: crypto.randomUUID(),
+                    bootstrapComplete: false,
+                    serverEventId: 0,
+                    lastSyncAt: null,
+                    nextOutboxSequence: currentSeq + 1,
+                  });
+                }
+                const dedupeKey = `queue:${datasetId}`;
+                const outboxRecord: SyncOutboxRecord = {
+                  dedupeKey,
+                  mutationId: crypto.randomUUID(),
+                  kind: snapshot ? "queue.replace" : "queue.remove",
+                  resourceId: datasetId,
+                  createdAt: new Date().toISOString(),
+                  sequence: currentSeq,
+                };
+                outboxStore.put(outboxRecord);
+                resolveResult(undefined);
               };
-              outboxStore.put(outboxRecord);
+              return;
             }
 
+            resolveResult(undefined);
+          },
+        );
+      });
+    },
+
+    async clearCachedDomainState(): Promise<void> {
+      const storeNames = [
+        "datasets",
+        "entryChunks",
+        "knownWordSets",
+        "preferences",
+        "meta",
+        "wordDecisions",
+        "ankiSync",
+        "queues",
+        "workspace",
+      ] as const;
+
+      return withDatabase(databaseName, async (database) => {
+        return runTransaction<void>(
+          database,
+          storeNames,
+          "readwrite",
+          (transaction, resolveResult) => {
+            for (const name of storeNames) {
+              transaction.objectStore(name).clear();
+            }
             resolveResult(undefined);
           },
         );

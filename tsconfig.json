@@ -8,11 +8,7 @@
     "exactOptionalPropertyTypes": true,
     "noEmit": true,
     "skipLibCheck": true,
-    "lib": [
-      "ES2022",
-      "DOM",
-      "WebWorker"
-    ],
+    "lib": ["ES2022", "DOM", "WebWorker"],
     "jsx": "react-jsx",
     "allowJs": true,
     "resolveJsonModule": true,
@@ -35,7 +31,5 @@
     "vitest.config.ts",
     "playwright*.config.ts"
   ],
-  "exclude": [
-    "node_modules"
-  ]
+  "exclude": ["node_modules"]
 }

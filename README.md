@@ -108,19 +108,20 @@ It retains ready datasets and active data. Database backups and provider restore
 
 ## Local-First Sync Rollout
 
-The application supports a local-first architecture where IndexedDB (`jiten-migaku-miner-local-first`, version 4) serves as the immediate working copy and PostgreSQL acts as the durable cross-device synchronization backend.
+The application supports a local-first architecture where IndexedDB (`jiten-migaku-miner-local-first`, version 5) serves as the immediate working copy and PostgreSQL acts as the durable cross-device synchronization backend.
 
 ### Production Rollout Procedure
 
-1. Deploy migration/event dual-write code with `NEXT_PUBLIC_LOCAL_FIRST_SYNC` unset or `0`.
-2. Run `npm run db:migrate` against production `DATABASE_URL`.
-3. Verify current server-first imports/decisions/queue/Anki/backups and verify `sync_events` receives rows.
-4. Deploy `/api/sync` and local-first code with the flag still `0`.
-5. Validate a preview deployment against a separate preview PostgreSQL database.
-6. Set `NEXT_PUBLIC_LOCAL_FIRST_SYNC=1` in production and redeploy.
-7. First production visit performs one bootstrap; subsequent visits use warm IndexedDB boot.
-8. Keep `RemoteAppStore` fallback and the old browser database during stabilization.
-9. Remove the rollout flag only in a later cleanup change.
+1. Run `npm run db:migrate` against production `DATABASE_URL` while existing code is still running. Migration `0002_local_first_sync.sql` is strictly additive and backward-compatible with running instances.
+2. Verify `sync_events` and `sync_mutations` tables exist in PostgreSQL.
+3. Deploy dual-write server code with `NEXT_PUBLIC_LOCAL_FIRST_SYNC` unset or `0`.
+4. Verify current server-first imports/decisions/queue/Anki/backups and confirm `sync_events` receives rows.
+5. Deploy `/api/sync` and local-first browser code with the flag still `0`.
+6. Validate a preview deployment against a separate preview PostgreSQL database with `NEXT_PUBLIC_LOCAL_FIRST_SYNC=1`.
+7. Set `NEXT_PUBLIC_LOCAL_FIRST_SYNC=1` in production and redeploy.
+8. First production visit performs one bootstrap; subsequent visits use warm IndexedDB boot.
+9. Keep `RemoteAppStore` fallback and the old browser database during stabilization.
+10. Remove the rollout flag only in a later cleanup change.
 
 ### UI Status Meaning
 

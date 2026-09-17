@@ -1,7 +1,7 @@
 import "fake-indexeddb/auto";
 import { describe, expect, it } from "vitest";
 import type { Entry } from "../../src/domain/types";
-import { DatasetNotCachedError, type DatasetMetadata } from "../../src/storage/contracts";
+import { type DatasetMetadata, DatasetNotCachedError } from "../../src/storage/contracts";
 import { createIndexedDbAppStore } from "../../src/storage/indexed-db";
 import { openDatabase } from "../../src/storage/indexed-db-core";
 import { createLocalSyncStore } from "../../src/storage/local-sync";
@@ -447,4 +447,3 @@ describe("Local mutation recording and sync outbox integration", () => {
     }
   });
 });
-

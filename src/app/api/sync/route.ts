@@ -46,10 +46,7 @@ export async function POST(request: Request): Promise<Response> {
     }
     if (error instanceof SyntaxError)
       return Response.json({ error: "Invalid JSON." }, { status: 400 });
-    console.error(
-      "Sync operation failed",
-      error instanceof Error ? error.name : "Unknown error",
-    );
+    console.error("Sync operation failed", error instanceof Error ? error.name : "Unknown error");
     return Response.json(
       { error: "Database sync operation could not be confirmed. Try again later." },
       { status: 503 },

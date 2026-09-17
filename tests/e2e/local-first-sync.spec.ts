@@ -1,5 +1,12 @@
 import { expect, test } from "./fixtures";
 
+test.beforeEach(async () => {
+  test.skip(
+    process.env.NEXT_PUBLIC_LOCAL_FIRST_SYNC !== "1",
+    "Requires local-first sync mode (NEXT_PUBLIC_LOCAL_FIRST_SYNC=1)",
+  );
+});
+
 test("warm offline boot allows study and marks changes saved locally", async ({ page }) => {
   await page.goto("/");
   await page.locator("#jitenInput").setInputFiles("tests/fixtures/jiten-small.csv");

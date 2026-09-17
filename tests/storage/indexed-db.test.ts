@@ -231,13 +231,13 @@ describe("IndexedDbAppStore", () => {
     expect(await store.datasets.getActive()).toEqual(metadata("first"));
   });
 
-  it("creates version 4 schema with required object stores", async () => {
+  it("creates version 5 schema with required object stores", async () => {
     const store = createIndexedDbAppStore(databaseName);
     await store.datasets.list();
 
     const database = await openRawDatabase(databaseName);
     try {
-      expect(database.version).toBe(4);
+      expect(database.version).toBe(5);
       expect([...database.objectStoreNames]).toEqual(
         expect.arrayContaining([
           "datasets",
@@ -254,9 +254,9 @@ describe("IndexedDbAppStore", () => {
         ]),
       );
       expect(database.objectStoreNames.length).toBe(11);
-      expect(database.transaction(["ankiSync"], "readonly").objectStore("ankiSync").keyPath).toBe(
-        "id",
-      );
+      const tx = database.transaction(["ankiSync", "syncOutbox"], "readonly");
+      expect(tx.objectStore("ankiSync").keyPath).toBe("id");
+      expect(tx.objectStore("syncOutbox").indexNames.contains("sequence")).toBe(true);
     } finally {
       database.close();
     }
@@ -281,7 +281,7 @@ describe("IndexedDbAppStore", () => {
 
     const database = await openRawDatabase(databaseName);
     try {
-      expect(database.version).toBe(4);
+      expect(database.version).toBe(5);
       expect(database.objectStoreNames.length).toBe(11);
       expect([...database.objectStoreNames]).toContain("wordDecisions");
       expect([...database.objectStoreNames]).toContain("ankiSync");

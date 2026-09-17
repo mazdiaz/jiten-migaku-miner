@@ -282,9 +282,62 @@ describe("IndexedDB v2 to v3 upgrade", () => {
         ]);
         const tx = db.transaction(["syncOutbox", "queues", "syncMeta", "workspace"], "readonly");
         expect(tx.objectStore("syncOutbox").keyPath).toBe("dedupeKey");
+        expect(tx.objectStore("syncOutbox").indexNames.contains("sequence")).toBe(true);
         expect(tx.objectStore("queues").keyPath).toBe("datasetId");
         expect(tx.objectStore("syncMeta").keyPath).toBe("id");
         expect(tx.objectStore("workspace").keyPath).toBe("id");
+      } finally {
+        db.close();
+      }
+    } finally {
+      await deleteDatabase(databaseName);
+    }
+  });
+
+  it("creates sequence index on syncOutbox when upgrading from v4 to v5", async () => {
+    const databaseName = `v4-to-v5-upgrade-${crypto.randomUUID()}`;
+    try {
+      const existingOutboxItem = {
+        dedupeKey: "pref",
+        mutationId: "mut-1",
+        kind: "preferences.replace",
+        resourceId: null,
+        createdAt: "2026-09-17T00:00:00.000Z",
+        sequence: 1,
+      };
+      const request = indexedDB.open(databaseName, 4);
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        db.createObjectStore("datasets", { keyPath: "id" });
+        db.createObjectStore("entryChunks", { keyPath: ["datasetId", "chunkIndex"] });
+        db.createObjectStore("knownWordSets", { keyPath: "id" });
+        db.createObjectStore("preferences", { keyPath: "id" });
+        db.createObjectStore("meta", { keyPath: "key" });
+        db.createObjectStore("wordDecisions", { keyPath: "normalizedWord" });
+        db.createObjectStore("ankiSync", { keyPath: "id" });
+        db.createObjectStore("queues", { keyPath: "datasetId" });
+        db.createObjectStore("workspace", { keyPath: "id" });
+        db.createObjectStore("syncOutbox", { keyPath: "dedupeKey" });
+        db.createObjectStore("syncMeta", { keyPath: "id" });
+      };
+      const database = await requestToPromise(request);
+      const transaction = database.transaction(["syncOutbox"], "readwrite");
+      transaction.objectStore("syncOutbox").put(existingOutboxItem);
+      await transactionToPromise(transaction);
+      database.close();
+
+      const upgraded = new IndexedDbAppStore(databaseName);
+      await upgraded.datasets.list();
+
+      const checkReq = indexedDB.open(databaseName);
+      const db = await requestToPromise(checkReq);
+      try {
+        expect(db.version).toBe(5);
+        const tx = db.transaction(["syncOutbox"], "readonly");
+        const outboxStore = tx.objectStore("syncOutbox");
+        expect(outboxStore.indexNames.contains("sequence")).toBe(true);
+        const item = await requestToPromise(outboxStore.get("pref"));
+        expect(item).toEqual(existingOutboxItem);
       } finally {
         db.close();
       }

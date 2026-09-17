@@ -13,5 +13,8 @@ export function testServerEnvironment(origin: string): Record<string, string> {
     AUTH_GITHUB_SECRET: "local-test-client-secret",
     AUTH_URL: origin,
     AUTH_TRUST_HOST: "true",
+    ...(process.env.NEXT_PUBLIC_LOCAL_FIRST_SYNC !== undefined
+      ? { NEXT_PUBLIC_LOCAL_FIRST_SYNC: process.env.NEXT_PUBLIC_LOCAL_FIRST_SYNC }
+      : {}),
   };
 }

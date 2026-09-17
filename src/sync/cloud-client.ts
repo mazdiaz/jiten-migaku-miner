@@ -1,7 +1,8 @@
-import type { AnkiSyncConfig, AnkiSyncSnapshot } from "../domain/anki";
+import type { AnkiSyncConfig, AnkiSyncSnapshot, AnkiWordStatus } from "../domain/anki";
 import type { Entry, WordDecision } from "../domain/types";
 import type { DatasetMetadata } from "../storage/contracts";
 import { RemoteStoreError } from "../storage/remote-store";
+import { splitEntriesForWire } from "./batching";
 import type {
   CloudBootstrapManifest,
   CloudSyncPort,
@@ -33,7 +34,7 @@ export function createCloudSyncClient(
       );
     }
 
-    let result: any;
+    let result: unknown;
     try {
       result = await response.json();
     } catch {
@@ -45,10 +46,12 @@ export function createCloudSyncClient(
     }
 
     if (!response.ok) {
+      const errorObj =
+        typeof result === "object" && result !== null ? (result as Record<string, unknown>) : null;
       throw new RemoteStoreError(
-        result?.error ?? "Could not save or load data.",
+        typeof errorObj?.error === "string" ? errorObj.error : "Could not save or load data.",
         response.status,
-        result?.code ?? "SERVER_ERROR",
+        typeof errorObj?.code === "string" ? errorObj.code : "SERVER_ERROR",
       );
     }
 
@@ -208,14 +211,14 @@ export function createCloudSyncClient(
       });
 
       let cursor = 0;
-      const statuses: [string, any][] = [];
+      const statuses: [string, AnkiWordStatus][] = [];
       let syncedAt: string | null = null;
       let snapshot: AnkiSyncSnapshot | null = null;
 
       while (true) {
         const page = await request<{
           syncedAt: string;
-          items: [string, any][];
+          items: [string, AnkiWordStatus][];
           nextCursor: number | null;
         } | null>({
           operation: "state.read",
@@ -235,7 +238,7 @@ export function createCloudSyncClient(
         if (page.nextCursor === null) {
           snapshot = {
             syncedAt: syncedAt!,
-            statuses: statuses as any,
+            statuses,
           };
           break;
         }
@@ -277,12 +280,20 @@ export function createCloudSyncClient(
       metadata: DatasetMetadata,
       chunks: AsyncIterable<readonly Entry[]>,
     ): Promise<SyncPushReceipt> {
-      const beginResult = await request<{ uploadId: string; alreadyReady?: boolean }>({
+      const beginResult = await request<{
+        uploadId: string;
+        alreadyReady?: boolean;
+        receipt?: SyncPushReceipt;
+      }>({
         operation: "dataset.begin",
         deviceId,
         mutationId,
         metadata,
       });
+
+      if (beginResult.alreadyReady && beginResult.receipt) {
+        return beginResult.receipt;
+      }
 
       if (beginResult.alreadyReady) {
         return await request<SyncPushReceipt>({
@@ -296,13 +307,13 @@ export function createCloudSyncClient(
       let chunkCount = 0;
       for await (const chunk of chunks) {
         if (chunk.length === 0) continue;
-        for (let i = 0; i < chunk.length; i += 2000) {
-          const subChunk = chunk.slice(i, i + 2000);
+        const subChunks = splitEntriesForWire(chunk);
+        for (const subChunk of subChunks) {
           await request<{ ok: boolean }>({
             operation: "dataset.chunks",
             deviceId,
             mutationId,
-            chunks: [{ index: chunkCount, entries: subChunk as Entry[] }],
+            chunks: [{ index: chunkCount, entries: subChunk }],
           });
           chunkCount++;
         }

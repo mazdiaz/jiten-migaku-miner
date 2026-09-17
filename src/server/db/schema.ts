@@ -126,10 +126,8 @@ export const syncEvents = pgTable(
 export const syncMutations = pgTable("sync_mutations", {
   mutationId: uuid("mutation_id").primaryKey(),
   deviceId: text("device_id").notNull(),
-  acceptedEventId: bigint("accepted_event_id", { mode: "number" }).references(
-    () => syncEvents.id,
-    { onDelete: "set null" },
-  ),
+  acceptedEventId: bigint("accepted_event_id", { mode: "number" }).references(() => syncEvents.id, {
+    onDelete: "set null",
+  }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
-

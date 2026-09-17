@@ -99,7 +99,10 @@ export function page<T>(
     nextCursor: moreAvailable || length < items.length ? cursor + length : null,
   };
 }
-export async function batch<T>(values: readonly T[], apply: (chunk: readonly T[]) => Promise<unknown>) {
+export async function batch<T>(
+  values: readonly T[],
+  apply: (chunk: readonly T[]) => Promise<unknown>,
+) {
   for (let index = 0; index < values.length; index += 500)
     await apply(values.slice(index, index + 500));
 }
@@ -156,7 +159,10 @@ export async function replaceKnown(
   }
   return null;
 }
-export async function replaceDecisions(database: StoreDatabase, values: z.infer<typeof decisionSchema>[]) {
+export async function replaceDecisions(
+  database: StoreDatabase,
+  values: z.infer<typeof decisionSchema>[],
+) {
   assertUnique(
     values.map((value) => value.normalizedWord),
     "word decision",
@@ -584,7 +590,11 @@ FROM jsonb_array_elements(${json(payload)}) AS value`,
           await transaction.execute(
             sql`UPDATE app_state SET active_dataset_id = ${operation.datasetId} WHERE id = 1`,
           );
-          syncEvent = { resource: "dataset-active", resourceKey: operation.datasetId, action: "set" };
+          syncEvent = {
+            resource: "dataset-active",
+            resourceKey: operation.datasetId,
+            action: "set",
+          };
           mutated = true;
           break;
         }
@@ -650,7 +660,11 @@ FROM jsonb_array_elements(${json(payload)}) AS value`,
           await transaction.execute(
             sql`INSERT INTO word_decisions(word, decision) VALUES (${operation.decision.normalizedWord}, ${json(operation.decision)}) ON CONFLICT(word) DO UPDATE SET decision = excluded.decision`,
           );
-          syncEvent = { resource: "decision", resourceKey: operation.decision.normalizedWord, action: "set" };
+          syncEvent = {
+            resource: "decision",
+            resourceKey: operation.decision.normalizedWord,
+            action: "set",
+          };
           mutated = true;
           break;
         case "decision.remove":
@@ -790,11 +804,7 @@ FROM jsonb_array_elements(${json(payload)}) AS value`,
             case "queue": {
               const queueValue = parse(queueSchema.nullable(), payload);
               const queueDatasetId = queueValue?.datasetId ?? state.active_dataset_id;
-              await replaceQueue(
-                transaction,
-                queueValue,
-                state.active_dataset_id,
-              );
+              await replaceQueue(transaction, queueValue, state.active_dataset_id);
               syncEvent = {
                 resource: "queue",
                 resourceKey: queueDatasetId,

@@ -1,10 +1,11 @@
 import { readFile } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
-import { drizzle } from "drizzle-orm/pglite";
 import { sql } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/pglite";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createPostgresStore } from "../../src/server/store";
 import { createPostgresSyncServer } from "../../src/server/sync";
+import type { SyncPushReceipt } from "../../src/sync/contracts";
 
 const firstDecision = {
   normalizedWord: "猫",
@@ -89,7 +90,10 @@ describe("/api/sync server protocol and operations", () => {
     const pullResult = (await syncServer({
       operation: "pull",
       afterEventId: 1,
-    })) as { changes: Array<{ id: number; kind: string; decision?: unknown }>; nextEventId: number };
+    })) as {
+      changes: Array<{ id: number; kind: string; decision?: unknown }>;
+      nextEventId: number;
+    };
 
     expect(pullResult.changes).toHaveLength(1);
     expect(pullResult.changes[0]).toMatchObject({
@@ -123,23 +127,23 @@ describe("/api/sync server protocol and operations", () => {
     expect(secondPush).toEqual(firstPush);
 
     // Assert canonical decision exists once
-    const decisions = (await database.execute(
-      sql`SELECT word, decision FROM word_decisions`,
-    )) as { rows?: unknown[] } | unknown[];
+    const decisions = (await database.execute(sql`SELECT word, decision FROM word_decisions`)) as
+      | { rows?: unknown[] }
+      | unknown[];
     const decRows = Array.isArray(decisions) ? decisions : decisions.rows!;
     expect(decRows).toHaveLength(1);
 
     // Assert sync_mutations has one row
-    const mutations = (await database.execute(
-      sql`SELECT mutation_id FROM sync_mutations`,
-    )) as { rows?: unknown[] } | unknown[];
+    const mutations = (await database.execute(sql`SELECT mutation_id FROM sync_mutations`)) as
+      | { rows?: unknown[] }
+      | unknown[];
     const mutRows = Array.isArray(mutations) ? mutations : mutations.rows!;
     expect(mutRows).toHaveLength(1);
 
     // Assert only one new sync_events row exists
-    const events = (await database.execute(
-      sql`SELECT id FROM sync_events`,
-    )) as { rows?: unknown[] } | unknown[];
+    const events = (await database.execute(sql`SELECT id FROM sync_events`)) as
+      | { rows?: unknown[] }
+      | unknown[];
     const evRows = Array.isArray(events) ? events : events.rows!;
     expect(evRows).toHaveLength(1);
   });
@@ -397,5 +401,64 @@ describe("/api/sync server protocol and operations", () => {
       }),
     ).rejects.toThrow(/not found/i);
   });
-});
 
+  it("returns idempotent receipt when dataset.begin retries an already ready matching dataset", async () => {
+    const dsMutationId = "00000000-0000-4000-8000-000000000050";
+    const dsMeta = metadata("idempotent-ds");
+
+    await syncServer({
+      operation: "dataset.begin",
+      deviceId: "device-1",
+      mutationId: dsMutationId,
+      metadata: dsMeta,
+    });
+    await syncServer({
+      operation: "dataset.chunks",
+      deviceId: "device-1",
+      mutationId: dsMutationId,
+      chunks: [
+        {
+          index: 0,
+          entries: [
+            {
+              id: "1",
+              originalIndex: 1,
+              word: "花",
+              normalizedWord: "花",
+              occurrences: 1,
+              sentenceRaw: "",
+              hasSentence: false,
+              definitions: "",
+              furiganaRuns: [],
+            },
+          ],
+        },
+      ],
+    });
+    const finishResult = (await syncServer({
+      operation: "dataset.finish",
+      deviceId: "device-1",
+      mutationId: dsMutationId,
+      chunkCount: 1,
+    })) as { acceptedMutationIds: string[]; headEventId: number };
+
+    expect(finishResult.acceptedMutationIds).toContain(dsMutationId);
+
+    // Retry dataset.begin with same metadata (simulating retry after lost finish response)
+    const retryResult = (await syncServer({
+      operation: "dataset.begin",
+      deviceId: "device-1",
+      mutationId: dsMutationId,
+      metadata: dsMeta,
+    })) as {
+      uploadId: string;
+      alreadyReady?: boolean;
+      receipt?: SyncPushReceipt;
+    };
+
+    expect(retryResult.alreadyReady).toBe(true);
+    expect(retryResult.uploadId).toBe(dsMutationId);
+    expect(retryResult.receipt).toBeDefined();
+    expect(retryResult.receipt?.acceptedMutationIds).toContain(dsMutationId);
+  });
+});
