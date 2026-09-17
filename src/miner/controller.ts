@@ -59,6 +59,8 @@ export interface MinerControllerOptions {
   ankiConnectFactory?: () => AnkiConnectPort;
   performanceNow?: () => number;
   onImportTiming?: (event: ImportTimingEvent) => void;
+  initialViewportStart?: number;
+  prepareDataset?: (datasetId: string) => Promise<void>;
 }
 
 function defaultId(kind: "dataset" | "known"): string {
@@ -131,6 +133,7 @@ class MinerControllerImpl implements MinerController {
   private readonly ankiSyncService: AnkiSyncService;
   private readonly performanceNow: () => number;
   private readonly onImportTiming: ((event: ImportTimingEvent) => void) | undefined;
+  private readonly prepareDataset: ((datasetId: string) => Promise<void>) | undefined;
   private activeKnownId: string | null = null;
 
   constructor(options: MinerControllerOptions) {
@@ -151,6 +154,8 @@ class MinerControllerImpl implements MinerController {
           ? performance.now()
           : Date.now());
     this.onImportTiming = options.onImportTiming;
+    this.prepareDataset = options.prepareDataset;
+    this.viewportStart = options.initialViewportStart ?? 0;
     this.state = createInitialAppState(
       options.persistence ?? (this.storeWasProvided ? "memory" : "indexeddb"),
     );
@@ -803,27 +808,21 @@ class MinerControllerImpl implements MinerController {
       if (migration.warning !== null) this.setWarning(migration.warning);
     }
 
-    let active: DatasetMetadata | null;
-    let known: { id: string; name: string; words: Set<string> } | null;
-    let decisions: WordDecision[];
-    let preferences: { query: QueryState; view: ViewState; page: number } | null;
-    let datasetLibrary: DatasetMetadata[];
+    let stateSnapshot: {
+      active: DatasetMetadata | null;
+      known: { id: string; name: string; words: Set<string> } | null;
+      decisions: WordDecision[];
+      preferences: { query: QueryState; view: ViewState; page: number } | null;
+      datasetLibrary: DatasetMetadata[];
+    };
     try {
-      [active, known, decisions, preferences, datasetLibrary] = await this.storageOperation(
-        (store) =>
-          Promise.all([
-            store.datasets.getActive(),
-            store.knownWords.getActive(),
-            store.wordDecisions.list(),
-            store.preferences.load(),
-            store.datasets.list(),
-          ]),
-      );
-      await this.ankiSyncService.initialize();
+      stateSnapshot = await this.readPersistedState();
     } catch (error) {
       this.setState({ status: "error", errorMessage: errorMessage(error) });
       return;
     }
+
+    const { active, known, decisions, preferences, datasetLibrary } = stateSnapshot;
 
     if (known !== null) {
       this.activeKnownId = known.id;
@@ -848,6 +847,9 @@ class MinerControllerImpl implements MinerController {
     }
     this.state.dataset = active;
     this.state.datasetLibrary = datasetLibrary;
+    if (active !== null && this.sessionQueue.loadForDataset) {
+      await this.sessionQueue.loadForDataset(active.id);
+    }
     this.queueService.restoreSnapshot(active);
     this.publish();
 
@@ -859,6 +861,94 @@ class MinerControllerImpl implements MinerController {
 
     this.setState({ status: "loading", errorMessage: this.warningMessage });
     await this.loadAndQuery(active.id, active.entryCount);
+  }
+
+  async refreshFromStorage(): Promise<void> {
+    return this.withUserStateLock(async () => {
+      let stateSnapshot: {
+        active: DatasetMetadata | null;
+        known: { id: string; name: string; words: Set<string> } | null;
+        decisions: WordDecision[];
+        preferences: { query: QueryState; view: ViewState; page: number } | null;
+        datasetLibrary: DatasetMetadata[];
+      };
+      try {
+        stateSnapshot = await this.readPersistedState();
+      } catch (error) {
+        this.setState({ status: "error", errorMessage: errorMessage(error) });
+        return;
+      }
+
+      const { active, known, decisions, preferences, datasetLibrary } = stateSnapshot;
+      const prevActiveId = this.state.dataset?.id ?? null;
+      const activeChanged = active?.id !== prevActiveId;
+
+      if (known !== null) {
+        this.activeKnownId = known.id;
+        this.state.knownWords = new Set(known.words);
+        this.state.knownWordsName = known.name;
+      } else {
+        this.activeKnownId = null;
+      }
+
+      this.state.wordDecisions = new Map(
+        decisions.map((decision) => [decision.normalizedWord, decision]),
+      );
+
+      if (preferences !== null) {
+        this.state.query = {
+          ...DEFAULT_QUERY,
+          ...preferences.query,
+          page: preferences.page,
+        };
+        this.state.view = { ...DEFAULT_VIEW, ...preferences.view };
+      }
+
+      this.state.dataset = active;
+      this.state.datasetLibrary = datasetLibrary;
+
+      if (active !== null && this.sessionQueue.loadForDataset) {
+        await this.sessionQueue.loadForDataset(active.id);
+      }
+      this.queueService.restoreSnapshot(active);
+      this.publish();
+
+      if (active === null) {
+        this.setState({ status: "empty", errorMessage: this.warningMessage });
+        return;
+      }
+
+      if (activeChanged) {
+        this.setState({ status: "loading", errorMessage: this.warningMessage });
+        await this.loadAndQuery(active.id, active.entryCount, { callerHoldsUserStateLock: true });
+      } else {
+        this.userStateEpoch += 1;
+        this.queryGeneration += 1;
+        await this.runQuery({ callerHoldsUserStateLock: true });
+        await this.requestCoverage();
+      }
+    });
+  }
+
+  private async readPersistedState(): Promise<{
+    active: DatasetMetadata | null;
+    known: { id: string; name: string; words: Set<string> } | null;
+    decisions: WordDecision[];
+    preferences: { query: QueryState; view: ViewState; page: number } | null;
+    datasetLibrary: DatasetMetadata[];
+  }> {
+    const [active, known, decisions, preferences, datasetLibrary] = await this.storageOperation(
+      (store) =>
+        Promise.all([
+          store.datasets.getActive(),
+          store.knownWords.getActive(),
+          store.wordDecisions.list(),
+          store.preferences.load(),
+          store.datasets.list(),
+        ]),
+    );
+    await this.ankiSyncService.initialize();
+    return { active, known, decisions, preferences, datasetLibrary };
   }
 
   private async ensureStorage(): Promise<void> {
@@ -1052,6 +1142,9 @@ class MinerControllerImpl implements MinerController {
     options: { callerHoldsUserStateLock?: boolean } = {},
   ): Promise<void> {
     try {
+      if (this.prepareDataset) {
+        await this.prepareDataset(datasetId);
+      }
       const loaded = await this.readDatasetChunks(datasetId);
       if (loaded.entryCount !== expectedEntryCount) {
         throw new Error(
