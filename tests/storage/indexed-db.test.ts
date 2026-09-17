@@ -883,3 +883,40 @@ describe("readChunks dataset bounds", () => {
     }
   });
 });
+
+describe("IndexedDbAppStore outbox recording option", () => {
+  afterEach(async () => {
+    await deleteDatabase(databaseName);
+  });
+
+  it("records outbox items when recordSyncMutations is enabled", async () => {
+    const store = createIndexedDbAppStore({
+      databaseName,
+      recordSyncMutations: true,
+    });
+
+    await store.wordDecisions.set({
+      normalizedWord: "猫",
+      status: "known",
+      updatedAt: "2026-09-17T00:00:00.000Z",
+    });
+
+    const database = await openRawDatabase(databaseName);
+    try {
+      const tx = database.transaction(["syncOutbox"], "readonly");
+      const outbox = await new Promise<any[]>((resolve, reject) => {
+        const req = tx.objectStore("syncOutbox").getAll();
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+      expect(outbox).toHaveLength(1);
+      expect(outbox[0]).toMatchObject({
+        dedupeKey: "decision:猫",
+        kind: "decision.set",
+        resourceId: "猫",
+      });
+    } finally {
+      database.close();
+    }
+  });
+});

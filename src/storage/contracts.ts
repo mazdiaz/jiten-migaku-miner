@@ -13,6 +13,15 @@ export interface DatasetMetadata {
   schemaVersion: number;
 }
 
+export class DatasetNotCachedError extends Error {
+  readonly datasetId: string;
+  constructor(datasetId: string) {
+    super(`Dataset is not cached locally: ${datasetId}`);
+    this.name = "DatasetNotCachedError";
+    this.datasetId = datasetId;
+  }
+}
+
 export interface DatasetStore {
   stage(metadata: DatasetMetadata, chunks: AsyncIterable<readonly Entry[]>): Promise<void>;
   activate(datasetId: string): Promise<void>;
@@ -20,6 +29,8 @@ export interface DatasetStore {
   list(): Promise<DatasetMetadata[]>;
   readChunks(datasetId: string, chunkSize: number): AsyncIterable<Entry[]>;
   remove(datasetId: string): Promise<void>;
+  cacheState?(datasetId: string): Promise<"metadata-only" | "ready" | null>;
+  upsertMetadata?(metadata: DatasetMetadata): Promise<void>;
 }
 
 export interface KnownWordsSaveReceipt {
