@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { encode } from "next-auth/jwt";
 import { TEST_SECRET } from "../support/environment";
 import { expect, test } from "./fixtures";
@@ -93,4 +94,47 @@ test("queue and dataset are available in a fresh browser session", async ({
   } finally {
     await second.close();
   }
+});
+
+test("forces IndexedDB open failure and falls back to server-first remote store", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    delete (window as any).indexedDB;
+  });
+  await page.goto("/");
+  await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
+
+  await page.locator("#jitenInput").setInputFiles("tests/fixtures/jiten-small.csv");
+  await expect(page.locator(".mining-entry")).toHaveCount(3);
+  await page.locator("[data-decision-action='known']").first().click();
+  await expect(page.locator(".cloud-status")).toHaveText("Saved to PostgreSQL");
+
+  const downloadPromise = page.waitForEvent("download");
+  await page.locator("#exportBackup").click();
+  const download = await downloadPromise;
+  const backup = JSON.parse(readFileSync(await download.path()!, "utf-8")) as {
+    decisions: Array<{ status: string }>;
+  };
+  expect(backup.decisions.length).toBeGreaterThan(0);
+});
+
+test("forces cloud clear failure and keeps local cached data intact", async ({ page }) => {
+  page.on("dialog", (dialog) => dialog.accept());
+  await page.goto("/");
+  await page.locator("#jitenInput").setInputFiles("tests/fixtures/jiten-small.csv");
+  await expect(page.locator(".mining-entry")).toHaveCount(3);
+
+  await page.route("**/api/store", (route) => {
+    const postData = route.request().postDataJSON();
+    if (postData?.operation === "clearAll") {
+      return route.abort();
+    }
+    return route.continue();
+  });
+
+  await page.locator("#clearData").click();
+
+  await page.reload();
+  await expect(page.locator(".mining-entry")).toHaveCount(3);
 });

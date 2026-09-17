@@ -406,10 +406,18 @@ export function mountStudy(onStatus: (status: CloudStatus) => void) {
       },
     });
 
-    const originalExportBackup = controller.exportBackup.bind(controller);
     controller.exportBackup = async () => {
-      await engine.flush().catch(() => {});
-      return originalExportBackup();
+      try {
+        await engine.flush();
+        const pendingOutbox = await localSyncStore.listOutbox(1);
+        if (pendingOutbox.length > 0) {
+          throw new Error("Pending changes could not be synced.");
+        }
+      } catch {
+        throw new Error("Backup requires cloud sync; changes remain saved locally.");
+      }
+      const cloudStore = createRemoteAppStore();
+      return cloudStore.exportCompleteBackup();
     };
 
     const restoreLegacy = controller.restoreBackup.bind(controller);
@@ -438,9 +446,14 @@ export function mountStudy(onStatus: (status: CloudStatus) => void) {
         ready = false;
         pauseInteractions();
         activeStatusUpdater();
-        const remoteStore = createRemoteAppStore();
-        await remoteStore.restoreCompleteBackup(text);
+        const cloudStore = createRemoteAppStore();
+        await cloudStore.restoreCompleteBackup(text);
         await localSyncStore.clearLocalData();
+        await bootstrapLocalCache({
+          cloud,
+          remoteApplyStore,
+          localSyncStore,
+        });
         window.location.assign("/?restored=1");
       } catch (error) {
         const box = document.getElementById("errorBox");
@@ -452,6 +465,13 @@ export function mountStudy(onStatus: (status: CloudStatus) => void) {
           fail(new Error("Restore could not be confirmed. Reload to check your saved data."));
         throw error;
       }
+    };
+
+    controller.clearSavedData = async () => {
+      const cloudStore = createRemoteAppStore();
+      await cloudStore.clearAll();
+      await localSyncStore.clearLocalData();
+      window.location.reload();
     };
 
     const dom = getDomMap();
