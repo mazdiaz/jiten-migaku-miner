@@ -28,11 +28,11 @@ export interface StoreDatabase {
   transaction<T>(callback: (transaction: StoreDatabase) => Promise<T>): Promise<T>;
 }
 type Row = Record<string, unknown>;
-async function rows<T extends Row = Row>(database: StoreDatabase, query: SQL): Promise<T[]> {
+export async function rows<T extends Row = Row>(database: StoreDatabase, query: SQL): Promise<T[]> {
   const result = await database.execute(query);
   return (Array.isArray(result) ? result : (result as { rows: T[] }).rows) as T[];
 }
-const json = (value: unknown) => sql`${JSON.stringify(value)}::jsonb`;
+export const json = (value: unknown) => sql`${JSON.stringify(value)}::jsonb`;
 const conflict = () =>
   new StoreError(
     "Data changed in another tab. Reload before saving or reading again.",
@@ -41,7 +41,7 @@ const conflict = () =>
   );
 const notFound = (name: string) =>
   new StoreError(`${name} not found or not ready`, 404, "NOT_FOUND");
-type StateRow = Row & {
+export type StateRow = Row & {
   revision: string | number;
   active_dataset_id: string | null;
   known_metadata: { id: string; name: string } | null;
@@ -71,7 +71,7 @@ export async function recordSyncEvent(
   return Number(inserted[0]!.id);
 }
 
-function parse<T>(schema: z.ZodType<T>, value: unknown): T {
+export function parse<T>(schema: z.ZodType<T>, value: unknown): T {
   const result = schema.safeParse(value);
   if (!result.success)
     throw new StoreError(
@@ -79,7 +79,7 @@ function parse<T>(schema: z.ZodType<T>, value: unknown): T {
     );
   return result.data;
 }
-function page<T>(
+export function page<T>(
   items: T[],
   cursor: number,
   moreAvailable: boolean,
@@ -99,7 +99,7 @@ function page<T>(
     nextCursor: moreAvailable || length < items.length ? cursor + length : null,
   };
 }
-async function batch<T>(values: readonly T[], apply: (chunk: readonly T[]) => Promise<unknown>) {
+export async function batch<T>(values: readonly T[], apply: (chunk: readonly T[]) => Promise<unknown>) {
   for (let index = 0; index < values.length; index += 500)
     await apply(values.slice(index, index + 500));
 }
@@ -132,7 +132,7 @@ async function saveDatasetChunks(
 }
 export const KNOWN_WORD_INSERT_BATCH_SIZE = 5_000;
 
-async function replaceKnown(
+export async function replaceKnown(
   database: StoreDatabase,
   value: z.infer<typeof knownSchema> | null,
 ): Promise<{ id: string; name: string; wordCount: number } | null> {
@@ -156,7 +156,7 @@ async function replaceKnown(
   }
   return null;
 }
-async function replaceDecisions(database: StoreDatabase, values: z.infer<typeof decisionSchema>[]) {
+export async function replaceDecisions(database: StoreDatabase, values: z.infer<typeof decisionSchema>[]) {
   assertUnique(
     values.map((value) => value.normalizedWord),
     "word decision",
@@ -168,7 +168,7 @@ async function replaceDecisions(database: StoreDatabase, values: z.infer<typeof 
     ),
   );
 }
-async function replaceSnapshot(
+export async function replaceSnapshot(
   database: StoreDatabase,
   value: z.infer<typeof snapshotSchema> | null,
 ) {
@@ -188,7 +188,7 @@ async function replaceSnapshot(
       ),
     );
 }
-async function replaceQueue(
+export async function replaceQueue(
   database: StoreDatabase,
   value: z.infer<typeof queueSchema> | null,
   activeId: string | null,
@@ -218,7 +218,7 @@ async function restoreUser(database: StoreDatabase, value: z.infer<typeof userSt
   );
   await replaceSnapshot(database, value.ankiSync?.snapshot ?? null);
 }
-async function clearAll(database: StoreDatabase) {
+export async function clearAll(database: StoreDatabase) {
   await database.execute(sql`DELETE FROM datasets`);
   await database.execute(sql`DELETE FROM known_words`);
   await database.execute(sql`DELETE FROM word_decisions`);
