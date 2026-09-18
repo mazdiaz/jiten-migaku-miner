@@ -139,6 +139,42 @@ test("CSV import stays usable while sync is unavailable", async ({ page }) => {
   await expect(page.locator(".cloud-status")).toHaveText("Synced");
 });
 
+test("a sync 503 during CSV import keeps the dataset usable across reload", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator(".cloud-status")).toHaveText(/^(Synced|Saved locally)\s*$/);
+
+  let syncFailures = 0;
+  await page.route("**/api/sync*", async (route) => {
+    syncFailures += 1;
+    await route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({
+        error: "Database sync operation could not be confirmed. Try again later.",
+      }),
+    });
+  });
+
+  await page.locator("#jitenInput").setInputFiles("tests/fixtures/jiten-small.csv");
+  await expect(page.locator(".mining-entry")).toHaveCount(3);
+  await expect(page.locator("#reviewButton")).toBeEnabled();
+  await expect.poll(() => syncFailures).toBeGreaterThan(0);
+  await expect(page.locator(".cloud-status")).toHaveText(
+    "Sync error · changes remain on this device",
+  );
+
+  await page.reload();
+  await expect(page.locator(".mining-entry")).toHaveCount(3);
+  await expect(page.locator("#reviewButton")).toBeEnabled();
+  await expect(page.locator(".cloud-status")).toHaveText(
+    "Sync error · changes remain on this device",
+  );
+
+  await page.unroute("**/api/sync*");
+  await page.evaluate(() => window.dispatchEvent(new Event("online")));
+  await expect(page.locator(".cloud-status")).toHaveText("Synced");
+});
+
 test("a sync 503 keeps local decisions durable across reload", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator(".cloud-status")).toHaveText(/^(Synced|Saved locally)\s*$/);
