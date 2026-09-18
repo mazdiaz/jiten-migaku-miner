@@ -2258,6 +2258,5 @@ describe("Task 6: Push-first/pull-second SyncEngine", () => {
 
       indexedDB.deleteDatabase(dbName);
     });
-
   });
 });
