@@ -7,6 +7,7 @@ export interface MigrationFile {
   name: string;
   source: string;
   checksum: string;
+  acceptedChecksums: string[];
 }
 
 export interface AppliedMigration {
@@ -28,6 +29,12 @@ export function migrationChecksum(source: string): string {
   return createHash("sha256").update(source).digest("hex");
 }
 
+export function migrationCompatibleChecksums(source: string): string[] {
+  const lfSource = source.replace(/\r\n?/g, "\n");
+  const crlfSource = lfSource.replaceAll("\n", "\r\n");
+  return [...new Set([migrationChecksum(lfSource), migrationChecksum(crlfSource)])];
+}
+
 export async function loadMigrations(
   directory: URL = new URL("../../../migrations/", import.meta.url),
 ): Promise<MigrationFile[]> {
@@ -38,13 +45,22 @@ export async function loadMigrations(
   return Promise.all(
     names.map(async (name) => {
       const source = await readFile(new URL(name, directory), "utf8");
-      return { name, source, checksum: migrationChecksum(source) };
+      const normalizedSource = source.replace(/\r\n?/g, "\n");
+      const acceptedChecksums = migrationCompatibleChecksums(source);
+      return {
+        name,
+        source: normalizedSource,
+        checksum: migrationChecksum(normalizedSource),
+        acceptedChecksums,
+      };
     }),
   );
 }
 
 export function verifyMigrationLedger(
-  expected: readonly Pick<MigrationFile, "name" | "checksum">[],
+  expected: readonly (Pick<MigrationFile, "name" | "checksum"> & {
+    acceptedChecksums?: readonly string[];
+  })[],
   applied: readonly AppliedMigration[],
 ): MigrationVerification {
   const appliedByName = new Map(applied.map((migration) => [migration.name, migration.checksum]));
@@ -56,7 +72,10 @@ export function verifyMigrationLedger(
     const actual = appliedByName.get(migration.name);
     if (actual === undefined) {
       missing.push(migration.name);
-    } else if (actual !== migration.checksum) {
+    } else if (
+      actual !== migration.checksum &&
+      !migration.acceptedChecksums?.includes(actual)
+    ) {
       checksumMismatches.push({
         name: migration.name,
         expected: migration.checksum,
