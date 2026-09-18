@@ -1,0 +1,3 @@
+{
+  "buildCommand": "npm run db:verify && npm run build"
+}

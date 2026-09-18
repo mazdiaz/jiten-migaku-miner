@@ -19,6 +19,7 @@
     "check": "npm run typecheck && npm test && npm run build",
     "start": "next start --hostname 127.0.0.1 --port 8920",
     "db:migrate": "tsx --env-file-if-exists=.env.local scripts/db-migrate.ts",
+    "db:verify": "tsx --env-file-if-exists=.env.local scripts/db-verify.ts",
     "db:cleanup": "tsx --env-file-if-exists=.env.local scripts/db-cleanup.ts",
     "test:db": "vitest run tests/server"
   },

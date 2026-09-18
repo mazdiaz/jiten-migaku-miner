@@ -62,6 +62,7 @@ export interface BootstrapLocalCacheOptions {
   localAppStore?: AppStore | undefined;
   now?: (() => string) | undefined;
   writeBarrier?: LocalWriteBarrier | undefined;
+  isCancelled?: (() => boolean) | undefined;
 }
 
 export async function bootstrapLocalCache(
@@ -83,6 +84,8 @@ export async function bootstrapLocalCache(
   const { cloud, remoteApplyStore, localSyncStore } = options;
   const readerStore = options.localAppStore ?? remoteApplyStore;
   const now = options.now ?? (() => new Date().toISOString());
+  const isCancelled = options.isCancelled ?? (() => false);
+  if (isCancelled()) return;
 
   // Fetch canonical cloud state before taking the local reconciliation lock.
   // Local-first writes should remain available while the network is slow.
@@ -92,8 +95,10 @@ export async function bootstrapLocalCache(
   const preferences = await cloud.readPreferences();
   const queues = await cloud.readQueues();
   const anki = await cloud.readAnki();
+  if (isCancelled()) return;
 
   const performReconcile = async (): Promise<void> => {
+    if (isCancelled()) return;
     // Snapshot every pending mutation only after the reconciliation barrier is acquired.
     // Using the complete ordered outbox is required because a bulk restore can legitimately
     // produce more than the normal 100/1000-row sync batches.
@@ -119,6 +124,8 @@ export async function bootstrapLocalCache(
         }
       }
     }
+
+    if (isCancelled()) return;
 
     // Preserve the canonical active dataset when it is already cached. Datasets are
     // immutable after commit, so keeping the ready payload avoids a needless cloud
@@ -311,6 +318,7 @@ export async function bootstrapLocalCache(
     });
   };
 
+  if (isCancelled()) return;
   if (options.writeBarrier) {
     await options.writeBarrier.runReconcile(performReconcile);
     return;
