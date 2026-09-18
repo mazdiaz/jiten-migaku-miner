@@ -11,7 +11,11 @@ try {
     for (const migration of migrations) {
       const previous = await tx`SELECT checksum FROM miner_migrations WHERE name = ${migration.name}`;
       if (previous.length) {
-        if (previous[0]?.checksum !== migration.checksum)
+        const previousChecksum = previous[0]?.checksum;
+        if (
+          previousChecksum !== migration.checksum &&
+          !migration.acceptedChecksums.includes(previousChecksum ?? "")
+        )
           throw new Error(
             `Previously applied migration changed: ${migration.name}. Restore it and add a new migration.`,
           );
