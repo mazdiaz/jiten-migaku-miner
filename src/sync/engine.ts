@@ -97,6 +97,34 @@ export async function bootstrapLocalCache(
   const anki = await cloud.readAnki();
   if (isCancelled()) return;
 
+  let prefetchedActiveDataset:
+    | { canonicalId: string; temporaryId: string; metadata: Awaited<ReturnType<AppStore["datasets"]["list"]>>[number] }
+    | null = null;
+
+  if (manifest.activeDatasetId) {
+    const canonicalId = manifest.activeDatasetId;
+    const cacheState = await readerStore.datasets.cacheState?.(canonicalId);
+    if (cacheState !== "ready") {
+      const metadata = manifest.datasets.find((dataset) => dataset.id === canonicalId);
+      if (metadata) {
+        const temporaryId = `__bootstrap_prefetch__:${canonicalId}`;
+        await remoteApplyStore.datasets.remove(temporaryId);
+        await remoteApplyStore.datasets.stage(
+          { ...metadata, id: temporaryId },
+          cloud.readDataset(canonicalId, 2_000),
+        );
+        prefetchedActiveDataset = { canonicalId, temporaryId, metadata };
+      }
+    }
+  }
+
+  if (isCancelled()) {
+    if (prefetchedActiveDataset) {
+      await remoteApplyStore.datasets.remove(prefetchedActiveDataset.temporaryId);
+    }
+    return;
+  }
+
   const performReconcile = async (): Promise<void> => {
     if (isCancelled()) return;
     // Snapshot every pending mutation only after the reconciliation barrier is acquired.
@@ -135,6 +163,9 @@ export async function bootstrapLocalCache(
       (await readerStore.datasets.cacheState?.(manifest.activeDatasetId)) === "ready"
     ) {
       preserveDatasetIds.add(manifest.activeDatasetId);
+    }
+    if (prefetchedActiveDataset) {
+      preserveDatasetIds.add(prefetchedActiveDataset.temporaryId);
     }
 
     let hasPendingKnown = false;
@@ -235,8 +266,23 @@ export async function bootstrapLocalCache(
     }
 
     if (manifest.activeDatasetId) {
-      await ensureDatasetCached(manifest.activeDatasetId, cloud, remoteApplyStore);
-      await remoteApplyStore.datasets.activate(manifest.activeDatasetId);
+      const activeId = manifest.activeDatasetId;
+      const activeState = await remoteApplyStore.datasets.cacheState?.(activeId);
+      if (
+        activeState !== "ready" &&
+        prefetchedActiveDataset?.canonicalId === activeId
+      ) {
+        await remoteApplyStore.datasets.stage(
+          prefetchedActiveDataset.metadata,
+          remoteApplyStore.datasets.readChunks(prefetchedActiveDataset.temporaryId, 2_000),
+        );
+      }
+      if (prefetchedActiveDataset) {
+        await remoteApplyStore.datasets.remove(prefetchedActiveDataset.temporaryId);
+        prefetchedActiveDataset = null;
+      }
+      await ensureDatasetCached(activeId, cloud, remoteApplyStore);
+      await remoteApplyStore.datasets.activate(activeId);
     }
 
     // Re-apply pending local intent on top of the canonical snapshot.
