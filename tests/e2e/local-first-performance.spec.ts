@@ -26,8 +26,10 @@ test("warm-start renders cached vocabulary within 500ms while cloud sync is bloc
   const syncBlocked = new Promise<void>((resolve) => {
     unblockSync = resolve;
   });
+  let syncRequestSeen = false;
 
   await page.route("**/api/sync*", async (route) => {
+    syncRequestSeen = true;
     await syncBlocked;
     await route.continue();
   });
@@ -53,6 +55,9 @@ test("warm-start renders cached vocabulary within 500ms while cloud sync is bloc
   const firstQueryReady = timing?.find((t) => t.stage === "first_query_ready");
   expect(firstQueryReady).toBeDefined();
   expect(firstQueryReady!.durationMs).toBeLessThan(500);
+
+  // Prove cloud sync has actually started and is still blocked while cached study data is usable.
+  await expect.poll(() => syncRequestSeen, { timeout: 2_000 }).toBe(true);
 
   // Unblock sync route gate so background sync finishes cleanly
   unblockSync();
