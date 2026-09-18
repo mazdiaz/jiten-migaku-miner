@@ -190,7 +190,7 @@ export function createPostgresSyncServer(database: StoreDatabase) {
             changes.push({
               id,
               kind: "preferences.replace",
-              value: stateRow?.preferences as PreferencesValue,
+              value: (stateRow?.preferences as PreferencesValue | null) ?? null,
             });
           } else if (event.resource === "dataset") {
             if (event.action === "upsert") {
@@ -286,7 +286,9 @@ export function createPostgresSyncServer(database: StoreDatabase) {
               }
               case "preferences.replace": {
                 await transaction.execute(
-                  sql`UPDATE app_state SET preferences = ${json(mutation.value)} WHERE id = 1`,
+                  mutation.value === null
+                    ? sql`UPDATE app_state SET preferences = NULL WHERE id = 1`
+                    : sql`UPDATE app_state SET preferences = ${json(mutation.value)} WHERE id = 1`,
                 );
                 syncEvent = {
                   resource: "preferences",

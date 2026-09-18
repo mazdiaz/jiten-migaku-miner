@@ -4,6 +4,7 @@ import type { Entry, QueryState, ViewState, WordDecision } from "../../src/domai
 import { type DatasetMetadata, DatasetNotCachedError } from "../../src/storage/contracts";
 import { createIndexedDbAppStore } from "../../src/storage/indexed-db";
 import { createLocalSyncStore } from "../../src/storage/local-sync";
+import { createLocalWriteBarrier } from "../../src/storage/local-write-barrier";
 import { RemoteStoreError } from "../../src/storage/remote-store";
 import { createCloudSyncClient } from "../../src/sync/cloud-client";
 import type {
@@ -1454,5 +1455,478 @@ describe("Task 6: Push-first/pull-second SyncEngine", () => {
     expect(metaAfter2.deviceId).toBe(originalDeviceId);
 
     indexedDB.deleteDatabase(dbName);
+  });
+
+  it("materializes and pushes preferences.replace with value: null when local preferences are cleared", async () => {
+    const dbName = `engine-pref-clear-${crypto.randomUUID()}`;
+    const localSyncStore = createLocalSyncStore(dbName);
+    const localAppStore = createIndexedDbAppStore({
+      databaseName: dbName,
+      recordSyncMutations: true,
+    });
+    const remoteApplyStore = createIndexedDbAppStore({
+      databaseName: dbName,
+      recordSyncMutations: false,
+    });
+
+    let pushedMutations: any[] = [];
+    const fakeCloud: CloudSyncPort = {
+      async bootstrap() {
+        return { eventId: 1, activeDatasetId: null, datasets: [] };
+      },
+      async readKnownWords() {
+        return null;
+      },
+      async readDecisions() {
+        return [];
+      },
+      async readPreferences() {
+        return null;
+      },
+      async readQueues() {
+        return [];
+      },
+      async readAnki() {
+        return { config: null, snapshot: null };
+      },
+      async pull() {
+        return { changes: [], nextEventId: 1 };
+      },
+      async push(_deviceId, mutations) {
+        pushedMutations = [...mutations];
+        return {
+          accepted: mutations.map((m) => ({ mutationId: m.mutationId, eventId: 2 })),
+          acceptedMutationIds: mutations.map((m) => m.mutationId),
+        };
+      },
+      async uploadDataset() {
+        return { accepted: [], acceptedMutationIds: [] };
+      },
+      async *readDataset() {},
+    };
+
+    const engine = createSyncEngine({
+      cloud: fakeCloud,
+      localAppStore,
+      remoteApplyStore,
+      localSyncStore,
+    });
+
+    // Save preferences locally first
+    await localAppStore.preferences.save({
+      page: 2,
+      query: { ...defaultQuery, hideKnown: true },
+      view: defaultView,
+    });
+
+    // Clear preferences locally - this writes a preferences.replace outbox record with null in store
+    await localAppStore.preferences.clear?.();
+
+    await engine.flush();
+
+    expect(pushedMutations).toHaveLength(1);
+    expect(pushedMutations[0]).toMatchObject({
+      kind: "preferences.replace",
+      value: null,
+    });
+
+    const pending = await localSyncStore.listOutbox(10);
+    expect(pending).toHaveLength(0);
+
+    engine.dispose();
+    indexedDB.deleteDatabase(dbName);
+  });
+
+  it("applies remote preferences.replace with value: null by clearing local preferences", async () => {
+    const dbName = `engine-pref-pull-null-${crypto.randomUUID()}`;
+    const localSyncStore = createLocalSyncStore(dbName);
+    const localAppStore = createIndexedDbAppStore({
+      databaseName: dbName,
+      recordSyncMutations: true,
+    });
+    const remoteApplyStore = createIndexedDbAppStore({
+      databaseName: dbName,
+      recordSyncMutations: false,
+    });
+
+    // Set initial local preferences
+    await remoteApplyStore.preferences.save({
+      page: 3,
+      query: { ...defaultQuery, hideKnown: true },
+      view: defaultView,
+    });
+
+    expect(await localAppStore.preferences.load()).not.toBeNull();
+
+    const fakeCloud: CloudSyncPort = {
+      async bootstrap() {
+        return { eventId: 1, activeDatasetId: null, datasets: [] };
+      },
+      async readKnownWords() {
+        return null;
+      },
+      async readDecisions() {
+        return [];
+      },
+      async readPreferences() {
+        return null;
+      },
+      async readQueues() {
+        return [];
+      },
+      async readAnki() {
+        return { config: null, snapshot: null };
+      },
+      async pull(afterEventId) {
+        if (afterEventId < 2) {
+          return {
+            changes: [
+              {
+                id: 2,
+                kind: "preferences.replace",
+                value: null,
+              },
+            ],
+            nextEventId: 2,
+          };
+        }
+        return { changes: [], nextEventId: 2 };
+      },
+      async push() {
+        return { accepted: [], acceptedMutationIds: [] };
+      },
+      async uploadDataset() {
+        return { accepted: [], acceptedMutationIds: [] };
+      },
+      async *readDataset() {},
+    };
+
+    const engine = createSyncEngine({
+      cloud: fakeCloud,
+      localAppStore,
+      remoteApplyStore,
+      localSyncStore,
+    });
+
+    await engine.syncNow();
+
+    expect(await localAppStore.preferences.load()).toBeNull();
+
+    // Ensure no outbox mutation was recorded during remote apply
+    const pending = await localSyncStore.listOutbox(10);
+    expect(pending).toHaveLength(0);
+
+    engine.dispose();
+    indexedDB.deleteDatabase(dbName);
+  });
+
+  describe("Item 1: Local write barrier and full reset replay", () => {
+    it("bootstrapLocalCache preserves dataset.upload chunks if staged in outbox", async () => {
+      const dbName = `test-preserve-${crypto.randomUUID()}`;
+      const localSyncStore = createLocalSyncStore(dbName);
+      const remoteApplyStore = createIndexedDbAppStore({
+        databaseName: dbName,
+        recordSyncMutations: false,
+      });
+      const localAppStore = createIndexedDbAppStore({
+        databaseName: dbName,
+        recordSyncMutations: true,
+      });
+
+      const stagedDatasetId = "staged-ds-1";
+      async function* singleChunk() {
+        yield [sampleEntry("1", "猫")];
+      }
+      await localAppStore.datasets.stage(sampleMetadata(stagedDatasetId, 1), singleChunk());
+
+      const fakeCloud: CloudSyncPort = {
+        async bootstrap() {
+          return { eventId: 1, activeDatasetId: null, datasets: [] };
+        },
+        async readKnownWords() {
+          return null;
+        },
+        async readDecisions() {
+          return [];
+        },
+        async readPreferences() {
+          return null;
+        },
+        async readQueues() {
+          return [];
+        },
+        async readAnki() {
+          return { config: null, snapshot: null };
+        },
+        async pull() {
+          return { changes: [], nextEventId: 1 };
+        },
+        async push() {
+          return { accepted: [], acceptedMutationIds: [] };
+        },
+        async uploadDataset() {
+          return { accepted: [], acceptedMutationIds: [] };
+        },
+        async *readDataset() {},
+      };
+
+      await bootstrapLocalCache({
+        cloud: fakeCloud,
+        remoteApplyStore,
+        localSyncStore,
+        localAppStore,
+      });
+
+      // The staged dataset chunk should still be preserved
+      const readEntries: Entry[] = [];
+      for await (const chunk of remoteApplyStore.datasets.readChunks(stagedDatasetId, 100)) {
+        readEntries.push(...chunk);
+      }
+      expect(readEntries).toHaveLength(1);
+      expect(readEntries[0]?.word).toBe("猫");
+
+      const outbox = await localSyncStore.listOutbox(10);
+      expect(outbox).toHaveLength(1);
+      expect(outbox[0]?.kind).toBe("dataset.upload");
+
+      indexedDB.deleteDatabase(dbName);
+    });
+
+    it("writeBarrier serializes concurrent local writes against bootstrapLocalCache reconcile", async () => {
+      const dbName = `test-barrier-${crypto.randomUUID()}`;
+      const writeBarrier = createLocalWriteBarrier();
+      const localSyncStore = createLocalSyncStore(dbName, { writeBarrier });
+      const remoteApplyStore = createIndexedDbAppStore({
+        databaseName: dbName,
+        recordSyncMutations: false,
+      });
+      const localAppStore = createIndexedDbAppStore({
+        databaseName: dbName,
+        recordSyncMutations: true,
+        writeBarrier,
+      });
+
+      let releaseBootstrap: () => void = () => {};
+      const bootstrapStarted = new Promise<void>((resolve) => {
+        releaseBootstrap = resolve;
+      });
+
+      const fakeCloud: CloudSyncPort = {
+        async bootstrap() {
+          await bootstrapStarted;
+          return { eventId: 1, activeDatasetId: null, datasets: [] };
+        },
+        async readKnownWords() {
+          return null;
+        },
+        async readDecisions() {
+          return [];
+        },
+        async readPreferences() {
+          return null;
+        },
+        async readQueues() {
+          return [];
+        },
+        async readAnki() {
+          return { config: null, snapshot: null };
+        },
+        async pull() {
+          return { changes: [], nextEventId: 1 };
+        },
+        async push() {
+          return { accepted: [], acceptedMutationIds: [] };
+        },
+        async uploadDataset() {
+          return { accepted: [], acceptedMutationIds: [] };
+        },
+        async *readDataset() {},
+      };
+
+      const bootstrapPromise = bootstrapLocalCache({
+        cloud: fakeCloud,
+        remoteApplyStore,
+        localSyncStore,
+        localAppStore,
+        writeBarrier,
+      });
+
+      // While bootstrapLocalCache is blocked in fakeCloud.bootstrap(), attempt a localAppStore write
+      let localWriteCompleted = false;
+      const writePromise = localAppStore.wordDecisions
+        .set({
+          normalizedWord: "猫",
+          status: "known",
+          updatedAt: "2026-09-18T00:00:00.000Z",
+        })
+        .then(() => {
+          localWriteCompleted = true;
+        });
+
+      // Give macrotasks/microtasks a turn to execute
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(localWriteCompleted).toBe(false);
+
+      // Release bootstrap
+      releaseBootstrap();
+      await bootstrapPromise;
+      await writePromise;
+
+      expect(localWriteCompleted).toBe(true);
+      const decision = await localAppStore.wordDecisions.get("猫");
+      expect(decision?.status).toBe("known");
+
+      // Outbox should have the newly queued mutation with proper sequence
+      const outbox = await localSyncStore.listOutbox(10);
+      expect(outbox).toHaveLength(1);
+      expect(outbox[0]?.kind).toBe("decision.set");
+      expect(outbox[0]?.sequence).toBe(1);
+
+      indexedDB.deleteDatabase(dbName);
+    });
+
+    it("bootstrapLocalCache exhaustively replays all mutation kinds including removals and null clears", async () => {
+      const dbName = `test-all-kinds-${crypto.randomUUID()}`;
+      const localSyncStore = createLocalSyncStore(dbName);
+      const remoteApplyStore = createIndexedDbAppStore({
+        databaseName: dbName,
+        recordSyncMutations: false,
+      });
+      const localAppStore = createIndexedDbAppStore({
+        databaseName: dbName,
+        recordSyncMutations: true,
+      });
+
+      // Seed server state with some existing entities
+      const fakeCloud: CloudSyncPort = {
+        async bootstrap() {
+          return { eventId: 10, activeDatasetId: null, datasets: [] };
+        },
+        async readKnownWords() {
+          return { id: "server-known", name: "server", words: ["serverWord"] };
+        },
+        async readDecisions() {
+          return [
+            { normalizedWord: "犬", status: "skip", updatedAt: "2026-09-17T00:00:00.000Z" },
+            { normalizedWord: "鳥", status: "mined", updatedAt: "2026-09-17T00:00:00.000Z" },
+          ];
+        },
+        async readPreferences() {
+          return {
+            page: 1,
+            query: { ...defaultQuery },
+            view: defaultView,
+          };
+        },
+        async readQueues() {
+          return [
+            {
+              version: 1,
+              datasetId: "ds-remove-me",
+              normalizedWords: ["犬"],
+            },
+          ];
+        },
+        async readAnki() {
+          return {
+            config: {
+              deckScope: { kind: "deck", name: "Default" },
+              noteType: "Basic",
+              targetField: "Front",
+            },
+            snapshot: null,
+          };
+        },
+        async pull() {
+          return { changes: [], nextEventId: 10 };
+        },
+        async push() {
+          return { accepted: [], acceptedMutationIds: [] };
+        },
+        async uploadDataset() {
+          return { accepted: [], acceptedMutationIds: [] };
+        },
+        async *readDataset() {},
+      };
+
+      // Stage pending local mutations in localAppStore before bootstrap:
+      // 1. decision.set: 猫
+      await localAppStore.wordDecisions.set({
+        normalizedWord: "猫",
+        status: "known",
+        updatedAt: "2026-09-18T00:00:00.000Z",
+      });
+      // 2. decision.remove: 犬
+      await localAppStore.wordDecisions.remove("犬");
+      // 3. known.replace: null (cleared)
+      await localAppStore.knownWords.clear?.();
+      // 4. preferences.replace: null (cleared)
+      await localAppStore.preferences.clear?.();
+      // 5. queue.save: for ds-kept
+      await localSyncStore.saveQueue(
+        {
+          version: 1,
+          datasetId: "ds-kept",
+          normalizedWords: ["猫"],
+        },
+        "ds-kept",
+        true,
+      );
+      // 6. queue.remove: for ds-remove-me
+      await localSyncStore.saveQueue(null, "ds-remove-me", true);
+      // 7. anki.replace: clear config and snapshot
+      await localAppStore.ankiSync.clear();
+
+      // Verify outbox has all pending mutations
+      const beforeOutbox = await localSyncStore.listOutbox(20);
+      expect(beforeOutbox.length).toBeGreaterThanOrEqual(6);
+
+      // Run bootstrapLocalCache
+      await bootstrapLocalCache({
+        cloud: fakeCloud,
+        remoteApplyStore,
+        localSyncStore,
+        localAppStore,
+      });
+
+      // Replay assertions:
+      // 1. "猫" is set
+      const catDecision = await localAppStore.wordDecisions.get("猫");
+      expect(catDecision?.status).toBe("known");
+
+      // 2. "犬" was removed by local mutation replay even though server had it
+      const dogDecision = await localAppStore.wordDecisions.get("犬");
+      expect(dogDecision).toBeNull();
+
+      // "鳥" was not mutated locally, so it is preserved from server
+      const birdDecision = await localAppStore.wordDecisions.get("鳥");
+      expect(birdDecision?.status).toBe("mined");
+
+      // 3. Known words cleared
+      const known = await localAppStore.knownWords.getActive();
+      expect(known).toBeNull();
+
+      // 4. Preferences cleared
+      const prefs = await localAppStore.preferences.load();
+      expect(prefs).toBeNull();
+
+      // 5. Queue for ds-kept saved
+      const queueKept = await localSyncStore.loadQueue("ds-kept");
+      expect(queueKept?.normalizedWords).toEqual(["猫"]);
+
+      // 6. Queue for ds-remove-me removed
+      const queueRemoved = await localSyncStore.loadQueue("ds-remove-me");
+      expect(queueRemoved).toBeNull();
+
+      // 7. Anki cleared
+      const ankiConfig = await localAppStore.ankiSync.loadConfig();
+      expect(ankiConfig).toBeNull();
+
+      // All outbox entries remain preserved for next push
+      const afterOutbox = await localSyncStore.listOutbox(20);
+      expect(afterOutbox).toHaveLength(beforeOutbox.length);
+
+      indexedDB.deleteDatabase(dbName);
+    });
   });
 });

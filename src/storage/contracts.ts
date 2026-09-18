@@ -85,6 +85,6 @@ export interface AppStore {
   preferences: PreferencesStore;
   ankiSync: AnkiSyncStore;
   clearAll(): Promise<void>;
-  clearDomainCache?(): Promise<void>;
+  clearDomainCache?(options?: { preserveDatasetIds?: ReadonlySet<string> }): Promise<void>;
   restoreUserState?(snapshot: RestoreUserStateSnapshot): Promise<void>;
 }

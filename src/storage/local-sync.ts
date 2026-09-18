@@ -1,5 +1,6 @@
 import type { SessionQueueSnapshot, SyncMutationKind } from "../sync/contracts";
 import { INDEXED_DB_NAME, requestError, runTransaction, withDatabase } from "./indexed-db-core";
+import type { LocalWriteBarrier } from "./local-write-barrier";
 
 export interface SyncOutboxRecord {
   dedupeKey: string;
@@ -27,6 +28,10 @@ export interface WorkspaceResumeState {
   updatedAt: string;
 }
 
+export interface LocalSyncStoreOptions {
+  writeBarrier?: LocalWriteBarrier;
+}
+
 export interface LocalSyncStore {
   getMeta(): Promise<LocalSyncMeta>;
   setMeta(value: LocalSyncMeta): Promise<void>;
@@ -42,10 +47,82 @@ export interface LocalSyncStore {
     recordMutation: boolean,
   ): Promise<void>;
   clearLocalData(): Promise<void>;
-  clearCachedDomainState?(): Promise<void>;
+  clearCachedDomainState?(options?: { preserveDatasetIds?: ReadonlySet<string> }): Promise<void>;
 }
 
-export function createLocalSyncStore(databaseName: string = INDEXED_DB_NAME): LocalSyncStore {
+export function outboxIdentity(kind: SyncMutationKind, resourceId: string | null): string {
+  if (kind === "dataset.activate") return "activeDataset";
+  if (kind === "known.replace") return "known";
+  if (kind === "preferences.replace") return "preferences";
+  if (kind === "anki.replace") return "anki";
+  if (kind === "decision.set" || kind === "decision.remove") return `decision:${resourceId}`;
+  if (kind === "queue.replace" || kind === "queue.remove") return `queue:${resourceId}`;
+  return `dataset:${resourceId}`;
+}
+
+export interface PendingOutboxWrite {
+  kind: SyncMutationKind;
+  resourceId: string | null;
+}
+
+export function writeOutboxRecords(
+  transaction: IDBTransaction,
+  records: readonly PendingOutboxWrite[],
+  now: () => string,
+  createMutationId: () => string,
+): void {
+  if (records.length === 0) return;
+
+  const metaStore = transaction.objectStore("syncMeta");
+  const outboxStore = transaction.objectStore("syncOutbox");
+  const metaReq = metaStore.get("current") as IDBRequest<LocalSyncMeta | undefined>;
+  metaReq.onsuccess = () => {
+    const meta = metaReq.result;
+    let currentSeq = meta?.nextOutboxSequence ?? 1;
+
+    for (const pending of records) {
+      const dedupeKey = outboxIdentity(pending.kind, pending.resourceId);
+      const record: SyncOutboxRecord = {
+        dedupeKey,
+        mutationId: createMutationId(),
+        kind: pending.kind,
+        resourceId: pending.resourceId,
+        createdAt: now(),
+        sequence: currentSeq++,
+      };
+      outboxStore.put(record);
+    }
+
+    if (meta) {
+      meta.nextOutboxSequence = currentSeq;
+      metaStore.put(meta);
+    } else {
+      metaStore.put({
+        id: "current",
+        deviceId: crypto.randomUUID(),
+        bootstrapComplete: false,
+        serverEventId: 0,
+        lastSyncAt: null,
+        nextOutboxSequence: currentSeq,
+      });
+    }
+  };
+}
+
+export function writeOutboxRecord(
+  transaction: IDBTransaction,
+  kind: SyncMutationKind,
+  resourceId: string | null,
+  now: () => string,
+  createMutationId: () => string,
+): void {
+  writeOutboxRecords(transaction, [{ kind, resourceId }], now, createMutationId);
+}
+
+export function createLocalSyncStore(
+  databaseName: string = INDEXED_DB_NAME,
+  options?: LocalSyncStoreOptions,
+): LocalSyncStore {
   return {
     async getMeta(): Promise<LocalSyncMeta> {
       return withDatabase(databaseName, async (database) => {
@@ -228,66 +305,49 @@ export function createLocalSyncStore(databaseName: string = INDEXED_DB_NAME): Lo
       datasetId: string,
       recordMutation: boolean,
     ): Promise<void> {
-      return withDatabase(databaseName, async (database) => {
-        const storeNames = recordMutation
-          ? (["queues", "syncOutbox", "syncMeta"] as const)
-          : (["queues"] as const);
+      const run = () =>
+        withDatabase(databaseName, async (database) => {
+          const storeNames = recordMutation
+            ? (["queues", "syncOutbox", "syncMeta"] as const)
+            : (["queues"] as const);
 
-        return runTransaction<void>(
-          database,
-          storeNames,
-          "readwrite",
-          (transaction, resolveResult, _abort) => {
-            const queuesStore = transaction.objectStore("queues");
-            if (snapshot) {
-              queuesStore.put({ ...snapshot, datasetId });
-            } else {
-              queuesStore.delete(datasetId);
-            }
+          return runTransaction<void>(
+            database,
+            storeNames,
+            "readwrite",
+            (transaction, resolveResult, _abort) => {
+              const queuesStore = transaction.objectStore("queues");
+              if (snapshot) {
+                queuesStore.put({ ...snapshot, datasetId });
+              } else {
+                queuesStore.delete(datasetId);
+              }
 
-            if (recordMutation) {
-              const outboxStore = transaction.objectStore("syncOutbox");
-              const metaStore = transaction.objectStore("syncMeta");
-              const metaReq = metaStore.get("current") as IDBRequest<LocalSyncMeta | undefined>;
-              metaReq.onerror = () => _abort(requestError(metaReq));
-              metaReq.onsuccess = () => {
-                const meta = metaReq.result;
-                const currentSeq = meta?.nextOutboxSequence ?? 1;
-                if (meta) {
-                  meta.nextOutboxSequence = currentSeq + 1;
-                  metaStore.put(meta);
-                } else {
-                  metaStore.put({
-                    id: "current",
-                    deviceId: crypto.randomUUID(),
-                    bootstrapComplete: false,
-                    serverEventId: 0,
-                    lastSyncAt: null,
-                    nextOutboxSequence: currentSeq + 1,
-                  });
-                }
-                const dedupeKey = `queue:${datasetId}`;
-                const outboxRecord: SyncOutboxRecord = {
-                  dedupeKey,
-                  mutationId: crypto.randomUUID(),
-                  kind: snapshot ? "queue.replace" : "queue.remove",
-                  resourceId: datasetId,
-                  createdAt: new Date().toISOString(),
-                  sequence: currentSeq,
-                };
-                outboxStore.put(outboxRecord);
-                resolveResult(undefined);
-              };
-              return;
-            }
+              if (recordMutation) {
+                writeOutboxRecord(
+                  transaction,
+                  snapshot ? "queue.replace" : "queue.remove",
+                  datasetId,
+                  () => new Date().toISOString(),
+                  () => crypto.randomUUID(),
+                );
+              }
 
-            resolveResult(undefined);
-          },
-        );
-      });
+              resolveResult(undefined);
+            },
+          );
+        });
+
+      if (recordMutation && options?.writeBarrier) {
+        return options.writeBarrier.runMutation(run);
+      }
+      return run();
     },
 
-    async clearCachedDomainState(): Promise<void> {
+    async clearCachedDomainState(clearOptions?: {
+      preserveDatasetIds?: ReadonlySet<string>;
+    }): Promise<void> {
+      const preserve = clearOptions?.preserveDatasetIds;
       const storeNames = [
         "datasets",
         "entryChunks",
@@ -307,7 +367,29 @@ export function createLocalSyncStore(databaseName: string = INDEXED_DB_NAME): Lo
           "readwrite",
           (transaction, resolveResult) => {
             for (const name of storeNames) {
-              transaction.objectStore(name).clear();
+              if (
+                preserve &&
+                preserve.size > 0 &&
+                (name === "datasets" || name === "entryChunks" || name === "queues")
+              ) {
+                const store = transaction.objectStore(name);
+                const req = store.getAllKeys() as IDBRequest<IDBValidKey[]>;
+                req.onsuccess = () => {
+                  for (const key of req.result) {
+                    let idToPreserve = "";
+                    if (name === "entryChunks" && Array.isArray(key)) {
+                      idToPreserve = String(key[0]);
+                    } else {
+                      idToPreserve = String(key);
+                    }
+                    if (!preserve.has(idToPreserve)) {
+                      store.delete(key);
+                    }
+                  }
+                };
+              } else {
+                transaction.objectStore(name).clear();
+              }
             }
             resolveResult(undefined);
           },

@@ -461,4 +461,74 @@ describe("/api/sync server protocol and operations", () => {
     expect(retryResult.receipt).toBeDefined();
     expect(retryResult.receipt?.acceptedMutationIds).toContain(dsMutationId);
   });
+
+  it("supports pushing and pulling null preferences for preference clearing", async () => {
+    // 1. Push non-null preferences first
+    const prefMutationId1 = "00000000-0000-4000-8000-000000000051";
+    const samplePrefs = {
+      query: {
+        search: "",
+        hideKnown: true,
+        hideKanaOnly: false,
+        sentence: "any" as const,
+        minOccurrences: 0,
+        sort: "occ-desc" as const,
+        pageSize: 25 as const,
+        page: 1,
+        decision: "all" as const,
+      },
+      view: {
+        showFurigana: true,
+        pillHighlight: false,
+        showHighlight: true,
+        showDefinitions: true,
+        sentenceSize: "medium" as const,
+        density: "comfortable" as const,
+      },
+      page: 1,
+    };
+    await syncServer({
+      operation: "push",
+      deviceId: "device-1",
+      mutations: [
+        {
+          mutationId: prefMutationId1,
+          kind: "preferences.replace",
+          value: samplePrefs,
+        },
+      ],
+    });
+
+    // 2. Push null preferences (clearing preferences)
+    const prefMutationId2 = "00000000-0000-4000-8000-000000000052";
+    const pushResult = (await syncServer({
+      operation: "push",
+      deviceId: "device-1",
+      mutations: [
+        {
+          mutationId: prefMutationId2,
+          kind: "preferences.replace",
+          value: null,
+        },
+      ],
+    })) as {
+      accepted: Array<{ mutationId: string; eventId: number }>;
+      acceptedMutationIds: string[];
+    };
+
+    expect(pushResult.acceptedMutationIds).toContain(prefMutationId2);
+    const eventId = pushResult.accepted[0]!.eventId;
+
+    // 3. Pull and verify the change contains null preferences
+    const pullResult = (await syncServer({
+      operation: "pull",
+      afterEventId: eventId - 1,
+    })) as {
+      changes: Array<{ id: number; kind: string; value?: unknown }>;
+    };
+
+    const prefChange = pullResult.changes.find((c) => c.kind === "preferences.replace");
+    expect(prefChange).toBeDefined();
+    expect(prefChange?.value).toBeNull();
+  });
 });

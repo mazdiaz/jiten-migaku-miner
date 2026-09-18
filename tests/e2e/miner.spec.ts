@@ -423,37 +423,4 @@ test.describe("canonical miner", () => {
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
     await expect(page.locator("#resultStats")).toContainText("Loaded 3");
   });
-
-  test("warm-start renders cached vocabulary within 500ms even with delayed cloud sync", async ({
-    page,
-  }) => {
-    test.setTimeout(60_000);
-    await page.goto("/");
-    await expect(page.locator(".cloud-status")).toHaveText(
-      /^(Saved to PostgreSQL|Synced|Saved locally)\s*$/,
-    );
-    await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
-    await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
-
-    // Delay /api/sync by 5 seconds
-    await page.route("**/api/sync", async (route) => {
-      await new Promise((resolve) => setTimeout(resolve, 5000));
-      return route.continue();
-    });
-
-    await page.reload();
-
-    // Assert visible vocabulary appears before that 5-second response is released
-    await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
-
-    const timing = await page.evaluate(() => {
-      return (window as any).__bootTimingEvents as Array<{
-        stage: string;
-        durationMs: number;
-      }>;
-    });
-    const firstQueryReady = timing?.find((t) => t.stage === "first_query_ready");
-    expect(firstQueryReady).toBeDefined();
-    expect(firstQueryReady!.durationMs).toBeLessThan(500);
-  });
 });

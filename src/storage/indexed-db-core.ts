@@ -32,7 +32,7 @@ export function openDatabase(name: string = INDEXED_DB_NAME): Promise<IDBDatabas
 
   return new Promise((resolve, reject) => {
     const request = factory.open(name, INDEXED_DB_VERSION);
-    request.onupgradeneeded = () => {
+    request.onupgradeneeded = (event: IDBVersionChangeEvent) => {
       const database = request.result;
       if (!database.objectStoreNames.contains("datasets")) {
         database.createObjectStore("datasets", { keyPath: "id" });
@@ -74,8 +74,72 @@ export function openDatabase(name: string = INDEXED_DB_NAME): Promise<IDBDatabas
       if (!outboxStore.indexNames.contains("sequence")) {
         outboxStore.createIndex("sequence", "sequence", { unique: false });
       }
+      let metaStore: IDBObjectStore;
       if (!database.objectStoreNames.contains("syncMeta")) {
-        database.createObjectStore("syncMeta", { keyPath: "id" });
+        metaStore = database.createObjectStore("syncMeta", { keyPath: "id" });
+      } else {
+        metaStore = request.transaction!.objectStore("syncMeta");
+      }
+
+      const oldVersion = event.oldVersion;
+      if (oldVersion < 5 && oldVersion > 0) {
+        const cursorReq = outboxStore.openCursor();
+        const unsequenced: Array<Record<string, unknown>> = [];
+        let maxExistingSeq = 0;
+
+        cursorReq.onsuccess = () => {
+          const cursor = cursorReq.result;
+          if (cursor) {
+            const record = cursor.value as Record<string, unknown>;
+            if (typeof record.sequence === "number" && Number.isFinite(record.sequence)) {
+              if (record.sequence > maxExistingSeq) {
+                maxExistingSeq = record.sequence;
+              }
+            } else {
+              unsequenced.push(record);
+            }
+            cursor.continue();
+          } else {
+            if (unsequenced.length > 0) {
+              unsequenced.sort((a, b) => {
+                const timeA = typeof a.createdAt === "string" ? a.createdAt : "";
+                const timeB = typeof b.createdAt === "string" ? b.createdAt : "";
+                if (timeA !== timeB) return timeA.localeCompare(timeB);
+                return String(a.dedupeKey).localeCompare(String(b.dedupeKey));
+              });
+              let nextSeq = maxExistingSeq + 1;
+              for (const record of unsequenced) {
+                record.sequence = nextSeq++;
+                outboxStore.put(record);
+              }
+              maxExistingSeq = nextSeq - 1;
+            }
+
+            const targetSeq = Math.max(1, maxExistingSeq + 1);
+            const metaReq = metaStore.get("current");
+            metaReq.onsuccess = () => {
+              const meta = metaReq.result as Record<string, unknown> | undefined;
+              if (meta) {
+                if (
+                  typeof meta.nextOutboxSequence !== "number" ||
+                  meta.nextOutboxSequence < targetSeq
+                ) {
+                  meta.nextOutboxSequence = targetSeq;
+                  metaStore.put(meta);
+                }
+              } else {
+                metaStore.put({
+                  id: "current",
+                  deviceId: crypto.randomUUID(),
+                  bootstrapComplete: false,
+                  serverEventId: 0,
+                  lastSyncAt: null,
+                  nextOutboxSequence: targetSeq,
+                });
+              }
+            };
+          }
+        };
       }
     };
     request.onerror = () => reject(requestError(request));

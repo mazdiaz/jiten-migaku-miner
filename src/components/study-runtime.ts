@@ -11,6 +11,7 @@ import {
   type LocalSyncMeta,
   type LocalSyncStore,
 } from "../storage/local-sync";
+import { createLocalWriteBarrier } from "../storage/local-write-barrier";
 import { createRemoteAppStore } from "../storage/remote-store";
 import { createCloudSyncClient } from "../sync/cloud-client";
 import {
@@ -286,10 +287,11 @@ export function mountStudy(onStatus: (status: CloudStatus) => void) {
 
   const bootLocalFirst = async () => {
     const bootStart = typeof performance !== "undefined" ? performance.now() : Date.now();
+    const writeBarrier = createLocalWriteBarrier();
     let localSyncStore: LocalSyncStore;
     let meta: LocalSyncMeta;
     try {
-      localSyncStore = createLocalSyncStore();
+      localSyncStore = createLocalSyncStore(undefined, { writeBarrier });
       meta = await localSyncStore.getMeta();
       recordBootTiming(
         "local_boot",
@@ -312,6 +314,7 @@ export function mountStudy(onStatus: (status: CloudStatus) => void) {
         cloud,
         remoteApplyStore,
         localSyncStore,
+        writeBarrier,
       });
       meta = await localSyncStore.getMeta();
     }
@@ -375,12 +378,13 @@ export function mountStudy(onStatus: (status: CloudStatus) => void) {
       : null;
 
     let engine: SyncEngine;
-    const localAppStore = createIndexedDbAppStore({ recordSyncMutations: true });
+    const localAppStore = createIndexedDbAppStore({ recordSyncMutations: true, writeBarrier });
     engine = createSyncEngine({
       cloud,
       localAppStore,
       remoteApplyStore,
       localSyncStore,
+      writeBarrier,
     });
     cleanup.push(() => engine.dispose());
 
@@ -496,6 +500,7 @@ export function mountStudy(onStatus: (status: CloudStatus) => void) {
           cloud,
           remoteApplyStore,
           localSyncStore,
+          writeBarrier,
         });
         window.location.assign("/?restored=1");
       } catch (error) {

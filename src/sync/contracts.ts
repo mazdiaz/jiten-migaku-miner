@@ -38,7 +38,7 @@ export type MaterializedSyncMutation =
     }
   | { mutationId: string; kind: "decision.set"; decision: WordDecision }
   | { mutationId: string; kind: "decision.remove"; normalizedWord: string }
-  | { mutationId: string; kind: "preferences.replace"; value: PreferencesValue }
+  | { mutationId: string; kind: "preferences.replace"; value: PreferencesValue | null }
   | { mutationId: string; kind: "queue.replace"; value: SessionQueueSnapshot }
   | { mutationId: string; kind: "queue.remove"; datasetId: string }
   | {
@@ -55,7 +55,7 @@ export type RemoteChange =
   | { id: number; kind: "known.replace" }
   | { id: number; kind: "decision.set"; decision: WordDecision }
   | { id: number; kind: "decision.remove"; normalizedWord: string }
-  | { id: number; kind: "preferences.replace"; value: PreferencesValue }
+  | { id: number; kind: "preferences.replace"; value: PreferencesValue | null }
   | { id: number; kind: "queue.replace"; datasetId: string }
   | { id: number; kind: "queue.remove"; datasetId: string }
   | { id: number; kind: "anki.replace" }

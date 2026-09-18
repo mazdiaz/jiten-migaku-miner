@@ -278,7 +278,11 @@ export const materializedSyncMutationSchema = z.discriminatedUnion("kind", [
     .strict(),
   z.object({ mutationId: uuid, kind: z.literal("decision.remove"), normalizedWord: word }).strict(),
   z
-    .object({ mutationId: uuid, kind: z.literal("preferences.replace"), value: preferencesSchema })
+    .object({
+      mutationId: uuid,
+      kind: z.literal("preferences.replace"),
+      value: preferencesSchema.nullable(),
+    })
     .strict(),
   z.object({ mutationId: uuid, kind: z.literal("queue.replace"), value: queueSchema }).strict(),
   z.object({ mutationId: uuid, kind: z.literal("queue.remove"), datasetId: key }).strict(),

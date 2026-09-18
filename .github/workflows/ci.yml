@@ -119,7 +119,7 @@ jobs:
       - run: npm run db:migrate
       - run: npm run build
       - name: Run Local-First E2E tests
-        run: npx playwright test tests/e2e/local-first-sync.spec.ts --project=chromium
+        run: npx playwright test tests/e2e/local-first-sync.spec.ts tests/e2e/local-first-performance.spec.ts --project=chromium
       - name: Upload Playwright report on failure
         if: failure()
         uses: actions/upload-artifact@v4

@@ -919,4 +919,73 @@ describe("IndexedDbAppStore outbox recording option", () => {
       database.close();
     }
   });
+
+  it("assigns unique, strictly monotonic sequence numbers on bulk replaceAll", async () => {
+    const store = createIndexedDbAppStore({
+      databaseName,
+      recordSyncMutations: true,
+    });
+
+    const decisions = ["一", "二", "三", "四", "五"].map((word, i) => ({
+      normalizedWord: word,
+      status: "known" as const,
+      updatedAt: `2026-09-17T00:00:0${i}.000Z`,
+    }));
+
+    await store.wordDecisions.replaceAll(decisions);
+
+    const database = await openRawDatabase(databaseName);
+    try {
+      const tx = database.transaction(["syncOutbox", "syncMeta"], "readonly");
+      const outbox = await new Promise<any[]>((resolve, reject) => {
+        const req = tx.objectStore("syncOutbox").index("sequence").getAll();
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+      const meta = await new Promise<any>((resolve, reject) => {
+        const req = tx.objectStore("syncMeta").get("current");
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+
+      expect(outbox).toHaveLength(5);
+      const sequences = outbox.map((r) => r.sequence);
+      expect(sequences).toEqual([1, 2, 3, 4, 5]);
+      expect(meta.nextOutboxSequence).toBe(6);
+    } finally {
+      database.close();
+    }
+
+    const nextDecisions = ["一", "二", "六"].map((word, i) => ({
+      normalizedWord: word,
+      status: "skip" as const,
+      updatedAt: `2026-09-17T01:00:0${i}.000Z`,
+    }));
+    await store.wordDecisions.replaceAll(nextDecisions);
+
+    const database2 = await openRawDatabase(databaseName);
+    try {
+      const tx = database2.transaction(["syncOutbox", "syncMeta"], "readonly");
+      const outbox = await new Promise<any[]>((resolve, reject) => {
+        const req = tx.objectStore("syncOutbox").index("sequence").getAll();
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+      const meta = await new Promise<any>((resolve, reject) => {
+        const req = tx.objectStore("syncMeta").get("current");
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+
+      const sequences = outbox.map((r) => r.sequence);
+      const uniqueSequences = new Set(sequences);
+      expect(uniqueSequences.size).toBe(outbox.length);
+      expect(Math.max(...sequences)).toBeLessThan(meta.nextOutboxSequence);
+      for (let i = 1; i < sequences.length; i++) {
+        expect(sequences[i]).toBeGreaterThan(sequences[i - 1]);
+      }
+    } finally {
+      database2.close();
+    }
+  });
 });

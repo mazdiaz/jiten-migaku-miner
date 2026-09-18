@@ -1,6 +1,7 @@
 import "fake-indexeddb/auto";
 import { describe, expect, it } from "vitest";
 import { IndexedDbAppStore } from "../../src/storage/indexed-db";
+import { createLocalSyncStore } from "../../src/storage/local-sync";
 
 function requestToPromise<T>(request: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -294,16 +295,29 @@ describe("IndexedDB v2 to v3 upgrade", () => {
     }
   });
 
-  it("creates sequence index on syncOutbox when upgrading from v4 to v5", async () => {
+  it("creates sequence index on syncOutbox and backfills missing sequences when upgrading from v4 to v5", async () => {
     const databaseName = `v4-to-v5-upgrade-${crypto.randomUUID()}`;
     try {
-      const existingOutboxItem = {
+      const existingOutboxItem1 = {
         dedupeKey: "pref",
         mutationId: "mut-1",
         kind: "preferences.replace",
         resourceId: null,
         createdAt: "2026-09-17T00:00:00.000Z",
-        sequence: 1,
+      };
+      const existingOutboxItem2 = {
+        dedupeKey: "queue:ds-1",
+        mutationId: "mut-2",
+        kind: "queue.replace",
+        resourceId: "ds-1",
+        createdAt: "2026-09-17T00:00:01.000Z",
+      };
+      const existingMeta = {
+        id: "current",
+        deviceId: "device-123",
+        bootstrapComplete: true,
+        serverEventId: 42,
+        lastSyncAt: "2026-09-17T00:00:00.000Z",
       };
       const request = indexedDB.open(databaseName, 4);
       request.onupgradeneeded = () => {
@@ -321,13 +335,23 @@ describe("IndexedDB v2 to v3 upgrade", () => {
         db.createObjectStore("syncMeta", { keyPath: "id" });
       };
       const database = await requestToPromise(request);
-      const transaction = database.transaction(["syncOutbox"], "readwrite");
-      transaction.objectStore("syncOutbox").put(existingOutboxItem);
+      const transaction = database.transaction(["syncOutbox", "syncMeta"], "readwrite");
+      transaction.objectStore("syncOutbox").put(existingOutboxItem1);
+      transaction.objectStore("syncOutbox").put(existingOutboxItem2);
+      transaction.objectStore("syncMeta").put(existingMeta);
       await transactionToPromise(transaction);
       database.close();
 
-      const upgraded = new IndexedDbAppStore(databaseName);
-      await upgraded.datasets.list();
+      const localSyncStore = createLocalSyncStore(databaseName);
+      const outbox = await localSyncStore.listOutbox(10);
+      expect(outbox).toHaveLength(2);
+      expect(outbox[0]).toEqual({ ...existingOutboxItem1, sequence: 1 });
+      expect(outbox[1]).toEqual({ ...existingOutboxItem2, sequence: 2 });
+
+      const meta = await localSyncStore.getMeta();
+      expect(meta.nextOutboxSequence).toBe(3);
+      expect(meta.deviceId).toBe("device-123");
+      expect(meta.serverEventId).toBe(42);
 
       const checkReq = indexedDB.open(databaseName);
       const db = await requestToPromise(checkReq);
@@ -336,8 +360,6 @@ describe("IndexedDB v2 to v3 upgrade", () => {
         const tx = db.transaction(["syncOutbox"], "readonly");
         const outboxStore = tx.objectStore("syncOutbox");
         expect(outboxStore.indexNames.contains("sequence")).toBe(true);
-        const item = await requestToPromise(outboxStore.get("pref"));
-        expect(item).toEqual(existingOutboxItem);
       } finally {
         db.close();
       }

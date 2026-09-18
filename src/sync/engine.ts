@@ -1,6 +1,8 @@
+import type { AnkiSyncConfig, AnkiSyncSnapshot } from "../domain/anki";
 import type { WordDecision } from "../domain/types";
 import type { AppStore } from "../storage/contracts";
 import type { LocalSyncStore, SyncOutboxRecord } from "../storage/local-sync";
+import type { LocalWriteBarrier } from "../storage/local-write-barrier";
 import { RemoteStoreError } from "../storage/remote-store";
 import type {
   CloudSyncPort,
@@ -34,6 +36,7 @@ export interface SyncEngineOptions {
   now?: (() => string) | undefined;
   intervalMs?: number | undefined;
   debounceMs?: number | undefined;
+  writeBarrier?: LocalWriteBarrier | undefined;
 }
 
 export async function ensureDatasetCached(
@@ -58,6 +61,7 @@ export interface BootstrapLocalCacheOptions {
   localSyncStore: LocalSyncStore;
   localAppStore?: AppStore | undefined;
   now?: (() => string) | undefined;
+  writeBarrier?: LocalWriteBarrier | undefined;
 }
 
 export async function bootstrapLocalCache(
@@ -80,128 +84,219 @@ export async function bootstrapLocalCache(
   const readerStore = options.localAppStore ?? remoteApplyStore;
   const now = options.now ?? (() => new Date().toISOString());
 
-  // 1. Fetch cloud manifest & data first
-  const manifest = await cloud.bootstrap();
-  const known = await cloud.readKnownWords();
-  const decisions = await cloud.readDecisions();
-  const preferences = await cloud.readPreferences();
-  const queues = await cloud.readQueues();
-  const anki = await cloud.readAnki();
+  const performBootstrap = async (): Promise<void> => {
+    // 1. Fetch cloud manifest & data first
+    const manifest = await cloud.bootstrap();
+    const known = await cloud.readKnownWords();
+    const decisions = await cloud.readDecisions();
+    const preferences = await cloud.readPreferences();
+    const queues = await cloud.readQueues();
+    const anki = await cloud.readAnki();
 
-  // Snapshot pending unpushed outbox items before clearing domain cache so we can restore them
-  const currentMeta = await localSyncStore.getMeta();
-  const pendingOutbox = await localSyncStore.listOutbox(1000);
-  const pendingDecisions: WordDecision[] = [];
-  let pendingKnown: { id: string; name: string; words: string[] } | null = null;
-  let pendingPrefs: PreferencesValue | null = null;
-  const pendingQueues: SessionQueueSnapshot[] = [];
+    // Snapshot pending unpushed outbox items before clearing domain cache so we can restore them
+    const currentMeta = await localSyncStore.getMeta();
+    const pendingOutbox = await localSyncStore.listOutbox(1000);
 
-  for (const record of pendingOutbox) {
-    if (record.kind === "decision.set" && record.resourceId) {
-      const decision = await readerStore.wordDecisions.get(record.resourceId);
-      if (decision) pendingDecisions.push(decision);
-    } else if (record.kind === "known.replace") {
-      const active = await readerStore.knownWords.getActive();
-      if (active) pendingKnown = { id: active.id, name: active.name, words: [...active.words] };
-    } else if (record.kind === "preferences.replace") {
-      const p = await readerStore.preferences.load();
-      if (p) pendingPrefs = p;
-    } else if (record.kind === "queue.replace" && record.resourceId) {
-      const q = await localSyncStore.loadQueue(record.resourceId);
-      if (q) pendingQueues.push(q);
+    const preserveDatasetIds = new Set<string>();
+    for (const record of pendingOutbox) {
+      if (record.kind === "dataset.upload" && record.resourceId) {
+        preserveDatasetIds.add(record.resourceId);
+      }
     }
-  }
 
-  // Clear domain cache only - preserving syncOutbox and deviceId
-  if (remoteApplyStore.clearDomainCache) {
-    await remoteApplyStore.clearDomainCache();
-  } else {
-    await remoteApplyStore.clearAll();
-  }
-  if (localSyncStore.clearCachedDomainState) {
-    await localSyncStore.clearCachedDomainState();
-  }
+    let pendingActiveDatasetId: string | null = null;
+    const pendingRemovedDatasets = new Set<string>();
 
-  await localSyncStore.setMeta({
-    id: "current",
-    deviceId: currentMeta.deviceId,
-    bootstrapComplete: false,
-    serverEventId: 0,
-    lastSyncAt: null,
-    ...(currentMeta.nextOutboxSequence !== undefined
-      ? { nextOutboxSequence: currentMeta.nextOutboxSequence }
-      : {}),
-  });
+    let hasPendingKnown = false;
+    let pendingKnown: { id: string; name: string; words: string[] } | null = null;
 
-  // 2. Write state with recording-disabled local stores
-  if (known) {
-    await remoteApplyStore.knownWords.save(known.id, known.name, known.words);
-  }
-  await remoteApplyStore.wordDecisions.replaceAll(decisions);
-  if (preferences) {
-    await remoteApplyStore.preferences.save(preferences);
-  }
-  for (const queue of queues) {
-    await localSyncStore.saveQueue(queue, queue.datasetId, false);
-  }
-  if (anki.config) {
-    await remoteApplyStore.ankiSync.saveConfig(anki.config);
-  }
-  if (anki.snapshot) {
-    await remoteApplyStore.ankiSync.replaceSnapshot(anki.snapshot);
-  }
+    let hasPendingPrefs = false;
+    let pendingPrefs: PreferencesValue | null = null;
 
-  // 3. Upsert every dataset metadata as metadata-only
-  for (const dataset of manifest.datasets) {
-    if (remoteApplyStore.datasets.upsertMetadata) {
-      await remoteApplyStore.datasets.upsertMetadata(dataset);
+    let hasPendingAnki = false;
+    let pendingAnkiConfig: AnkiSyncConfig | null = null;
+    let pendingAnkiSnapshot: AnkiSyncSnapshot | null = null;
+
+    const pendingDecisionsSet = new Map<string, WordDecision>();
+    const pendingDecisionsRemove = new Set<string>();
+
+    const pendingQueuesSet = new Map<string, SessionQueueSnapshot>();
+    const pendingQueuesRemove = new Set<string>();
+
+    for (const record of pendingOutbox) {
+      if (record.kind === "dataset.activate" && record.resourceId) {
+        pendingActiveDatasetId = record.resourceId;
+      } else if (record.kind === "dataset.remove" && record.resourceId) {
+        pendingRemovedDatasets.add(record.resourceId);
+        if (pendingActiveDatasetId === record.resourceId) {
+          pendingActiveDatasetId = null;
+        }
+      } else if (record.kind === "known.replace") {
+        hasPendingKnown = true;
+        const active = await readerStore.knownWords.getActive();
+        pendingKnown = active
+          ? { id: active.id, name: active.name, words: [...active.words] }
+          : null;
+      } else if (record.kind === "preferences.replace") {
+        hasPendingPrefs = true;
+        pendingPrefs = await readerStore.preferences.load();
+      } else if (record.kind === "anki.replace") {
+        hasPendingAnki = true;
+        pendingAnkiConfig = await readerStore.ankiSync.loadConfig();
+        pendingAnkiSnapshot = await readerStore.ankiSync.loadSnapshot();
+      } else if (record.kind === "decision.set" && record.resourceId) {
+        const d = await readerStore.wordDecisions.get(record.resourceId);
+        if (d) {
+          pendingDecisionsSet.set(record.resourceId, d);
+        }
+        pendingDecisionsRemove.delete(record.resourceId);
+      } else if (record.kind === "decision.remove" && record.resourceId) {
+        pendingDecisionsRemove.add(record.resourceId);
+        pendingDecisionsSet.delete(record.resourceId);
+      } else if (record.kind === "queue.replace" && record.resourceId) {
+        const q = await localSyncStore.loadQueue(record.resourceId);
+        if (q) {
+          pendingQueuesSet.set(record.resourceId, q);
+        }
+        pendingQueuesRemove.delete(record.resourceId);
+      } else if (record.kind === "queue.remove" && record.resourceId) {
+        pendingQueuesRemove.add(record.resourceId);
+        pendingQueuesSet.delete(record.resourceId);
+      }
     }
-  }
 
-  // 4. If activeDatasetId != null: download/stage active dataset with recording disabled, then activate locally
-  if (manifest.activeDatasetId) {
-    await ensureDatasetCached(manifest.activeDatasetId, cloud, remoteApplyStore);
-    await remoteApplyStore.datasets.activate(manifest.activeDatasetId);
-  }
+    // Clear domain cache only - preserving syncOutbox, deviceId, and staged dataset uploads
+    if (remoteApplyStore.clearDomainCache) {
+      await remoteApplyStore.clearDomainCache({ preserveDatasetIds });
+    } else {
+      await remoteApplyStore.clearAll();
+    }
+    if (localSyncStore.clearCachedDomainState) {
+      await localSyncStore.clearCachedDomainState({ preserveDatasetIds });
+    }
 
-  // 5. Save active queue / workspace
-  const activeQueue = manifest.activeDatasetId
-    ? await localSyncStore.loadQueue(manifest.activeDatasetId)
-    : null;
-  await localSyncStore.saveWorkspace({
-    id: "current",
-    activeDatasetId: manifest.activeDatasetId,
-    viewportStart: 0,
-    queueMode: activeQueue && activeQueue.normalizedWords.length > 0 ? "normal" : "normal",
-    updatedAt: now(),
-  });
+    await localSyncStore.setMeta({
+      id: "current",
+      deviceId: currentMeta.deviceId,
+      bootstrapComplete: false,
+      serverEventId: 0,
+      lastSyncAt: null,
+      ...(currentMeta.nextOutboxSequence !== undefined
+        ? { nextOutboxSequence: currentMeta.nextOutboxSequence }
+        : {}),
+    });
 
-  // 6. Re-apply preserved pending local mutations on top of fresh cloud state
-  for (const decision of pendingDecisions) {
-    await remoteApplyStore.wordDecisions.set(decision);
-  }
-  if (pendingKnown) {
-    await remoteApplyStore.knownWords.save(pendingKnown.id, pendingKnown.name, pendingKnown.words);
-  }
-  if (pendingPrefs) {
-    await remoteApplyStore.preferences.save(pendingPrefs);
-  }
-  for (const q of pendingQueues) {
-    await localSyncStore.saveQueue(q, q.datasetId, false);
-  }
+    // 2. Write state with recording-disabled local stores
+    if (known) {
+      await remoteApplyStore.knownWords.save(known.id, known.name, known.words);
+    }
+    await remoteApplyStore.wordDecisions.replaceAll(decisions);
+    if (preferences) {
+      await remoteApplyStore.preferences.save(preferences);
+    }
+    for (const queue of queues) {
+      await localSyncStore.saveQueue(queue, queue.datasetId, false);
+    }
+    if (anki.config) {
+      await remoteApplyStore.ankiSync.saveConfig(anki.config);
+    }
+    if (anki.snapshot) {
+      await remoteApplyStore.ankiSync.replaceSnapshot(anki.snapshot);
+    }
 
-  // 7. Write sync meta bootstrapComplete=true/serverEventId=manifest.eventId LAST
-  const metaAfter = await localSyncStore.getMeta();
-  await localSyncStore.setMeta({
-    id: "current",
-    deviceId: currentMeta.deviceId,
-    bootstrapComplete: true,
-    serverEventId: manifest.eventId,
-    lastSyncAt: now(),
-    ...(metaAfter.nextOutboxSequence !== undefined
-      ? { nextOutboxSequence: metaAfter.nextOutboxSequence }
-      : {}),
-  });
+    // 3. Upsert every dataset metadata as metadata-only
+    for (const dataset of manifest.datasets) {
+      if (remoteApplyStore.datasets.upsertMetadata) {
+        await remoteApplyStore.datasets.upsertMetadata(dataset);
+      }
+    }
+
+    // 4. If activeDatasetId != null: download/stage active dataset with recording disabled, then activate locally
+    if (manifest.activeDatasetId) {
+      await ensureDatasetCached(manifest.activeDatasetId, cloud, remoteApplyStore);
+      await remoteApplyStore.datasets.activate(manifest.activeDatasetId);
+    }
+
+    // 5. Save active queue / workspace
+    const activeQueue = manifest.activeDatasetId
+      ? await localSyncStore.loadQueue(manifest.activeDatasetId)
+      : null;
+    await localSyncStore.saveWorkspace({
+      id: "current",
+      activeDatasetId: manifest.activeDatasetId,
+      viewportStart: 0,
+      queueMode: activeQueue && activeQueue.normalizedWords.length > 0 ? "normal" : "normal",
+      updatedAt: now(),
+    });
+
+    // 6. Re-apply preserved pending local mutations on top of fresh cloud state
+    for (const word of pendingDecisionsRemove) {
+      await remoteApplyStore.wordDecisions.remove(word);
+    }
+    for (const decision of pendingDecisionsSet.values()) {
+      await remoteApplyStore.wordDecisions.set(decision);
+    }
+    if (hasPendingKnown) {
+      if (pendingKnown) {
+        await remoteApplyStore.knownWords.save(
+          pendingKnown.id,
+          pendingKnown.name,
+          pendingKnown.words,
+        );
+      } else {
+        await remoteApplyStore.knownWords.clear?.();
+      }
+    }
+    if (hasPendingPrefs) {
+      if (pendingPrefs) {
+        await remoteApplyStore.preferences.save(pendingPrefs);
+      } else {
+        await remoteApplyStore.preferences.clear?.();
+      }
+    }
+    if (hasPendingAnki) {
+      if (pendingAnkiConfig) {
+        await remoteApplyStore.ankiSync.saveConfig(pendingAnkiConfig);
+      } else {
+        await remoteApplyStore.ankiSync.clear?.();
+      }
+      if (pendingAnkiSnapshot) {
+        await remoteApplyStore.ankiSync.replaceSnapshot(pendingAnkiSnapshot);
+      } else {
+        await remoteApplyStore.ankiSync.replaceSnapshot(null);
+      }
+    }
+    for (const datasetId of pendingQueuesRemove) {
+      await localSyncStore.saveQueue(null, datasetId, false);
+    }
+    for (const q of pendingQueuesSet.values()) {
+      await localSyncStore.saveQueue(q, q.datasetId, false);
+    }
+    for (const datasetId of pendingRemovedDatasets) {
+      await remoteApplyStore.datasets.remove(datasetId);
+    }
+    if (pendingActiveDatasetId) {
+      await remoteApplyStore.datasets.activate(pendingActiveDatasetId);
+    }
+
+    // 7. Write sync meta bootstrapComplete=true/serverEventId=manifest.eventId LAST
+    const metaAfter = await localSyncStore.getMeta();
+    await localSyncStore.setMeta({
+      id: "current",
+      deviceId: currentMeta.deviceId,
+      bootstrapComplete: true,
+      serverEventId: manifest.eventId,
+      lastSyncAt: now(),
+      ...(metaAfter.nextOutboxSequence !== undefined
+        ? { nextOutboxSequence: metaAfter.nextOutboxSequence }
+        : {}),
+    });
+  };
+
+  if (options.writeBarrier) {
+    return options.writeBarrier.runReconcile(performBootstrap);
+  }
+  return performBootstrap();
 }
 
 export function createSyncEngine(options: SyncEngineOptions): SyncEngine {
@@ -366,13 +461,11 @@ export function createSyncEngine(options: SyncEngineOptions): SyncEngine {
 
             case "preferences.replace": {
               const prefs = await localAppStore.preferences.load();
-              if (prefs) {
-                mutations.push({
-                  mutationId: record.mutationId,
-                  kind: "preferences.replace",
-                  value: prefs,
-                });
-              }
+              mutations.push({
+                mutationId: record.mutationId,
+                kind: "preferences.replace",
+                value: prefs,
+              });
               break;
             }
 
@@ -469,7 +562,11 @@ export function createSyncEngine(options: SyncEngineOptions): SyncEngine {
               break;
 
             case "preferences.replace":
-              await remoteApplyStore.preferences.save(change.value);
+              if (change.value === null) {
+                await remoteApplyStore.preferences.clear?.();
+              } else {
+                await remoteApplyStore.preferences.save(change.value);
+              }
               break;
 
             case "dataset.upsert":
@@ -537,6 +634,7 @@ export function createSyncEngine(options: SyncEngineOptions): SyncEngine {
                 localSyncStore,
                 localAppStore,
                 now,
+                writeBarrier: options.writeBarrier,
               });
               break;
           }
