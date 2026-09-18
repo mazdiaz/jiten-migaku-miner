@@ -6,7 +6,7 @@ This is the existing repository migrated from Vite. Vocabulary parsing, study ru
 
 ## Deploy to Vercel
 
-1. Import this existing GitHub repository into Vercel. Select **Next.js** and use the repository root as the Root Directory. Keep the repository build command from `vercel.json`: it runs `npm run db:verify` before `npm run build`. Leave Output Directory at the framework default. Use Node.js 22 or 24.
+1. Import this existing GitHub repository into Vercel. Select **Next.js** and use the repository root as the Root Directory. Keep the repository build command from `vercel.json`. Production builds run `npm run db:migrate` followed by `npm run db:verify` before `npm run build`; preview builds never mutate a database. Leave Output Directory at the framework default. Use Node.js 22 or 24.
 2. Create/connect a PostgreSQL database, such as [Neon through Vercel Marketplace](https://vercel.com/integrations/neon). Set `DATABASE_URL` to its pooled connection string, including the provider's TLS settings. Keep production and preview databases separate.
 3. Register a [GitHub OAuth App](https://github.com/settings/developers). Set its homepage to your production origin and callback URL to `https://YOUR-DOMAIN/api/auth/callback/github`. Use a separate OAuth app for local development.
 4. Configure these Vercel environment variables:
@@ -22,8 +22,8 @@ This is the existing repository migrated from Vite. Vocabulary parsing, study ru
    | `AUTH_TRUST_HOST` | `true` on Vercel |
    | `NEXT_PUBLIC_LOCAL_FIRST_SYNC` | Leave unset for local-first default; set `0` only for emergency server-first fallback |
 
-5. From a trusted terminal, set `DATABASE_URL` to the target database and run `npm run db:verify`. If it reports missing migrations, run `npm run db:migrate`, then run verification again. Stop on checksum mismatches; never edit an applied migration to make verification pass. On a local machine you can put `DATABASE_URL` in ignored `.env.local`.
-6. Deploy/redeploy, open the site, and sign in with the allowed GitHub account. Vercel runs `db:verify` before every build and refuses to build against a missing or inconsistent migration ledger. All other accounts are rejected. Database access is checked again on every API request.
+5. From a trusted terminal, set `DATABASE_URL` to the target database and run `npm run db:verify` before the first rollout when possible. Missing migrations can be applied with `npm run db:migrate`. Line-ending-only legacy checksum differences are accepted; genuine checksum mismatches still stop migration. Never edit an applied migration to force verification to pass. On a local machine you can put `DATABASE_URL` in ignored `.env.local`.
+6. Deploy/redeploy, open the site, and sign in with the allowed GitHub account. On Vercel, only production builds run the advisory-lock-serialized migration step and then verify the ledger before building. Preview builds skip database mutation so they cannot accidentally migrate production. All other accounts are rejected. Database access is checked again on every API request.
 
 Generate a secret:
 
@@ -113,10 +113,10 @@ The application supports a local-first architecture where IndexedDB (`jiten-miga
 
 ### Production Rollout Procedure
 
-**Current diagnostic checkpoint (2026-09-18):** The accessible configured database reports `0002_local_first_sync.sql` missing, a checksum mismatch for `0001_dataset_upload_counters.sql`, and no `sync_events` or `sync_mutations` tables. Vercel's exact target database, environment values, and runtime logs were not independently accessible. Treat rollout as blocked until the intended target passes `npm run db:verify`.
+**Current diagnostic checkpoint (2026-09-18):** The accessible configured database reports `0002_local_first_sync.sql` missing and no `sync_events` or `sync_mutations` tables. Its `0001_dataset_upload_counters.sql` ledger checksum differs from the current LF checkout even though the expected dataset counter columns exist; the migration tooling now treats LF/CRLF-only checksum differences as equivalent while still rejecting genuine SQL changes. Vercel's exact target database, environment values, and runtime logs were not independently accessible.
 
-1. Run `npm run db:verify` against production `DATABASE_URL`. If migration `0002_local_first_sync.sql` is missing, run `npm run db:migrate`, then verify again. Migration `0002_local_first_sync.sql` is strictly additive and backward-compatible with running instances.
-2. Confirm `sync_events` and `sync_mutations` tables exist in PostgreSQL. Stop rollout if the ledger has any checksum mismatch; investigate migration provenance instead of editing SQL history.
+1. Run `npm run db:verify` against production `DATABASE_URL` when direct access is available. Missing `0002_local_first_sync.sql` is safe to apply because it is strictly additive and backward-compatible with the running server-first deployment. Vercel production builds also run `db:migrate` and `db:verify` before the application build.
+2. Confirm `sync_events` and `sync_mutations` tables exist in PostgreSQL after migration. The tooling accepts only line-ending-equivalent legacy checksums; any other checksum mismatch still blocks rollout and must be investigated instead of editing SQL history.
 3. Deploy dual-write server code with `NEXT_PUBLIC_LOCAL_FIRST_SYNC=0`.
 4. Verify current server-first imports/decisions/queue/Anki/backups and confirm `sync_events` receives rows.
 5. Deploy `/api/sync` and local-first browser code with the flag still `0`.
