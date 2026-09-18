@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { migrationChecksum, verifyMigrationLedger } from "../../src/server/db/migrations";
+import {
+  migrationChecksum,
+  migrationCompatibleChecksums,
+  verifyMigrationLedger,
+} from "../../src/server/db/migrations";
 
 const expected = [
   { name: "0000_postgres_store.sql", checksum: "checksum-0000" },
@@ -62,4 +66,25 @@ describe("database migration verification", () => {
       "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
     );
   });
+  it("accepts a legacy checksum that differs only by line endings", () => {
+    const lf = "ALTER TABLE datasets\n  ADD COLUMN uploaded_rows bigint;\n";
+    const crlf = lf.replaceAll("\n", "\r\n");
+    const expectedMigration = {
+      name: "0001_dataset_upload_counters.sql",
+      checksum: migrationChecksum(lf),
+      acceptedChecksums: migrationCompatibleChecksums(lf),
+    };
+
+    expect(
+      verifyMigrationLedger(
+        [expectedMigration],
+        [{ name: expectedMigration.name, checksum: migrationChecksum(crlf) }],
+      ),
+    ).toEqual({
+      missing: [],
+      checksumMismatches: [],
+      unexpected: [],
+    });
+  });
+
 });
