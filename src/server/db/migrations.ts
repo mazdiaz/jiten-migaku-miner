@@ -72,10 +72,7 @@ export function verifyMigrationLedger(
     const actual = appliedByName.get(migration.name);
     if (actual === undefined) {
       missing.push(migration.name);
-    } else if (
-      actual !== migration.checksum &&
-      !migration.acceptedChecksums?.includes(actual)
-    ) {
+    } else if (actual !== migration.checksum && !migration.acceptedChecksums?.includes(actual)) {
       checksumMismatches.push({
         name: migration.name,
         expected: migration.checksum,
