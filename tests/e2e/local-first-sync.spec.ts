@@ -1,4 +1,44 @@
-import { expect, test } from "./fixtures";
+import { INDEXED_DB_NAME } from "../../src/storage/indexed-db-core";
+import { expect, type Page, test } from "./fixtures";
+
+async function localEditsAreDurable(page: Page): Promise<boolean> {
+  return page.evaluate((databaseName) => {
+    return new Promise<boolean>((resolve) => {
+      const open = indexedDB.open(databaseName);
+      open.onerror = () => resolve(false);
+      open.onsuccess = () => {
+        const database = open.result;
+        if (
+          !database.objectStoreNames.contains("wordDecisions") ||
+          !database.objectStoreNames.contains("preferences")
+        ) {
+          database.close();
+          resolve(false);
+          return;
+        }
+
+        const transaction = database.transaction(["wordDecisions", "preferences"], "readonly");
+        const decisions = transaction.objectStore("wordDecisions").getAll();
+        const preferences = transaction.objectStore("preferences").get("current");
+        transaction.oncomplete = () => {
+          const decisionRecords = decisions.result as Array<{ status?: string }>;
+          const preferenceRecord = preferences.result as
+            | { query?: { hideKnown?: boolean } }
+            | undefined;
+          database.close();
+          resolve(
+            decisionRecords.some((record) => record.status === "known") &&
+              preferenceRecord?.query?.hideKnown === true,
+          );
+        };
+        transaction.onerror = () => {
+          database.close();
+          resolve(false);
+        };
+      };
+    });
+  }, INDEXED_DB_NAME);
+}
 
 test.beforeEach(async () => {
   test.skip(
@@ -228,6 +268,9 @@ test("offline edits survive reload and sync when connection is restored", async 
   await page.locator("#advancedToggle").click();
   await expect(page.locator("#advancedPanel")).toBeVisible();
   await page.locator("#hideKnown").check();
+
+  // Decision and preference handlers persist asynchronously; reload only after both writes commit.
+  await expect.poll(() => localEditsAreDurable(page)).toBe(true);
 
   // Reload while offline
   await page.reload();
