@@ -20,8 +20,10 @@ describe("storage mode", () => {
     expect(storageModeLabel(undefined)).toBe("local-first");
     expect(storageModeLabel("1")).toBe("local-first");
     expect(storageModeLabel("0")).toBe("server-first fallback");
-    expect(storageModeDiagnostic(undefined)).toBe("Storage mode: local-first");
-    expect(storageModeDiagnostic("0")).toBe("Storage mode: server-first fallback");
+    expect(storageModeDiagnostic(storageModeLabel(undefined))).toBe("Storage mode: local-first");
+    expect(storageModeDiagnostic(storageModeLabel("0"))).toBe(
+      "Storage mode: server-first fallback",
+    );
   });
 
   it("distinguishes cold bootstrap from warm local loading", () => {
