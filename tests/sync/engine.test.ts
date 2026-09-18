@@ -1692,7 +1692,7 @@ describe("Task 6: Push-first/pull-second SyncEngine", () => {
       indexedDB.deleteDatabase(dbName);
     });
 
-    it("writeBarrier serializes concurrent local writes against bootstrapLocalCache reconcile", async () => {
+    it("writeBarrier serializes local writes only while the local cache is being reconciled", async () => {
       const dbName = `test-barrier-${crypto.randomUUID()}`;
       const writeBarrier = createLocalWriteBarrier();
       const localSyncStore = createLocalSyncStore(dbName, { writeBarrier });
@@ -1706,14 +1706,28 @@ describe("Task 6: Push-first/pull-second SyncEngine", () => {
         writeBarrier,
       });
 
-      let releaseBootstrap: () => void = () => {};
-      const bootstrapStarted = new Promise<void>((resolve) => {
-        releaseBootstrap = resolve;
+      const originalClearDomainCache = remoteApplyStore.clearDomainCache?.bind(remoteApplyStore);
+      if (!originalClearDomainCache) {
+        throw new Error("Test store must support clearDomainCache");
+      }
+
+      let signalReconcileStarted: () => void = () => {};
+      const reconcileStarted = new Promise<void>((resolve) => {
+        signalReconcileStarted = resolve;
       });
+      let releaseReconcile: () => void = () => {};
+      const reconcileGate = new Promise<void>((resolve) => {
+        releaseReconcile = resolve;
+      });
+
+      remoteApplyStore.clearDomainCache = async (options) => {
+        signalReconcileStarted();
+        await reconcileGate;
+        await originalClearDomainCache(options);
+      };
 
       const fakeCloud: CloudSyncPort = {
         async bootstrap() {
-          await bootstrapStarted;
           return { eventId: 1, activeDatasetId: null, datasets: [] };
         },
         async readKnownWords() {
@@ -1751,7 +1765,8 @@ describe("Task 6: Push-first/pull-second SyncEngine", () => {
         writeBarrier,
       });
 
-      // While bootstrapLocalCache is blocked in fakeCloud.bootstrap(), attempt a localAppStore write
+      await reconcileStarted;
+
       let localWriteCompleted = false;
       const writePromise = localAppStore.wordDecisions
         .set({
@@ -1763,12 +1778,10 @@ describe("Task 6: Push-first/pull-second SyncEngine", () => {
           localWriteCompleted = true;
         });
 
-      // Give macrotasks/microtasks a turn to execute
       await new Promise((resolve) => setTimeout(resolve, 50));
       expect(localWriteCompleted).toBe(false);
 
-      // Release bootstrap
-      releaseBootstrap();
+      releaseReconcile();
       await bootstrapPromise;
       await writePromise;
 
@@ -1776,7 +1789,6 @@ describe("Task 6: Push-first/pull-second SyncEngine", () => {
       const decision = await localAppStore.wordDecisions.get("猫");
       expect(decision?.status).toBe("known");
 
-      // Outbox should have the newly queued mutation with proper sequence
       const outbox = await localSyncStore.listOutbox(10);
       expect(outbox).toHaveLength(1);
       expect(outbox[0]?.kind).toBe("decision.set");
