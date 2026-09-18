@@ -141,6 +141,7 @@ export const uploadTargetSchema = z.enum([
 ]);
 const revision = integer;
 const uploadId = z.uuid();
+const uuid = z.uuid();
 const cursor = integer.default(0);
 export const operationSchema = z.discriminatedUnion("operation", [
   z.object({ operation: z.literal("initialize") }).strict(),
@@ -260,6 +261,125 @@ export function parseOperation(value: unknown): Operation {
   if (!result.success)
     throw new StoreError(
       `Invalid storage request: ${result.error.issues[0]?.message ?? "invalid value"}`,
+    );
+  return result.data;
+}
+
+export const materializedSyncMutationSchema = z.discriminatedUnion("kind", [
+  z.object({ mutationId: uuid, kind: z.literal("dataset.remove"), datasetId: key }).strict(),
+  z
+    .object({ mutationId: uuid, kind: z.literal("dataset.activate"), datasetId: key.nullable() })
+    .strict(),
+  z
+    .object({ mutationId: uuid, kind: z.literal("known.replace"), value: knownSchema.nullable() })
+    .strict(),
+  z
+    .object({ mutationId: uuid, kind: z.literal("decision.set"), decision: decisionSchema })
+    .strict(),
+  z.object({ mutationId: uuid, kind: z.literal("decision.remove"), normalizedWord: word }).strict(),
+  z
+    .object({
+      mutationId: uuid,
+      kind: z.literal("preferences.replace"),
+      value: preferencesSchema.nullable(),
+    })
+    .strict(),
+  z.object({ mutationId: uuid, kind: z.literal("queue.replace"), value: queueSchema }).strict(),
+  z.object({ mutationId: uuid, kind: z.literal("queue.remove"), datasetId: key }).strict(),
+  z
+    .object({
+      mutationId: uuid,
+      kind: z.literal("anki.replace"),
+      config: configSchema.nullable(),
+      snapshot: snapshotSchema.nullable(),
+    })
+    .strict(),
+]);
+
+export const syncOperationSchema = z.discriminatedUnion("operation", [
+  z.object({ operation: z.literal("bootstrap") }).strict(),
+  z
+    .object({
+      operation: z.literal("state.read"),
+      resource: z.enum([
+        "knownWords",
+        "decisions",
+        "preferences",
+        "ankiConfig",
+        "ankiSnapshot",
+        "queues",
+        "queue",
+      ]),
+      cursor,
+      datasetId: key.optional(),
+    })
+    .strict(),
+  z
+    .object({
+      operation: z.literal("pull"),
+      afterEventId: z.number().int().nonnegative(),
+      limit: z.number().int().positive().max(200).optional(),
+    })
+    .strict(),
+  z
+    .object({
+      operation: z.literal("push"),
+      deviceId: text,
+      mutations: z.array(materializedSyncMutationSchema).max(100),
+    })
+    .strict(),
+  z
+    .object({
+      operation: z.literal("dataset.begin"),
+      deviceId: text,
+      mutationId: uuid,
+      metadata: metadataSchema,
+    })
+    .strict(),
+  z
+    .object({
+      operation: z.literal("dataset.chunks"),
+      deviceId: text,
+      mutationId: uuid,
+      chunks: z
+        .array(
+          z
+            .object({
+              index: integer.max(10000),
+              entries: z.array(entrySchema).min(1).max(2000),
+            })
+            .strict(),
+        )
+        .min(1)
+        .max(16),
+    })
+    .strict(),
+  z
+    .object({
+      operation: z.literal("dataset.finish"),
+      deviceId: text,
+      mutationId: uuid,
+      chunkCount: integer.positive().max(10000),
+    })
+    .strict(),
+  z
+    .object({
+      operation: z.literal("dataset.read"),
+      datasetId: key,
+      cursor,
+    })
+    .strict(),
+]);
+
+export type SyncOperation = z.infer<typeof syncOperationSchema>;
+
+export function parseSyncOperation(value: unknown): SyncOperation {
+  if (bytes(value) > MAX_WIRE_BYTES)
+    throw new StoreError("Request exceeds the size limit", 413, "PAYLOAD_TOO_LARGE");
+  const result = syncOperationSchema.safeParse(value);
+  if (!result.success)
+    throw new StoreError(
+      `Invalid sync request: ${result.error.issues[0]?.message ?? "invalid value"}`,
     );
   return result.data;
 }

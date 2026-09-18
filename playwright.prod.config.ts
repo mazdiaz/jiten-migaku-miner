@@ -1,5 +1,6 @@
 import { defineConfig, devices } from "@playwright/test";
 import { testServerEnvironment } from "./tests/support/environment";
+
 const origin = "http://127.0.0.1:8931";
 export default defineConfig({
   testDir: "tests/e2e",

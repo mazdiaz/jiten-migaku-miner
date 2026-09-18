@@ -52,7 +52,7 @@ export interface ControllerCore {
   loadAndQuery(
     datasetId: string,
     expectedEntryCount: number,
-    options?: { callerHoldsUserStateLock?: boolean },
+    options?: { callerHoldsUserStateLock?: boolean; silent?: boolean },
   ): Promise<void>;
   decisionTuples(): Array<[string, WordDecisionStatus]>;
   ankiStatusTuples(): Array<[string, AnkiWordStatus]>;

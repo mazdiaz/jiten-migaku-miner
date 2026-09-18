@@ -127,6 +127,7 @@ export interface MinerController {
   applyAnkiSync(): Promise<void>;
   cancelAnkiSyncPreview(): void;
   clearAnkiSyncData(): Promise<void>;
+  refreshFromStorage?(): Promise<void>;
   init(): Promise<void>;
 }
 

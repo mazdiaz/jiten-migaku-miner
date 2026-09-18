@@ -231,13 +231,13 @@ describe("IndexedDbAppStore", () => {
     expect(await store.datasets.getActive()).toEqual(metadata("first"));
   });
 
-  it("creates version 3 schema with required object stores", async () => {
+  it("creates version 5 schema with required object stores", async () => {
     const store = createIndexedDbAppStore(databaseName);
     await store.datasets.list();
 
     const database = await openRawDatabase(databaseName);
     try {
-      expect(database.version).toBe(3);
+      expect(database.version).toBe(5);
       expect([...database.objectStoreNames]).toEqual(
         expect.arrayContaining([
           "datasets",
@@ -247,12 +247,16 @@ describe("IndexedDbAppStore", () => {
           "meta",
           "wordDecisions",
           "ankiSync",
+          "queues",
+          "workspace",
+          "syncOutbox",
+          "syncMeta",
         ]),
       );
-      expect(database.objectStoreNames.length).toBe(7);
-      expect(database.transaction(["ankiSync"], "readonly").objectStore("ankiSync").keyPath).toBe(
-        "id",
-      );
+      expect(database.objectStoreNames.length).toBe(11);
+      const tx = database.transaction(["ankiSync", "syncOutbox"], "readonly");
+      expect(tx.objectStore("ankiSync").keyPath).toBe("id");
+      expect(tx.objectStore("syncOutbox").indexNames.contains("sequence")).toBe(true);
     } finally {
       database.close();
     }
@@ -277,10 +281,11 @@ describe("IndexedDbAppStore", () => {
 
     const database = await openRawDatabase(databaseName);
     try {
-      expect(database.version).toBe(3);
-      expect(database.objectStoreNames.length).toBe(7);
+      expect(database.version).toBe(5);
+      expect(database.objectStoreNames.length).toBe(11);
       expect([...database.objectStoreNames]).toContain("wordDecisions");
       expect([...database.objectStoreNames]).toContain("ankiSync");
+      expect([...database.objectStoreNames]).toContain("syncOutbox");
     } finally {
       database.close();
     }
@@ -875,6 +880,112 @@ describe("readChunks dataset bounds", () => {
     expect(words).toHaveLength(40);
     for (const id of words) {
       expect(id.startsWith(`${datasetId}-entry-`)).toBe(true);
+    }
+  });
+});
+
+describe("IndexedDbAppStore outbox recording option", () => {
+  afterEach(async () => {
+    await deleteDatabase(databaseName);
+  });
+
+  it("records outbox items when recordSyncMutations is enabled", async () => {
+    const store = createIndexedDbAppStore({
+      databaseName,
+      recordSyncMutations: true,
+    });
+
+    await store.wordDecisions.set({
+      normalizedWord: "猫",
+      status: "known",
+      updatedAt: "2026-09-17T00:00:00.000Z",
+    });
+
+    const database = await openRawDatabase(databaseName);
+    try {
+      const tx = database.transaction(["syncOutbox"], "readonly");
+      const outbox = await new Promise<any[]>((resolve, reject) => {
+        const req = tx.objectStore("syncOutbox").getAll();
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+      expect(outbox).toHaveLength(1);
+      expect(outbox[0]).toMatchObject({
+        dedupeKey: "decision:猫",
+        kind: "decision.set",
+        resourceId: "猫",
+      });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("assigns unique, strictly monotonic sequence numbers on bulk replaceAll", async () => {
+    const store = createIndexedDbAppStore({
+      databaseName,
+      recordSyncMutations: true,
+    });
+
+    const decisions = ["一", "二", "三", "四", "五"].map((word, i) => ({
+      normalizedWord: word,
+      status: "known" as const,
+      updatedAt: `2026-09-17T00:00:0${i}.000Z`,
+    }));
+
+    await store.wordDecisions.replaceAll(decisions);
+
+    const database = await openRawDatabase(databaseName);
+    try {
+      const tx = database.transaction(["syncOutbox", "syncMeta"], "readonly");
+      const outbox = await new Promise<any[]>((resolve, reject) => {
+        const req = tx.objectStore("syncOutbox").index("sequence").getAll();
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+      const meta = await new Promise<any>((resolve, reject) => {
+        const req = tx.objectStore("syncMeta").get("current");
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+
+      expect(outbox).toHaveLength(5);
+      const sequences = outbox.map((r) => r.sequence);
+      expect(sequences).toEqual([1, 2, 3, 4, 5]);
+      expect(meta.nextOutboxSequence).toBe(6);
+    } finally {
+      database.close();
+    }
+
+    const nextDecisions = ["一", "二", "六"].map((word, i) => ({
+      normalizedWord: word,
+      status: "skip" as const,
+      updatedAt: `2026-09-17T01:00:0${i}.000Z`,
+    }));
+    await store.wordDecisions.replaceAll(nextDecisions);
+
+    const database2 = await openRawDatabase(databaseName);
+    try {
+      const tx = database2.transaction(["syncOutbox", "syncMeta"], "readonly");
+      const outbox = await new Promise<any[]>((resolve, reject) => {
+        const req = tx.objectStore("syncOutbox").index("sequence").getAll();
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+      const meta = await new Promise<any>((resolve, reject) => {
+        const req = tx.objectStore("syncMeta").get("current");
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+
+      const sequences = outbox.map((r) => r.sequence);
+      const uniqueSequences = new Set(sequences);
+      expect(uniqueSequences.size).toBe(outbox.length);
+      expect(Math.max(...sequences)).toBeLessThan(meta.nextOutboxSequence);
+      for (let i = 1; i < sequences.length; i++) {
+        expect(sequences[i]).toBeGreaterThan(sequences[i - 1]);
+      }
+    } finally {
+      database2.close();
     }
   });
 });

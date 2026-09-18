@@ -1,6 +1,7 @@
 import "fake-indexeddb/auto";
 import { describe, expect, it } from "vitest";
 import { IndexedDbAppStore } from "../../src/storage/indexed-db";
+import { createLocalSyncStore } from "../../src/storage/local-sync";
 
 function requestToPromise<T>(request: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -210,6 +211,158 @@ describe("IndexedDB v2 to v3 upgrade", () => {
       expect(raw.meta).toHaveLength(2);
       expect(raw.wordDecisions).toEqual([wordDecision]);
       expect(raw.ankiSync).toEqual([]);
+    } finally {
+      await deleteDatabase(databaseName);
+    }
+  });
+
+  it("creates queues, workspace, syncMeta, and syncOutbox stores when upgrading from v3", async () => {
+    const databaseName = `v3-to-v4-upgrade-${crypto.randomUUID()}`;
+    try {
+      const dataset = {
+        id: "v3-dataset",
+        name: "v3 dataset",
+        sourceType: "file",
+        sourceName: "v3.csv",
+        headers: ["Word", "Occurrences"],
+        entryCount: 1,
+        createdAt: "2026-09-17T00:00:00.000Z",
+        updatedAt: "2026-09-17T00:00:00.000Z",
+        schemaVersion: 1,
+        ready: true,
+      };
+      const request = indexedDB.open(databaseName, 3);
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        db.createObjectStore("datasets", { keyPath: "id" });
+        db.createObjectStore("entryChunks", { keyPath: ["datasetId", "chunkIndex"] });
+        db.createObjectStore("knownWordSets", { keyPath: "id" });
+        db.createObjectStore("preferences", { keyPath: "id" });
+        db.createObjectStore("meta", { keyPath: "key" });
+        db.createObjectStore("wordDecisions", { keyPath: "normalizedWord" });
+        db.createObjectStore("ankiSync", { keyPath: "id" });
+      };
+      const database = await requestToPromise(request);
+      const transaction = database.transaction(["datasets"], "readwrite");
+      transaction.objectStore("datasets").put(dataset);
+      await transactionToPromise(transaction);
+      database.close();
+
+      const upgraded = new IndexedDbAppStore(databaseName);
+      expect(await upgraded.datasets.getActive()).toBeNull();
+      expect(await upgraded.datasets.list()).toEqual([
+        {
+          id: "v3-dataset",
+          name: "v3 dataset",
+          sourceType: "file",
+          sourceName: "v3.csv",
+          headers: ["Word", "Occurrences"],
+          entryCount: 1,
+          createdAt: "2026-09-17T00:00:00.000Z",
+          updatedAt: "2026-09-17T00:00:00.000Z",
+          schemaVersion: 1,
+        },
+      ]);
+
+      const checkReq = indexedDB.open(databaseName);
+      const db = await requestToPromise(checkReq);
+      try {
+        const stores = [...db.objectStoreNames].sort();
+        expect(stores).toEqual([
+          "ankiSync",
+          "datasets",
+          "entryChunks",
+          "knownWordSets",
+          "meta",
+          "preferences",
+          "queues",
+          "syncMeta",
+          "syncOutbox",
+          "wordDecisions",
+          "workspace",
+        ]);
+        const tx = db.transaction(["syncOutbox", "queues", "syncMeta", "workspace"], "readonly");
+        expect(tx.objectStore("syncOutbox").keyPath).toBe("dedupeKey");
+        expect(tx.objectStore("syncOutbox").indexNames.contains("sequence")).toBe(true);
+        expect(tx.objectStore("queues").keyPath).toBe("datasetId");
+        expect(tx.objectStore("syncMeta").keyPath).toBe("id");
+        expect(tx.objectStore("workspace").keyPath).toBe("id");
+      } finally {
+        db.close();
+      }
+    } finally {
+      await deleteDatabase(databaseName);
+    }
+  });
+
+  it("creates sequence index on syncOutbox and backfills missing sequences when upgrading from v4 to v5", async () => {
+    const databaseName = `v4-to-v5-upgrade-${crypto.randomUUID()}`;
+    try {
+      const existingOutboxItem1 = {
+        dedupeKey: "pref",
+        mutationId: "mut-1",
+        kind: "preferences.replace",
+        resourceId: null,
+        createdAt: "2026-09-17T00:00:00.000Z",
+      };
+      const existingOutboxItem2 = {
+        dedupeKey: "queue:ds-1",
+        mutationId: "mut-2",
+        kind: "queue.replace",
+        resourceId: "ds-1",
+        createdAt: "2026-09-17T00:00:01.000Z",
+      };
+      const existingMeta = {
+        id: "current",
+        deviceId: "device-123",
+        bootstrapComplete: true,
+        serverEventId: 42,
+        lastSyncAt: "2026-09-17T00:00:00.000Z",
+      };
+      const request = indexedDB.open(databaseName, 4);
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        db.createObjectStore("datasets", { keyPath: "id" });
+        db.createObjectStore("entryChunks", { keyPath: ["datasetId", "chunkIndex"] });
+        db.createObjectStore("knownWordSets", { keyPath: "id" });
+        db.createObjectStore("preferences", { keyPath: "id" });
+        db.createObjectStore("meta", { keyPath: "key" });
+        db.createObjectStore("wordDecisions", { keyPath: "normalizedWord" });
+        db.createObjectStore("ankiSync", { keyPath: "id" });
+        db.createObjectStore("queues", { keyPath: "datasetId" });
+        db.createObjectStore("workspace", { keyPath: "id" });
+        db.createObjectStore("syncOutbox", { keyPath: "dedupeKey" });
+        db.createObjectStore("syncMeta", { keyPath: "id" });
+      };
+      const database = await requestToPromise(request);
+      const transaction = database.transaction(["syncOutbox", "syncMeta"], "readwrite");
+      transaction.objectStore("syncOutbox").put(existingOutboxItem1);
+      transaction.objectStore("syncOutbox").put(existingOutboxItem2);
+      transaction.objectStore("syncMeta").put(existingMeta);
+      await transactionToPromise(transaction);
+      database.close();
+
+      const localSyncStore = createLocalSyncStore(databaseName);
+      const outbox = await localSyncStore.listOutbox(10);
+      expect(outbox).toHaveLength(2);
+      expect(outbox[0]).toEqual({ ...existingOutboxItem1, sequence: 1 });
+      expect(outbox[1]).toEqual({ ...existingOutboxItem2, sequence: 2 });
+
+      const meta = await localSyncStore.getMeta();
+      expect(meta.nextOutboxSequence).toBe(3);
+      expect(meta.deviceId).toBe("device-123");
+      expect(meta.serverEventId).toBe(42);
+
+      const checkReq = indexedDB.open(databaseName);
+      const db = await requestToPromise(checkReq);
+      try {
+        expect(db.version).toBe(5);
+        const tx = db.transaction(["syncOutbox"], "readonly");
+        const outboxStore = tx.objectStore("syncOutbox");
+        expect(outboxStore.indexNames.contains("sequence")).toBe(true);
+      } finally {
+        db.close();
+      }
     } finally {
       await deleteDatabase(databaseName);
     }

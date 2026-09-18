@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
+import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/pglite";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { Entry } from "../../src/domain/types";
@@ -56,6 +57,7 @@ async function* chunks(...values: Entry[][]) {
 
 describe("PostgreSQL store over the real HTTP adapter", () => {
   let pg: PGlite;
+  let database: ReturnType<typeof drizzle>;
   let dispatch: ReturnType<typeof createPostgresStore>;
   let requestSizes: number[];
   let responseSizes: number[];
@@ -92,15 +94,32 @@ describe("PostgreSQL store over the real HTTP adapter", () => {
         "utf8",
       ),
     );
-    dispatch = createPostgresStore(drizzle(pg));
+    try {
+      await pg.exec(
+        await readFile(
+          new URL("../../migrations/0002_local_first_sync.sql", import.meta.url),
+          "utf8",
+        ),
+      );
+    } catch {
+      // 0002 might not exist yet
+    }
+    database = drizzle(pg);
+    dispatch = createPostgresStore(database);
   }, 60_000);
   afterAll(async () => {
     await pg?.close();
   });
   beforeEach(async () => {
-    await pg.exec(
-      "TRUNCATE app_state, datasets, state_uploads, known_words, word_decisions, anki_statuses RESTART IDENTITY CASCADE",
-    );
+    try {
+      await pg.exec(
+        "TRUNCATE app_state, datasets, state_uploads, known_words, word_decisions, anki_statuses, sync_events, sync_mutations RESTART IDENTITY CASCADE",
+      );
+    } catch {
+      await pg.exec(
+        "TRUNCATE app_state, datasets, state_uploads, known_words, word_decisions, anki_statuses RESTART IDENTITY CASCADE",
+      );
+    }
     requestSizes = [];
     responseSizes = [];
     capturedRequests = [];
@@ -948,5 +967,441 @@ describe("PostgreSQL store over the real HTTP adapter", () => {
         datasetId: "finish-chunk-count",
       }),
     ).rejects.toThrow(/not found|ready/i);
+  });
+
+  const NOW = "2026-09-17T00:00:00.000Z";
+
+  it("emits a decision sync event in the same committed operation", async () => {
+    const dispatch = createPostgresStore(database);
+    await dispatch({ operation: "initialize" });
+    await dispatch({
+      operation: "decision.set",
+      revision: 0,
+      decision: { normalizedWord: "騒ぐ", status: "known", updatedAt: NOW },
+    });
+
+    const result = await database.execute(
+      sql`SELECT resource, resource_key, action FROM sync_events ORDER BY id`,
+    );
+    const records = Array.isArray(result) ? result : result.rows;
+    expect(records).toEqual([{ resource: "decision", resource_key: "騒ぐ", action: "set" }]);
+  });
+
+  it("emits a preferences sync event on preferences.save", async () => {
+    const dispatch = createPostgresStore(database);
+    await dispatch({ operation: "initialize" });
+    await dispatch({
+      operation: "preferences.save",
+      revision: 0,
+      value: preferences,
+    });
+
+    const result = await database.execute(
+      sql`SELECT resource, resource_key, action FROM sync_events ORDER BY id`,
+    );
+    const records = Array.isArray(result) ? result : result.rows;
+    expect(records).toEqual([{ resource: "preferences", resource_key: null, action: "replace" }]);
+  });
+
+  it("emits a dataset sync event on successful dataset.finish", async () => {
+    const dispatch = createPostgresStore(database);
+    await dispatch({ operation: "initialize" });
+    const begin = await dispatch({
+      operation: "dataset.begin",
+      revision: 0,
+      metadata: metadata("ds-1", 1),
+    });
+    const uploadId = (begin.value as { uploadId: string }).uploadId;
+    await dispatch({
+      operation: "dataset.chunk",
+      revision: 0,
+      uploadId,
+      index: 0,
+      entries: [entry("1")],
+    });
+    await dispatch({
+      operation: "dataset.finish",
+      revision: 0,
+      uploadId,
+      chunkCount: 1,
+    });
+
+    const result = await database.execute(
+      sql`SELECT resource, resource_key, action FROM sync_events ORDER BY id`,
+    );
+    const records = Array.isArray(result) ? result : result.rows;
+    expect(records).toEqual([{ resource: "dataset", resource_key: "ds-1", action: "upsert" }]);
+  });
+
+  it("emits a dataset-active sync event on dataset.activate", async () => {
+    const dispatch = createPostgresStore(database);
+    await dispatch({ operation: "initialize" });
+    const begin = await dispatch({
+      operation: "dataset.begin",
+      revision: 0,
+      metadata: metadata("ds-act", 1),
+    });
+    const uploadId = (begin.value as { uploadId: string }).uploadId;
+    await dispatch({
+      operation: "dataset.chunk",
+      revision: 0,
+      uploadId,
+      index: 0,
+      entries: [entry("1")],
+    });
+    const finish = await dispatch({
+      operation: "dataset.finish",
+      revision: 0,
+      uploadId,
+      chunkCount: 1,
+    });
+    await dispatch({
+      operation: "dataset.activate",
+      revision: finish.revision,
+      datasetId: "ds-act",
+    });
+
+    const result = await database.execute(
+      sql`SELECT resource, resource_key, action FROM sync_events ORDER BY id`,
+    );
+    const records = Array.isArray(result) ? result : result.rows;
+    expect(records).toEqual([
+      { resource: "dataset", resource_key: "ds-act", action: "upsert" },
+      { resource: "dataset-active", resource_key: "ds-act", action: "set" },
+    ]);
+  });
+
+  it("emits a dataset sync event on dataset.remove", async () => {
+    const dispatch = createPostgresStore(database);
+    await dispatch({ operation: "initialize" });
+    const begin = await dispatch({
+      operation: "dataset.begin",
+      revision: 0,
+      metadata: metadata("ds-rem", 1),
+    });
+    const uploadId = (begin.value as { uploadId: string }).uploadId;
+    await dispatch({
+      operation: "dataset.chunk",
+      revision: 0,
+      uploadId,
+      index: 0,
+      entries: [entry("1")],
+    });
+    const finish = await dispatch({
+      operation: "dataset.finish",
+      revision: 0,
+      uploadId,
+      chunkCount: 1,
+    });
+    await dispatch({
+      operation: "dataset.remove",
+      revision: finish.revision,
+      datasetId: "ds-rem",
+    });
+
+    const result = await database.execute(
+      sql`SELECT resource, resource_key, action FROM sync_events WHERE action = 'remove' ORDER BY id`,
+    );
+    const records = Array.isArray(result) ? result : result.rows;
+    expect(records).toEqual([{ resource: "dataset", resource_key: "ds-rem", action: "remove" }]);
+  });
+
+  it("emits a decision sync event on decision.remove", async () => {
+    const dispatch = createPostgresStore(database);
+    await dispatch({ operation: "initialize" });
+    await dispatch({
+      operation: "decision.set",
+      revision: 0,
+      decision: { normalizedWord: "騒ぐ", status: "known", updatedAt: NOW },
+    });
+    await dispatch({
+      operation: "decision.remove",
+      revision: 1,
+      word: "騒ぐ",
+    });
+
+    const result = await database.execute(
+      sql`SELECT resource, resource_key, action FROM sync_events ORDER BY id`,
+    );
+    const records = Array.isArray(result) ? result : result.rows;
+    expect(records).toEqual([
+      { resource: "decision", resource_key: "騒ぐ", action: "set" },
+      { resource: "decision", resource_key: "騒ぐ", action: "remove" },
+    ]);
+  });
+
+  it("emits a known sync event on known state.finish and known.remove", async () => {
+    const dispatch = createPostgresStore(database);
+    await dispatch({ operation: "initialize" });
+    const begin = await dispatch({
+      operation: "state.begin",
+      revision: 0,
+      target: "knownWords",
+    });
+    const uploadId = (begin.value as { uploadId: string }).uploadId;
+    await dispatch({
+      operation: "state.chunk",
+      revision: 0,
+      uploadId,
+      index: 0,
+      text: JSON.stringify({ id: "kw-1", name: "Known", words: ["猫"] }),
+    });
+    const finish = await dispatch({
+      operation: "state.finish",
+      revision: 0,
+      uploadId,
+      chunkCount: 1,
+    });
+    await dispatch({
+      operation: "known.remove",
+      revision: finish.revision,
+      id: "kw-1",
+    });
+
+    const result = await database.execute(
+      sql`SELECT resource, resource_key, action FROM sync_events ORDER BY id`,
+    );
+    const records = Array.isArray(result) ? result : result.rows;
+    expect(records).toEqual([
+      { resource: "known", resource_key: null, action: "replace" },
+      { resource: "known", resource_key: null, action: "replace" },
+    ]);
+  });
+
+  it("emits a queue sync event on queue state.finish with value", async () => {
+    const dispatch = createPostgresStore(database);
+    await dispatch({ operation: "initialize" });
+    const dsBegin = await dispatch({
+      operation: "dataset.begin",
+      revision: 0,
+      metadata: metadata("q-ds", 1),
+    });
+    const dsUploadId = (dsBegin.value as { uploadId: string }).uploadId;
+    await dispatch({
+      operation: "dataset.chunk",
+      revision: 0,
+      uploadId: dsUploadId,
+      index: 0,
+      entries: [entry("1")],
+    });
+    const dsFinish = await dispatch({
+      operation: "dataset.finish",
+      revision: 0,
+      uploadId: dsUploadId,
+      chunkCount: 1,
+    });
+
+    const begin = await dispatch({
+      operation: "state.begin",
+      revision: dsFinish.revision,
+      target: "queue",
+    });
+    const uploadId = (begin.value as { uploadId: string }).uploadId;
+    await dispatch({
+      operation: "state.chunk",
+      revision: dsFinish.revision,
+      uploadId,
+      index: 0,
+      text: JSON.stringify({ version: 1, datasetId: "q-ds", normalizedWords: ["猫"] }),
+    });
+    await dispatch({
+      operation: "state.finish",
+      revision: dsFinish.revision,
+      uploadId,
+      chunkCount: 1,
+    });
+
+    const result = await database.execute(
+      sql`SELECT resource, resource_key, action FROM sync_events WHERE resource = 'queue' ORDER BY id`,
+    );
+    const records = Array.isArray(result) ? result : result.rows;
+    expect(records).toEqual([{ resource: "queue", resource_key: "q-ds", action: "replace" }]);
+  });
+
+  it("emits a queue remove sync event on queue state.finish with null", async () => {
+    const dispatch = createPostgresStore(database);
+    await dispatch({ operation: "initialize" });
+    const dsBegin = await dispatch({
+      operation: "dataset.begin",
+      revision: 0,
+      metadata: metadata("q-ds-null", 1),
+    });
+    const dsUploadId = (dsBegin.value as { uploadId: string }).uploadId;
+    await dispatch({
+      operation: "dataset.chunk",
+      revision: 0,
+      uploadId: dsUploadId,
+      index: 0,
+      entries: [entry("1")],
+    });
+    const dsFinish = await dispatch({
+      operation: "dataset.finish",
+      revision: 0,
+      uploadId: dsUploadId,
+      chunkCount: 1,
+    });
+    const activate = await dispatch({
+      operation: "dataset.activate",
+      revision: dsFinish.revision,
+      datasetId: "q-ds-null",
+    });
+
+    const begin = await dispatch({
+      operation: "state.begin",
+      revision: activate.revision,
+      target: "queue",
+    });
+    const uploadId = (begin.value as { uploadId: string }).uploadId;
+    await dispatch({
+      operation: "state.chunk",
+      revision: activate.revision,
+      uploadId,
+      index: 0,
+      text: JSON.stringify(null),
+    });
+    await dispatch({
+      operation: "state.finish",
+      revision: activate.revision,
+      uploadId,
+      chunkCount: 1,
+    });
+
+    const result = await database.execute(
+      sql`SELECT resource, resource_key, action FROM sync_events WHERE resource = 'queue' ORDER BY id`,
+    );
+    const records = Array.isArray(result) ? result : result.rows;
+    expect(records).toEqual([{ resource: "queue", resource_key: "q-ds-null", action: "remove" }]);
+  });
+
+  it("emits an anki sync event on ankiConfig.save and anki snapshot finish/clear", async () => {
+    const dispatch = createPostgresStore(database);
+    await dispatch({ operation: "initialize" });
+    const save = await dispatch({
+      operation: "ankiConfig.save",
+      revision: 0,
+      value: { deckScope: { kind: "all-decks" }, noteType: "Japanese", targetField: "Word" },
+    });
+    const begin = await dispatch({
+      operation: "state.begin",
+      revision: save.revision,
+      target: "ankiSnapshot",
+    });
+    const uploadId = (begin.value as { uploadId: string }).uploadId;
+    await dispatch({
+      operation: "state.chunk",
+      revision: save.revision,
+      uploadId,
+      index: 0,
+      text: JSON.stringify({ syncedAt: NOW, statuses: [["猫", "known"]] }),
+    });
+    const finish = await dispatch({
+      operation: "state.finish",
+      revision: save.revision,
+      uploadId,
+      chunkCount: 1,
+    });
+    await dispatch({
+      operation: "state.clear",
+      revision: finish.revision,
+      resource: "ankiSync",
+    });
+
+    const result = await database.execute(
+      sql`SELECT resource, resource_key, action FROM sync_events ORDER BY id`,
+    );
+    const records = Array.isArray(result) ? result : result.rows;
+    expect(records).toEqual([
+      { resource: "anki", resource_key: null, action: "replace" },
+      { resource: "anki", resource_key: null, action: "replace" },
+      { resource: "anki", resource_key: null, action: "replace" },
+    ]);
+  });
+
+  it("emits a full-reset state sync event on state.clear all and complete restore", async () => {
+    const dispatch = createPostgresStore(database);
+    await dispatch({ operation: "initialize" });
+    const clear = await dispatch({
+      operation: "state.clear",
+      revision: 0,
+      resource: "all",
+    });
+    const begin = await dispatch({
+      operation: "state.begin",
+      revision: clear.revision,
+      target: "completeBackup",
+    });
+    const uploadId = (begin.value as { uploadId: string }).uploadId;
+    await dispatch({
+      operation: "state.chunk",
+      revision: clear.revision,
+      uploadId,
+      index: 0,
+      text: JSON.stringify({
+        version: 3,
+        exportedAt: NOW,
+        activeDatasetId: null,
+        datasets: [],
+        knownWords: null,
+        decisions: [],
+        preferences: null,
+        ankiSync: { config: null, snapshot: null },
+        queues: [],
+      }),
+    });
+    await dispatch({
+      operation: "state.finish",
+      revision: clear.revision,
+      uploadId,
+      chunkCount: 1,
+    });
+
+    const result = await database.execute(
+      sql`SELECT resource, resource_key, action FROM sync_events ORDER BY id`,
+    );
+    const records = Array.isArray(result) ? result : result.rows;
+    expect(records).toEqual([
+      { resource: "state", resource_key: null, action: "full-reset" },
+      { resource: "state", resource_key: null, action: "full-reset" },
+    ]);
+  });
+
+  it("emits no sync events for staging operations (dataset.begin, dataset.chunk, dataset.chunks, state.chunk)", async () => {
+    const dispatch = createPostgresStore(database);
+    await dispatch({ operation: "initialize" });
+    const begin = await dispatch({
+      operation: "dataset.begin",
+      revision: 0,
+      metadata: metadata("staging-ds", 2),
+    });
+    const uploadId = (begin.value as { uploadId: string }).uploadId;
+    await dispatch({
+      operation: "dataset.chunk",
+      revision: 0,
+      uploadId,
+      index: 0,
+      entries: [entry("1")],
+    });
+    await dispatch({
+      operation: "dataset.chunks",
+      revision: 0,
+      uploadId,
+      chunks: [{ index: 1, entries: [entry("2")] }],
+    });
+    const stateBegin = await dispatch({
+      operation: "state.begin",
+      revision: 0,
+      target: "knownWords",
+    });
+    await dispatch({
+      operation: "state.chunk",
+      revision: 0,
+      uploadId: (stateBegin.value as { uploadId: string }).uploadId,
+      index: 0,
+      text: "[]",
+    });
+
+    const result = await database.execute(sql`SELECT * FROM sync_events`);
+    const records = Array.isArray(result) ? result : result.rows;
+    expect(records).toHaveLength(0);
   });
 });

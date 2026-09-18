@@ -4510,4 +4510,224 @@ describe("source adapters", () => {
     await expect(source.newest("files", ".csv")).resolves.toBeNull();
     expect(calls).toBe(1);
   });
+
+  describe("Task 7: initialViewportStart and refreshFromStorage", () => {
+    async function* copiedEntryChunks(chunks: readonly Entry[][]): AsyncIterable<readonly Entry[]> {
+      for (const chunk of chunks) yield chunk;
+    }
+
+    it("applies initialViewportStart on the very first query when pageSize is all, and leaves window undefined when pageSize is 50", async () => {
+      const store1 = createMemoryAppStore();
+      const meta = metadata("ds-5k", "ds-5k");
+      meta.entryCount = 5000;
+      const entries5k: Entry[] = Array.from({ length: 5000 }, (_, i) =>
+        entry(`e-${i}`, `word-${i}`, i),
+      );
+      await store1.datasets.stage(meta, copiedEntryChunks([entries5k]));
+      await store1.datasets.activate("ds-5k");
+      await store1.preferences.save({
+        query: { ...query, pageSize: "all" },
+        view,
+        page: 1,
+      });
+
+      const worker1 = new FakeWorkerClient();
+      const controller1 = createMinerController({
+        store: store1,
+        worker: worker1,
+        initialViewportStart: 3500,
+        legacyStorage: null,
+      });
+
+      await controller1.init();
+      expect(worker1.queryCalls.length).toBeGreaterThanOrEqual(1);
+      expect(worker1.queryCalls[0]!.window).toEqual({ start: 3500, size: 100 });
+
+      // Second controller with pageSize: 50
+      const store2 = createMemoryAppStore();
+      await store2.datasets.stage(meta, copiedEntryChunks([entries5k]));
+      await store2.datasets.activate("ds-5k");
+      await store2.preferences.save({
+        query: { ...query, pageSize: 50 },
+        view,
+        page: 1,
+      });
+
+      const worker2 = new FakeWorkerClient();
+      const controller2 = createMinerController({
+        store: store2,
+        worker: worker2,
+        initialViewportStart: 3500,
+        legacyStorage: null,
+      });
+
+      await controller2.init();
+      expect(worker2.queryCalls.length).toBeGreaterThanOrEqual(1);
+      expect(worker2.queryCalls[0]!.window).toBeUndefined();
+    });
+
+    it("Case A: same active dataset, local store changes one decision. After refreshFromStorage(), controller updates decision, loadDataset count does not increase, and query count increases", async () => {
+      const store = createMemoryAppStore();
+      const meta = metadata("ds-1", "ds-1");
+      await store.datasets.stage(meta, copiedEntryChunks([[entry("e-1", "猫")]]));
+      await store.datasets.activate("ds-1");
+
+      const worker = new FakeWorkerClient();
+      const controller = createMinerController({
+        store,
+        worker,
+        legacyStorage: null,
+      });
+
+      await controller.init();
+
+      const initialLoadCalls = worker.loadCalls.length;
+      const initialQueryCalls = worker.queryCalls.length;
+
+      // Update decision directly in underlying store
+      await store.wordDecisions.set({
+        normalizedWord: "猫",
+        status: "mined",
+        updatedAt: "2026-09-17T00:00:00.000Z",
+      });
+
+      await controller.refreshFromStorage?.();
+
+      let stateSnapshot: any;
+      controller.subscribe((s) => (stateSnapshot = s))();
+      expect(stateSnapshot.wordDecisions.get("猫")?.status).toBe("mined");
+
+      expect(worker.loadCalls.length).toBe(initialLoadCalls);
+      expect(worker.queryCalls.length).toBeGreaterThan(initialQueryCalls);
+    });
+
+    it("Case B: local store changes active dataset. After refreshFromStorage(), prepareDataset runs once, worker loadDataset receives new id, and queue is loaded with loadForDataset", async () => {
+      const store = createMemoryAppStore();
+      const meta1 = metadata("ds-1", "ds-1");
+      const meta2 = metadata("ds-2", "ds-2");
+      await store.datasets.stage(meta1, copiedEntryChunks([[entry("e-1", "猫")]]));
+      await store.datasets.stage(meta2, copiedEntryChunks([[entry("e-2", "犬")]]));
+      await store.datasets.activate("ds-1");
+
+      const prepared: string[] = [];
+      const worker = new FakeWorkerClient();
+      const sessionQueueStore = {
+        load: vi.fn(() => null),
+        loadForDataset: vi.fn(async (id: string) => ({
+          version: 1 as const,
+          datasetId: id,
+          normalizedWords: ["犬"],
+        })),
+        save: vi.fn(),
+        clear: vi.fn(),
+      };
+
+      const controller = createMinerController({
+        store,
+        worker,
+        sessionQueueStore,
+        prepareDataset: async (id) => {
+          prepared.push(id);
+        },
+        legacyStorage: null,
+      });
+
+      await controller.init();
+      expect(prepared).toEqual(["ds-1"]);
+
+      // Now activate dataset ds-2 directly in store
+      await store.datasets.activate("ds-2");
+
+      await controller.refreshFromStorage?.();
+
+      expect(prepared).toEqual(["ds-1", "ds-2"]);
+      expect(worker.loadCalls[worker.loadCalls.length - 1]!.datasetId).toBe("ds-2");
+      expect(sessionQueueStore.loadForDataset).toHaveBeenCalledWith("ds-2");
+    });
+
+    it("resets in-memory known words to empty set and null name when known words become null in storage", async () => {
+      const store = createMemoryAppStore();
+      const meta = metadata("ds-1", "ds-1");
+      await store.datasets.stage(meta, copiedEntryChunks([[entry("e-1", "猫")]]));
+      await store.datasets.activate("ds-1");
+      await store.knownWords.save("kw-1", "My Known Words", ["猫", "犬"]);
+
+      const worker = new FakeWorkerClient();
+      const controller = createMinerController({
+        store,
+        worker,
+        legacyStorage: null,
+      });
+
+      let latestState!: AppState;
+      controller.subscribe((state) => {
+        latestState = state;
+      });
+
+      await controller.init();
+      expect(latestState.knownWords.size).toBe(2);
+      expect(latestState.knownWordsName).toBe("My Known Words");
+
+      // Clear known words in store
+      store.knownWords.clear?.();
+
+      await controller.refreshFromStorage?.();
+
+      expect(latestState.knownWords.size).toBe(0);
+      expect(latestState.knownWordsName).toBeNull();
+    });
+
+    it("resets in-memory query and view to default when preferences become null in storage", async () => {
+      const store = createMemoryAppStore();
+      const meta = metadata("ds-1", "ds-1");
+      await store.datasets.stage(meta, copiedEntryChunks([[entry("e-1", "猫")]]));
+      await store.datasets.activate("ds-1");
+      await store.preferences.save({
+        query: {
+          search: "test",
+          hideKnown: false,
+          hideKanaOnly: true,
+          sentence: "has",
+          minOccurrences: 5,
+          sort: "occ-asc",
+          pageSize: 100,
+          page: 3,
+          decision: "known",
+        },
+        view: {
+          showFurigana: false,
+          pillHighlight: false,
+          showHighlight: false,
+          showDefinitions: false,
+          sentenceSize: "large",
+          density: "compact",
+        },
+        page: 3,
+      });
+
+      const worker = new FakeWorkerClient();
+      const controller = createMinerController({
+        store,
+        worker,
+        legacyStorage: null,
+      });
+
+      let latestState!: AppState;
+      controller.subscribe((state) => {
+        latestState = state;
+      });
+
+      await controller.init();
+      expect(latestState.query.search).toBe("test");
+      expect(latestState.view.density).toBe("compact");
+
+      // Clear preferences in store
+      store.preferences.clear?.();
+
+      await controller.refreshFromStorage?.();
+
+      expect(latestState.query).toEqual(DEFAULT_QUERY);
+      expect(latestState.view).toEqual(DEFAULT_VIEW);
+    });
+  });
 });

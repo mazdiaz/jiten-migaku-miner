@@ -191,4 +191,121 @@ test.describe("backup and restore", () => {
     await expect(page.locator("#errorBox")).toContainText("Unsupported backup version: 99");
     await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
   });
+
+  test("local-first export flushes pending outbox mutations before downloading backup", async ({
+    page,
+  }) => {
+    test.setTimeout(60_000);
+    await acceptDialogs(page);
+    await page.goto("/");
+    await expect(page.locator(".cloud-status")).toHaveText(
+      /^(Saved to PostgreSQL|Synced|Saved locally)\s*$/,
+    );
+
+    await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
+    await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
+
+    let releaseSync = () => {};
+    const syncPaused = new Promise<void>((resolve) => {
+      releaseSync = resolve;
+    });
+
+    await page.route("**/api/sync", async (route) => {
+      const data = route.request().postDataJSON();
+      if (data?.operation === "push") {
+        await syncPaused;
+      }
+      return route.continue();
+    });
+
+    await page.locator('[data-decision-action="known"]').first().click();
+
+    const downloadPromise = page.waitForEvent("download");
+    const exportClick = page.locator("#exportBackup").click();
+
+    releaseSync();
+    await exportClick;
+
+    const download = await downloadPromise;
+    const backupPath = await download.path();
+    const backup = JSON.parse(readFileSync(backupPath!, "utf-8")) as {
+      decisions: Array<{ normalizedWord: string; status: string }>;
+    };
+    expect(backup.decisions.some((d) => d.status === "known")).toBe(true);
+  });
+
+  test("complete restore restores new dataset and marks bootstrap complete", async ({ page }) => {
+    test.setTimeout(60_000);
+    await acceptDialogs(page);
+    await page.goto("/");
+    await expect(page.locator(".cloud-status")).toHaveText(
+      /^(Saved to PostgreSQL|Synced|Saved locally)\s*$/,
+    );
+
+    await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
+    await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
+
+    const downloadPromise = page.waitForEvent("download");
+    await page.locator("#exportBackup").click();
+    const download = await downloadPromise;
+    const backupPath = await download.path();
+    const backup = JSON.parse(readFileSync(backupPath!, "utf-8")) as {
+      datasets: Array<{
+        metadata: { id: string; name: string };
+        entries: unknown[];
+      }>;
+      activeDatasetId: string | null;
+      version: number;
+    };
+    backup.datasets[0]!.metadata.id = "restore-dataset";
+    backup.datasets[0]!.metadata.name = "restore-dataset.csv";
+    if (backup.activeDatasetId) {
+      backup.activeDatasetId = "restore-dataset";
+    }
+
+    await page.locator("#restoreBackupInput").setInputFiles({
+      name: "restore-dataset.json",
+      mimeType: "application/json",
+      buffer: Buffer.from(JSON.stringify(backup), "utf-8"),
+    });
+
+    await expect(page.locator("#backupStatus")).toHaveText("Complete backup restored.");
+    await expect(page).toHaveURL(/\/(?:\?restored=1)?$/);
+    await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
+  });
+
+  test("aborted restore request preserves pre-restore cached dataset and local data", async ({
+    page,
+  }) => {
+    test.setTimeout(60_000);
+    await acceptDialogs(page);
+    await page.goto("/");
+    await expect(page.locator(".cloud-status")).toHaveText(
+      /^(Saved to PostgreSQL|Synced|Saved locally)\s*$/,
+    );
+
+    await page.locator("#jitenInput").setInputFiles(SMALL_CSV);
+    await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
+
+    await page.route("**/api/store", (route) => {
+      const data = route.request().postDataJSON();
+      if (data?.operation === "restoreCompleteBackup") {
+        return route.abort();
+      }
+      return route.continue();
+    });
+
+    await page.locator("#restoreBackupInput").setInputFiles({
+      name: "aborted-backup.json",
+      mimeType: "application/json",
+      buffer: Buffer.from(
+        JSON.stringify({ version: 3, format: "jiten-migaku-miner-backup" }),
+        "utf-8",
+      ),
+    });
+
+    await expect(page.locator("#errorBox")).toBeVisible();
+    await expect(page.locator("#errorBox")).toContainText("Backup could not be restored");
+    await expect(page.locator("#resultsList .mining-entry")).toHaveCount(3);
+  });
 });
