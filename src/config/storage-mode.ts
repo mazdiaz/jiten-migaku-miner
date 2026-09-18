@@ -16,8 +16,8 @@ export function configuredStorageModeLabel(): StorageModeLabel {
   return storageModeLabel(process.env.NEXT_PUBLIC_LOCAL_FIRST_SYNC);
 }
 
-export function storageModeDiagnostic(value?: string): string {
-  return `Storage mode: ${storageModeLabel(value)}`;
+export function storageModeDiagnostic(mode: StorageModeLabel): string {
+  return `Storage mode: ${mode}`;
 }
 
 export function localBootMessage(bootstrapComplete: boolean): string {
