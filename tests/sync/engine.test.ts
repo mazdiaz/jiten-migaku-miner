@@ -1928,5 +1928,333 @@ describe("Task 6: Push-first/pull-second SyncEngine", () => {
 
       indexedDB.deleteDatabase(dbName);
     });
+
+    it("does not block local mutations while the canonical cloud snapshot is still downloading", async () => {
+      const dbName = `test-barrier-network-${crypto.randomUUID()}`;
+      const writeBarrier = createLocalWriteBarrier();
+      const localSyncStore = createLocalSyncStore(dbName, { writeBarrier });
+      const remoteApplyStore = createIndexedDbAppStore({
+        databaseName: dbName,
+        recordSyncMutations: false,
+      });
+      const localAppStore = createIndexedDbAppStore({
+        databaseName: dbName,
+        recordSyncMutations: true,
+        writeBarrier,
+      });
+
+      let signalBootstrapEntered: () => void = () => {};
+      const bootstrapEntered = new Promise<void>((resolve) => {
+        signalBootstrapEntered = resolve;
+      });
+      let releaseBootstrap: () => void = () => {};
+      const bootstrapGate = new Promise<void>((resolve) => {
+        releaseBootstrap = resolve;
+      });
+
+      const fakeCloud: CloudSyncPort = {
+        async bootstrap() {
+          signalBootstrapEntered();
+          await bootstrapGate;
+          return { eventId: 1, activeDatasetId: null, datasets: [] };
+        },
+        async readKnownWords() {
+          return null;
+        },
+        async readDecisions() {
+          return [];
+        },
+        async readPreferences() {
+          return null;
+        },
+        async readQueues() {
+          return [];
+        },
+        async readAnki() {
+          return { config: null, snapshot: null };
+        },
+        async pull() {
+          return { changes: [], nextEventId: 1 };
+        },
+        async push() {
+          return { accepted: [], acceptedMutationIds: [] };
+        },
+        async uploadDataset() {
+          return { accepted: [], acceptedMutationIds: [] };
+        },
+        async *readDataset() {},
+      };
+
+      const bootstrapPromise = bootstrapLocalCache({
+        cloud: fakeCloud,
+        remoteApplyStore,
+        localSyncStore,
+        localAppStore,
+        writeBarrier,
+      });
+
+      await bootstrapEntered;
+
+      let localWriteCompleted = false;
+      const writePromise = localAppStore.wordDecisions
+        .set({
+          normalizedWord: "空",
+          status: "known",
+          updatedAt: "2026-09-18T00:00:00.000Z",
+        })
+        .then(() => {
+          localWriteCompleted = true;
+        });
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(localWriteCompleted).toBe(true);
+
+      releaseBootstrap();
+      await bootstrapPromise;
+      await writePromise;
+
+      expect((await localAppStore.wordDecisions.get("空"))?.status).toBe("known");
+      expect((await localSyncStore.listOutbox(10)).some((record) => record.resourceId === "空")).toBe(
+        true,
+      );
+
+      indexedDB.deleteDatabase(dbName);
+    });
+
+    it("preserves pending dataset payloads even when their outbox record is beyond the first 1000 rows", async () => {
+      const dbName = `test-outbox-overflow-${crypto.randomUUID()}`;
+      const localSyncStore = createLocalSyncStore(dbName);
+      const remoteApplyStore = createIndexedDbAppStore({
+        databaseName: dbName,
+        recordSyncMutations: false,
+      });
+      const localAppStore = createIndexedDbAppStore({
+        databaseName: dbName,
+        recordSyncMutations: true,
+      });
+
+      const meta = await localSyncStore.getMeta();
+      const openRequest = indexedDB.open(dbName);
+      const database = await new Promise<IDBDatabase>((resolve, reject) => {
+        openRequest.onsuccess = () => resolve(openRequest.result);
+        openRequest.onerror = () => reject(openRequest.error ?? new Error("Could not open test DB"));
+      });
+      const transaction = database.transaction(["syncOutbox", "syncMeta"], "readwrite");
+      const outboxStore = transaction.objectStore("syncOutbox");
+      for (let index = 1; index <= 1001; index++) {
+        outboxStore.put({
+          dedupeKey: `filler:${String(index).padStart(4, "0")}`,
+          mutationId: crypto.randomUUID(),
+          kind: "test.filler",
+          resourceId: null,
+          createdAt: `2026-09-18T00:00:${String(index % 60).padStart(2, "0")}.000Z`,
+          sequence: index,
+        });
+      }
+      transaction.objectStore("syncMeta").put({
+        ...meta,
+        nextOutboxSequence: 1002,
+      });
+      await new Promise<void>((resolve, reject) => {
+        transaction.oncomplete = () => resolve();
+        transaction.onerror = () => reject(transaction.error ?? new Error("Seed transaction failed"));
+        transaction.onabort = () => reject(transaction.error ?? new Error("Seed transaction aborted"));
+      });
+      database.close();
+
+      const datasetId = "pending-after-1000";
+      async function* datasetChunks() {
+        yield [sampleEntry("pending-entry", "海")];
+      }
+      await localAppStore.datasets.stage(sampleMetadata(datasetId, 1), datasetChunks());
+
+      const pending = await localSyncStore.listOutbox(2000);
+      expect(pending.find((record) => record.kind === "dataset.upload")?.sequence).toBe(1002);
+
+      const fakeCloud: CloudSyncPort = {
+        async bootstrap() {
+          return { eventId: 10, activeDatasetId: null, datasets: [] };
+        },
+        async readKnownWords() {
+          return null;
+        },
+        async readDecisions() {
+          return [];
+        },
+        async readPreferences() {
+          return null;
+        },
+        async readQueues() {
+          return [];
+        },
+        async readAnki() {
+          return { config: null, snapshot: null };
+        },
+        async pull() {
+          return { changes: [], nextEventId: 10 };
+        },
+        async push() {
+          return { accepted: [], acceptedMutationIds: [] };
+        },
+        async uploadDataset() {
+          return { accepted: [], acceptedMutationIds: [] };
+        },
+        async *readDataset() {},
+      };
+
+      await bootstrapLocalCache({
+        cloud: fakeCloud,
+        remoteApplyStore,
+        localSyncStore,
+        localAppStore,
+      });
+
+      const datasets = await localAppStore.datasets.list();
+      expect(datasets.some((dataset) => dataset.id === datasetId)).toBe(true);
+      const restoredEntries: Entry[] = [];
+      for await (const chunk of localAppStore.datasets.readChunks(datasetId, 10)) {
+        restoredEntries.push(...chunk);
+      }
+      expect(restoredEntries.map((entry) => entry.word)).toEqual(["海"]);
+
+      indexedDB.deleteDatabase(dbName);
+    });
+
+    it("replays a pending dataset activation and persists the final active dataset in workspace", async () => {
+      const dbName = `test-pending-activation-${crypto.randomUUID()}`;
+      const localSyncStore = createLocalSyncStore(dbName);
+      const remoteApplyStore = createIndexedDbAppStore({
+        databaseName: dbName,
+        recordSyncMutations: false,
+      });
+      const localAppStore = createIndexedDbAppStore({
+        databaseName: dbName,
+        recordSyncMutations: true,
+      });
+
+      const datasetA = sampleMetadata("cloud-active-a", 1);
+      const datasetB = sampleMetadata("locally-active-b", 1);
+      async function* chunksA() {
+        yield [sampleEntry("a-1", "朝")];
+      }
+      async function* chunksB() {
+        yield [sampleEntry("b-1", "夜")];
+      }
+      await remoteApplyStore.datasets.stage(datasetA, chunksA());
+      await remoteApplyStore.datasets.stage(datasetB, chunksB());
+      await remoteApplyStore.datasets.activate(datasetA.id);
+      await localAppStore.datasets.activate(datasetB.id);
+
+      const fakeCloud: CloudSyncPort = {
+        async bootstrap() {
+          return { eventId: 20, activeDatasetId: datasetA.id, datasets: [datasetA, datasetB] };
+        },
+        async readKnownWords() {
+          return null;
+        },
+        async readDecisions() {
+          return [];
+        },
+        async readPreferences() {
+          return null;
+        },
+        async readQueues() {
+          return [];
+        },
+        async readAnki() {
+          return { config: null, snapshot: null };
+        },
+        async pull() {
+          return { changes: [], nextEventId: 20 };
+        },
+        async push() {
+          return { accepted: [], acceptedMutationIds: [] };
+        },
+        async uploadDataset() {
+          return { accepted: [], acceptedMutationIds: [] };
+        },
+        async *readDataset(datasetId: string) {
+          if (datasetId === datasetA.id) yield [sampleEntry("a-cloud", "朝")];
+          if (datasetId === datasetB.id) yield [sampleEntry("b-cloud", "夜")];
+        },
+      };
+
+      await bootstrapLocalCache({
+        cloud: fakeCloud,
+        remoteApplyStore,
+        localSyncStore,
+        localAppStore,
+      });
+
+      expect((await localAppStore.datasets.getActive())?.id).toBe(datasetB.id);
+      expect((await localSyncStore.loadWorkspace())?.activeDatasetId).toBe(datasetB.id);
+
+      indexedDB.deleteDatabase(dbName);
+    });
+
+    it("replays a pending dataset removal so cloud bootstrap cannot resurrect it", async () => {
+      const dbName = `test-pending-remove-${crypto.randomUUID()}`;
+      const localSyncStore = createLocalSyncStore(dbName);
+      const remoteApplyStore = createIndexedDbAppStore({
+        databaseName: dbName,
+        recordSyncMutations: false,
+      });
+      const localAppStore = createIndexedDbAppStore({
+        databaseName: dbName,
+        recordSyncMutations: true,
+      });
+
+      const dataset = sampleMetadata("remove-me", 1);
+      async function* chunks() {
+        yield [sampleEntry("remove-1", "消す")];
+      }
+      await remoteApplyStore.datasets.stage(dataset, chunks());
+      await localAppStore.datasets.remove(dataset.id);
+
+      const fakeCloud: CloudSyncPort = {
+        async bootstrap() {
+          return { eventId: 30, activeDatasetId: null, datasets: [dataset] };
+        },
+        async readKnownWords() {
+          return null;
+        },
+        async readDecisions() {
+          return [];
+        },
+        async readPreferences() {
+          return null;
+        },
+        async readQueues() {
+          return [];
+        },
+        async readAnki() {
+          return { config: null, snapshot: null };
+        },
+        async pull() {
+          return { changes: [], nextEventId: 30 };
+        },
+        async push() {
+          return { accepted: [], acceptedMutationIds: [] };
+        },
+        async uploadDataset() {
+          return { accepted: [], acceptedMutationIds: [] };
+        },
+        async *readDataset() {},
+      };
+
+      await bootstrapLocalCache({
+        cloud: fakeCloud,
+        remoteApplyStore,
+        localSyncStore,
+        localAppStore,
+      });
+
+      expect((await localAppStore.datasets.list()).some((item) => item.id === dataset.id)).toBe(
+        false,
+      );
+
+      indexedDB.deleteDatabase(dbName);
+    });
+
   });
 });
