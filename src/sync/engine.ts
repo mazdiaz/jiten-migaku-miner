@@ -97,9 +97,11 @@ export async function bootstrapLocalCache(
   const anki = await cloud.readAnki();
   if (isCancelled()) return;
 
-  let prefetchedActiveDataset:
-    | { canonicalId: string; temporaryId: string; metadata: DatasetMetadata }
-    | null = null;
+  let prefetchedActiveDataset: {
+    canonicalId: string;
+    temporaryId: string;
+    metadata: DatasetMetadata;
+  } | null = null;
 
   if (manifest.activeDatasetId) {
     const canonicalId = manifest.activeDatasetId;
@@ -268,10 +270,7 @@ export async function bootstrapLocalCache(
     if (manifest.activeDatasetId) {
       const activeId = manifest.activeDatasetId;
       const activeState = await remoteApplyStore.datasets.cacheState?.(activeId);
-      if (
-        activeState !== "ready" &&
-        prefetchedActiveDataset?.canonicalId === activeId
-      ) {
+      if (activeState !== "ready" && prefetchedActiveDataset?.canonicalId === activeId) {
         await remoteApplyStore.datasets.stage(
           prefetchedActiveDataset.metadata,
           remoteApplyStore.datasets.readChunks(prefetchedActiveDataset.temporaryId, 2_000),
