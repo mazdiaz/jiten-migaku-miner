@@ -2014,9 +2014,9 @@ describe("Task 6: Push-first/pull-second SyncEngine", () => {
       await writePromise;
 
       expect((await localAppStore.wordDecisions.get("空"))?.status).toBe("known");
-      expect((await localSyncStore.listOutbox(10)).some((record) => record.resourceId === "空")).toBe(
-        true,
-      );
+      expect(
+        (await localSyncStore.listOutbox(10)).some((record) => record.resourceId === "空"),
+      ).toBe(true);
 
       indexedDB.deleteDatabase(dbName);
     });
@@ -2037,7 +2037,8 @@ describe("Task 6: Push-first/pull-second SyncEngine", () => {
       const openRequest = indexedDB.open(dbName);
       const database = await new Promise<IDBDatabase>((resolve, reject) => {
         openRequest.onsuccess = () => resolve(openRequest.result);
-        openRequest.onerror = () => reject(openRequest.error ?? new Error("Could not open test DB"));
+        openRequest.onerror = () =>
+          reject(openRequest.error ?? new Error("Could not open test DB"));
       });
       const transaction = database.transaction(["syncOutbox", "syncMeta"], "readwrite");
       const outboxStore = transaction.objectStore("syncOutbox");
@@ -2057,8 +2058,10 @@ describe("Task 6: Push-first/pull-second SyncEngine", () => {
       });
       await new Promise<void>((resolve, reject) => {
         transaction.oncomplete = () => resolve();
-        transaction.onerror = () => reject(transaction.error ?? new Error("Seed transaction failed"));
-        transaction.onabort = () => reject(transaction.error ?? new Error("Seed transaction aborted"));
+        transaction.onerror = () =>
+          reject(transaction.error ?? new Error("Seed transaction failed"));
+        transaction.onabort = () =>
+          reject(transaction.error ?? new Error("Seed transaction aborted"));
       });
       database.close();
 
