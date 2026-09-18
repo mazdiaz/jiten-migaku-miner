@@ -84,28 +84,51 @@ export async function bootstrapLocalCache(
   const readerStore = options.localAppStore ?? remoteApplyStore;
   const now = options.now ?? (() => new Date().toISOString());
 
-  const performBootstrap = async (): Promise<void> => {
-    // 1. Fetch cloud manifest & data first
-    const manifest = await cloud.bootstrap();
-    const known = await cloud.readKnownWords();
-    const decisions = await cloud.readDecisions();
-    const preferences = await cloud.readPreferences();
-    const queues = await cloud.readQueues();
-    const anki = await cloud.readAnki();
+  // Fetch canonical cloud state before taking the local reconciliation lock.
+  // Local-first writes should remain available while the network is slow.
+  const manifest = await cloud.bootstrap();
+  const known = await cloud.readKnownWords();
+  const decisions = await cloud.readDecisions();
+  const preferences = await cloud.readPreferences();
+  const queues = await cloud.readQueues();
+  const anki = await cloud.readAnki();
 
-    // Snapshot pending unpushed outbox items before clearing domain cache so we can restore them
+  const performReconcile = async (): Promise<void> => {
+    // Snapshot every pending mutation only after the reconciliation barrier is acquired.
+    // Using the complete ordered outbox is required because a bulk restore can legitimately
+    // produce more than the normal 100/1000-row sync batches.
     const currentMeta = await localSyncStore.getMeta();
-    const pendingOutbox = await localSyncStore.listOutbox(1000);
+    const pendingOutbox = await localSyncStore.listOutbox(Number.MAX_SAFE_INTEGER);
 
     const preserveDatasetIds = new Set<string>();
+    let pendingActiveDatasetId: string | null = null;
+    const pendingRemovedDatasets = new Set<string>();
+
     for (const record of pendingOutbox) {
       if (record.kind === "dataset.upload" && record.resourceId) {
         preserveDatasetIds.add(record.resourceId);
+      } else if (record.kind === "dataset.activate" && record.resourceId) {
+        pendingActiveDatasetId = record.resourceId;
+        // A locally activated dataset is already cached and immutable. Preserve its
+        // payload so replay does not downgrade it to metadata-only.
+        preserveDatasetIds.add(record.resourceId);
+      } else if (record.kind === "dataset.remove" && record.resourceId) {
+        pendingRemovedDatasets.add(record.resourceId);
+        if (pendingActiveDatasetId === record.resourceId) {
+          pendingActiveDatasetId = null;
+        }
       }
     }
 
-    let pendingActiveDatasetId: string | null = null;
-    const pendingRemovedDatasets = new Set<string>();
+    // Preserve the canonical active dataset when it is already cached. Datasets are
+    // immutable after commit, so keeping the ready payload avoids a needless cloud
+    // download while the short reconciliation barrier is held.
+    if (
+      manifest.activeDatasetId &&
+      (await readerStore.datasets.cacheState?.(manifest.activeDatasetId)) === "ready"
+    ) {
+      preserveDatasetIds.add(manifest.activeDatasetId);
+    }
 
     let hasPendingKnown = false;
     let pendingKnown: { id: string; name: string; words: string[] } | null = null;
@@ -124,14 +147,7 @@ export async function bootstrapLocalCache(
     const pendingQueuesRemove = new Set<string>();
 
     for (const record of pendingOutbox) {
-      if (record.kind === "dataset.activate" && record.resourceId) {
-        pendingActiveDatasetId = record.resourceId;
-      } else if (record.kind === "dataset.remove" && record.resourceId) {
-        pendingRemovedDatasets.add(record.resourceId);
-        if (pendingActiveDatasetId === record.resourceId) {
-          pendingActiveDatasetId = null;
-        }
-      } else if (record.kind === "known.replace") {
+      if (record.kind === "known.replace") {
         hasPendingKnown = true;
         const active = await readerStore.knownWords.getActive();
         pendingKnown = active
@@ -145,18 +161,18 @@ export async function bootstrapLocalCache(
         pendingAnkiConfig = await readerStore.ankiSync.loadConfig();
         pendingAnkiSnapshot = await readerStore.ankiSync.loadSnapshot();
       } else if (record.kind === "decision.set" && record.resourceId) {
-        const d = await readerStore.wordDecisions.get(record.resourceId);
-        if (d) {
-          pendingDecisionsSet.set(record.resourceId, d);
+        const decision = await readerStore.wordDecisions.get(record.resourceId);
+        if (decision) {
+          pendingDecisionsSet.set(record.resourceId, decision);
         }
         pendingDecisionsRemove.delete(record.resourceId);
       } else if (record.kind === "decision.remove" && record.resourceId) {
         pendingDecisionsRemove.add(record.resourceId);
         pendingDecisionsSet.delete(record.resourceId);
       } else if (record.kind === "queue.replace" && record.resourceId) {
-        const q = await localSyncStore.loadQueue(record.resourceId);
-        if (q) {
-          pendingQueuesSet.set(record.resourceId, q);
+        const queue = await localSyncStore.loadQueue(record.resourceId);
+        if (queue) {
+          pendingQueuesSet.set(record.resourceId, queue);
         }
         pendingQueuesRemove.delete(record.resourceId);
       } else if (record.kind === "queue.remove" && record.resourceId) {
@@ -165,7 +181,8 @@ export async function bootstrapLocalCache(
       }
     }
 
-    // Clear domain cache only - preserving syncOutbox, deviceId, and staged dataset uploads
+    // Clear only canonical cached state. The outbox/device metadata and any dataset
+    // payload needed by an unsynced upload/activation remain durable.
     if (remoteApplyStore.clearDomainCache) {
       await remoteApplyStore.clearDomainCache({ preserveDatasetIds });
     } else {
@@ -186,7 +203,7 @@ export async function bootstrapLocalCache(
         : {}),
     });
 
-    // 2. Write state with recording-disabled local stores
+    // Write the canonical cloud snapshot with mutation recording disabled.
     if (known) {
       await remoteApplyStore.knownWords.save(known.id, known.name, known.words);
     }
@@ -204,32 +221,18 @@ export async function bootstrapLocalCache(
       await remoteApplyStore.ankiSync.replaceSnapshot(anki.snapshot);
     }
 
-    // 3. Upsert every dataset metadata as metadata-only
     for (const dataset of manifest.datasets) {
       if (remoteApplyStore.datasets.upsertMetadata) {
         await remoteApplyStore.datasets.upsertMetadata(dataset);
       }
     }
 
-    // 4. If activeDatasetId != null: download/stage active dataset with recording disabled, then activate locally
     if (manifest.activeDatasetId) {
       await ensureDatasetCached(manifest.activeDatasetId, cloud, remoteApplyStore);
       await remoteApplyStore.datasets.activate(manifest.activeDatasetId);
     }
 
-    // 5. Save active queue / workspace
-    const activeQueue = manifest.activeDatasetId
-      ? await localSyncStore.loadQueue(manifest.activeDatasetId)
-      : null;
-    await localSyncStore.saveWorkspace({
-      id: "current",
-      activeDatasetId: manifest.activeDatasetId,
-      viewportStart: 0,
-      queueMode: activeQueue && activeQueue.normalizedWords.length > 0 ? "normal" : "normal",
-      updatedAt: now(),
-    });
-
-    // 6. Re-apply preserved pending local mutations on top of fresh cloud state
+    // Re-apply pending local intent on top of the canonical snapshot.
     for (const word of pendingDecisionsRemove) {
       await remoteApplyStore.wordDecisions.remove(word);
     }
@@ -269,17 +272,32 @@ export async function bootstrapLocalCache(
     for (const datasetId of pendingQueuesRemove) {
       await localSyncStore.saveQueue(null, datasetId, false);
     }
-    for (const q of pendingQueuesSet.values()) {
-      await localSyncStore.saveQueue(q, q.datasetId, false);
+    for (const queue of pendingQueuesSet.values()) {
+      await localSyncStore.saveQueue(queue, queue.datasetId, false);
     }
     for (const datasetId of pendingRemovedDatasets) {
       await remoteApplyStore.datasets.remove(datasetId);
     }
     if (pendingActiveDatasetId) {
+      await ensureDatasetCached(pendingActiveDatasetId, cloud, remoteApplyStore);
       await remoteApplyStore.datasets.activate(pendingActiveDatasetId);
     }
 
-    // 7. Write sync meta bootstrapComplete=true/serverEventId=manifest.eventId LAST
+    // Workspace must describe the final overlaid local state, not the pre-replay
+    // canonical active dataset.
+    const finalActiveDatasetId = (await remoteApplyStore.datasets.getActive())?.id ?? null;
+    const activeQueue = finalActiveDatasetId
+      ? await localSyncStore.loadQueue(finalActiveDatasetId)
+      : null;
+    await localSyncStore.saveWorkspace({
+      id: "current",
+      activeDatasetId: finalActiveDatasetId,
+      viewportStart: 0,
+      queueMode: activeQueue && activeQueue.normalizedWords.length > 0 ? "normal" : "normal",
+      updatedAt: now(),
+    });
+
+    // Mark bootstrap complete only after canonical state and all pending overlays are durable.
     const metaAfter = await localSyncStore.getMeta();
     await localSyncStore.setMeta({
       id: "current",
@@ -294,9 +312,10 @@ export async function bootstrapLocalCache(
   };
 
   if (options.writeBarrier) {
-    return options.writeBarrier.runReconcile(performBootstrap);
+    await options.writeBarrier.runReconcile(performReconcile);
+    return;
   }
-  return performBootstrap();
+  await performReconcile();
 }
 
 export function createSyncEngine(options: SyncEngineOptions): SyncEngine {
