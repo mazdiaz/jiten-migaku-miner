@@ -86,5 +86,4 @@ describe("database migration verification", () => {
       unexpected: [],
     });
   });
-
 });
