@@ -1,6 +1,6 @@
 import type { AnkiSyncConfig, AnkiSyncSnapshot } from "../domain/anki";
 import type { WordDecision } from "../domain/types";
-import type { AppStore } from "../storage/contracts";
+import type { AppStore, DatasetMetadata } from "../storage/contracts";
 import type { LocalSyncStore, SyncOutboxRecord } from "../storage/local-sync";
 import type { LocalWriteBarrier } from "../storage/local-write-barrier";
 import { RemoteStoreError } from "../storage/remote-store";
@@ -98,7 +98,7 @@ export async function bootstrapLocalCache(
   if (isCancelled()) return;
 
   let prefetchedActiveDataset:
-    | { canonicalId: string; temporaryId: string; metadata: Awaited<ReturnType<AppStore["datasets"]["list"]>>[number] }
+    | { canonicalId: string; temporaryId: string; metadata: DatasetMetadata }
     | null = null;
 
   if (manifest.activeDatasetId) {
@@ -365,11 +365,17 @@ export async function bootstrapLocalCache(
   };
 
   if (isCancelled()) return;
-  if (options.writeBarrier) {
-    await options.writeBarrier.runReconcile(performReconcile);
-    return;
+  try {
+    if (options.writeBarrier) {
+      await options.writeBarrier.runReconcile(performReconcile);
+      return;
+    }
+    await performReconcile();
+  } finally {
+    if (prefetchedActiveDataset) {
+      await remoteApplyStore.datasets.remove(prefetchedActiveDataset.temporaryId);
+    }
   }
-  await performReconcile();
 }
 
 export function createSyncEngine(options: SyncEngineOptions): SyncEngine {
