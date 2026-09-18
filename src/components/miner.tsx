@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
+import { configuredLocalFirstEnabled, localBootMessage } from "../config/storage-mode";
 import { ImportPanel } from "./features/ImportPanel";
 import { ResultsPanel } from "./features/ResultsPanel";
 import { ReviewPanel } from "./features/ReviewPanel";
@@ -9,7 +10,7 @@ export function Miner() {
   const [status, setStatus] = useState<CloudStatus>({
     ready: false,
     error: false,
-    message: "Loading saved vocabulary…",
+    message: configuredLocalFirstEnabled() ? localBootMessage(false) : "Loading saved vocabulary…",
   });
   useEffect(() => {
     let cancelled = false;

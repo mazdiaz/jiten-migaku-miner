@@ -1,4 +1,44 @@
-import { expect, test } from "./fixtures";
+import { INDEXED_DB_NAME } from "../../src/storage/indexed-db-core";
+import { expect, type Page, test } from "./fixtures";
+
+async function localEditsAreDurable(page: Page): Promise<boolean> {
+  return page.evaluate((databaseName) => {
+    return new Promise<boolean>((resolve) => {
+      const open = indexedDB.open(databaseName);
+      open.onerror = () => resolve(false);
+      open.onsuccess = () => {
+        const database = open.result;
+        if (
+          !database.objectStoreNames.contains("wordDecisions") ||
+          !database.objectStoreNames.contains("preferences")
+        ) {
+          database.close();
+          resolve(false);
+          return;
+        }
+
+        const transaction = database.transaction(["wordDecisions", "preferences"], "readonly");
+        const decisions = transaction.objectStore("wordDecisions").getAll();
+        const preferences = transaction.objectStore("preferences").get("current");
+        transaction.oncomplete = () => {
+          const decisionRecords = decisions.result as Array<{ status?: string }>;
+          const preferenceRecord = preferences.result as
+            | { query?: { hideKnown?: boolean } }
+            | undefined;
+          database.close();
+          resolve(
+            decisionRecords.some((record) => record.status === "known") &&
+              preferenceRecord?.query?.hideKnown === true,
+          );
+        };
+        transaction.onerror = () => {
+          database.close();
+          resolve(false);
+        };
+      };
+    });
+  }, INDEXED_DB_NAME);
+}
 
 test.beforeEach(async () => {
   test.skip(
@@ -7,9 +47,50 @@ test.beforeEach(async () => {
   );
 });
 
+test("cold local-first boot remains usable when bootstrap sync is unavailable", async ({
+  page,
+  browser,
+  context,
+  baseURL,
+}) => {
+  await page.route("**/api/sync*", (route) => route.abort());
+  await page.goto("/");
+
+  await expect(page.locator(".app-shell")).not.toHaveAttribute("inert", "");
+  await page.locator("#jitenInput").setInputFiles("tests/fixtures/jiten-small.csv");
+  await expect(page.locator(".mining-entry")).toHaveCount(3);
+  await expect(page.locator("#reviewButton")).toBeEnabled();
+  await expect(page.locator(".cloud-status")).not.toHaveText(/Database|PostgreSQL/);
+  await expect(page.locator(".cloud-status")).toHaveText(
+    /^(Sync error · changes remain on this device|Offline · changes saved locally)\s*$/,
+  );
+
+  await page.unroute("**/api/sync*");
+  await page.evaluate(() => window.dispatchEvent(new Event("online")));
+  await expect(page.locator(".mining-entry")).toHaveCount(3);
+  await expect(page.locator(".cloud-status")).toHaveText("Synced");
+
+  const secondContext = await browser.newContext();
+  try {
+    await secondContext.addCookies(await context.cookies());
+    const pageB = await secondContext.newPage();
+    await pageB.goto(`${baseURL}/`);
+    await expect(pageB.locator(".mining-entry")).toHaveCount(3);
+    await expect(pageB.locator(".cloud-status")).toHaveText("Synced");
+  } finally {
+    await secondContext.close();
+  }
+});
+
 test("warm offline boot allows study and marks changes saved locally", async ({ page }) => {
+  const storeRequests: string[] = [];
+  page.on("request", (request) => {
+    if (request.url().includes("/api/store")) storeRequests.push(request.url());
+  });
+
   await page.goto("/");
   await expect(page.locator(".cloud-status")).toHaveText(/^(Synced|Saved locally)\s*$/);
+  expect(storeRequests).toEqual([]);
   await page.locator("#jitenInput").setInputFiles("tests/fixtures/jiten-small.csv");
   await expect(page.locator(".mining-entry")).toHaveCount(3);
   await expect(page.locator(".cloud-status")).toHaveText("Synced");
@@ -39,6 +120,103 @@ test("warm offline boot allows study and marks changes saved locally", async ({ 
 
   // Assert status text
   await expect(page.locator(".cloud-status")).toHaveText("Offline · changes saved locally");
+});
+
+test("CSV import stays usable while sync is unavailable", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator(".cloud-status")).toHaveText(/^(Synced|Saved locally)\s*$/);
+
+  await page.route("**/api/sync*", (route) => route.abort());
+  await page.locator("#jitenInput").setInputFiles("tests/fixtures/jiten-small.csv");
+
+  await expect(page.locator(".mining-entry")).toHaveCount(3);
+  await expect(page.locator("#reviewButton")).toBeEnabled();
+  await expect(page.locator(".app-shell")).not.toHaveAttribute("inert", "");
+  await expect(page.locator(".cloud-status")).not.toHaveText(/Database|PostgreSQL/);
+
+  await page.unroute("**/api/sync*");
+  await page.evaluate(() => window.dispatchEvent(new Event("online")));
+  await expect(page.locator(".cloud-status")).toHaveText("Synced");
+});
+
+test("a sync 503 during CSV import keeps the dataset usable across reload", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator(".cloud-status")).toHaveText(/^(Synced|Saved locally)\s*$/);
+
+  let syncFailures = 0;
+  await page.route("**/api/sync*", async (route) => {
+    syncFailures += 1;
+    await route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({
+        error: "Database sync operation could not be confirmed. Try again later.",
+      }),
+    });
+  });
+
+  await page.locator("#jitenInput").setInputFiles("tests/fixtures/jiten-small.csv");
+  await expect(page.locator(".mining-entry")).toHaveCount(3);
+  await expect(page.locator("#reviewButton")).toBeEnabled();
+  await expect.poll(() => syncFailures).toBeGreaterThan(0);
+  await expect(page.locator(".cloud-status")).toHaveText(
+    "Sync error · changes remain on this device",
+  );
+
+  await page.reload();
+  await expect(page.locator(".mining-entry")).toHaveCount(3);
+  await expect(page.locator("#reviewButton")).toBeEnabled();
+  await expect(page.locator(".cloud-status")).toHaveText(
+    "Sync error · changes remain on this device",
+  );
+
+  await page.unroute("**/api/sync*");
+  await page.evaluate(() => window.dispatchEvent(new Event("online")));
+  await expect(page.locator(".cloud-status")).toHaveText("Synced");
+});
+
+test("a sync 503 keeps local decisions durable across reload", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator(".cloud-status")).toHaveText(/^(Synced|Saved locally)\s*$/);
+  await page.locator("#jitenInput").setInputFiles("tests/fixtures/jiten-small.csv");
+  await expect(page.locator(".mining-entry")).toHaveCount(3);
+  await expect(page.locator(".cloud-status")).toHaveText("Synced");
+
+  let syncFailed = false;
+  await page.route("**/api/sync*", async (route) => {
+    syncFailed = true;
+    await route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({
+        error: "Database sync operation could not be confirmed. Try again later.",
+      }),
+    });
+  });
+
+  const firstEntry = page.locator(".mining-entry").first();
+  await firstEntry.locator("[data-decision-action='known']").click();
+  await expect(firstEntry.locator("[data-decision-action='known']")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect.poll(() => syncFailed).toBe(true);
+  await expect(page.locator(".cloud-status")).toHaveText(
+    "Sync error · changes remain on this device",
+  );
+
+  await page.reload();
+  await expect(page.locator(".mining-entry")).toHaveCount(3);
+  await expect(
+    page.locator(".mining-entry").first().locator("[data-decision-action='known']"),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator(".cloud-status")).toHaveText(
+    "Sync error · changes remain on this device",
+  );
+
+  await page.unroute("**/api/sync*");
+  await page.evaluate(() => window.dispatchEvent(new Event("online")));
+  await expect(page.locator(".cloud-status")).toHaveText("Synced");
 });
 
 test("two browser contexts converge on word decisions without manual reload", async ({
@@ -126,6 +304,9 @@ test("offline edits survive reload and sync when connection is restored", async 
   await page.locator("#advancedToggle").click();
   await expect(page.locator("#advancedPanel")).toBeVisible();
   await page.locator("#hideKnown").check();
+
+  // Decision and preference handlers persist asynchronously; reload only after both writes commit.
+  await expect.poll(() => localEditsAreDurable(page)).toBe(true);
 
   // Reload while offline
   await page.reload();

@@ -1,3 +1,9 @@
+import {
+  configuredLocalFirstEnabled,
+  configuredStorageModeLabel,
+  localBootMessage,
+  storageModeDiagnostic,
+} from "../config/storage-mode";
 import { canonicalWord } from "../domain/text";
 import { createMinerController } from "../miner/controller";
 import { createQueryController } from "../miner/query-controller";
@@ -12,7 +18,7 @@ import {
   type LocalSyncStore,
 } from "../storage/local-sync";
 import { createLocalWriteBarrier } from "../storage/local-write-barrier";
-import { createRemoteAppStore } from "../storage/remote-store";
+import { createRemoteAppStore, RemoteStoreError } from "../storage/remote-store";
 import { createCloudSyncClient } from "../sync/cloud-client";
 import {
   bootstrapLocalCache,
@@ -34,7 +40,7 @@ export interface CloudStatus {
   ready: boolean;
 }
 
-const localFirstEnabled = process.env.NEXT_PUBLIC_LOCAL_FIRST_SYNC === "1";
+const localFirstEnabled = configuredLocalFirstEnabled();
 
 /** Owns the browser-only study surface. React owns its lifetime; Migaku owns parsed sentence descendants. */
 export function mountStudy(onStatus: (status: CloudStatus) => void) {
@@ -65,6 +71,14 @@ export function mountStudy(onStatus: (status: CloudStatus) => void) {
   const fail = (error: unknown) => {
     failure = error instanceof Error ? error.message : String(error);
     activeStatusUpdater();
+  };
+
+  const publishStorageModeDiagnostic = () => {
+    if (typeof window === "undefined") return;
+    const target = window as typeof window & { __jitenStorageMode?: string };
+    const mode = configuredStorageModeLabel();
+    target.__jitenStorageMode = mode;
+    if (process.env.NODE_ENV !== "test") console.info(storageModeDiagnostic(mode));
   };
 
   const beforeUnload = (event: BeforeUnloadEvent) => {
@@ -308,24 +322,44 @@ export function mountStudy(onStatus: (status: CloudStatus) => void) {
 
     const cloud = createCloudSyncClient("/api/sync");
     const remoteApplyStore = createIndexedDbAppStore({ recordSyncMutations: false });
+    const initialLocalMessage = localBootMessage(meta.bootstrapComplete);
+    onStatus({
+      ready: false,
+      error: failure !== null,
+      message: failure ?? initialLocalMessage,
+    });
 
+    let bootstrapError: unknown = null;
     if (!meta.bootstrapComplete) {
-      await bootstrapLocalCache({
-        cloud,
-        remoteApplyStore,
-        localSyncStore,
-        writeBarrier,
-      });
-      meta = await localSyncStore.getMeta();
+      try {
+        await bootstrapLocalCache({
+          cloud,
+          remoteApplyStore,
+          localSyncStore,
+          writeBarrier,
+          isCancelled: () => disposed,
+        });
+        meta = await localSyncStore.getMeta();
+      } catch (error) {
+        if (!(error instanceof RemoteStoreError)) throw error;
+        // Empty or stale local state remains usable while canonical cloud state is unavailable.
+        bootstrapError = error;
+      }
     }
 
     if (disposed) return;
 
-    let currentSyncStatus: SyncStatus = {
-      state: "idle",
-      pending: 0,
+    pending = (await localSyncStore.listOutbox(100)).length;
+    let bootstrapPending = bootstrapError !== null;
+    const bootstrapFailureStatus = (): SyncStatus => ({
+      state: "error",
+      pending,
       lastSyncAt: meta.lastSyncAt,
-    };
+      message: bootstrapError instanceof Error ? bootstrapError.message : String(bootstrapError),
+    });
+    let currentSyncStatus: SyncStatus = bootstrapPending
+      ? bootstrapFailureStatus()
+      : { state: "idle", pending: 0, lastSyncAt: meta.lastSyncAt };
 
     const statusLocal = () => {
       if (disposed) return;
@@ -333,7 +367,7 @@ export function mountStudy(onStatus: (status: CloudStatus) => void) {
         onStatus({
           ready: false,
           error: failure !== null,
-          message: failure ?? "Loading saved vocabulary…",
+          message: failure ?? initialLocalMessage,
         });
         return;
       }
@@ -362,8 +396,8 @@ export function mountStudy(onStatus: (status: CloudStatus) => void) {
 
       onStatus({
         ready: true,
-        error: false,
-        message,
+        error: failure !== null,
+        message: failure ?? message,
       });
     };
 
@@ -395,6 +429,17 @@ export function mountStudy(onStatus: (status: CloudStatus) => void) {
         activeStatusUpdater();
       }),
     );
+    if (bootstrapPending) currentSyncStatus = bootstrapFailureStatus();
+    const notifyOutbox = () => {
+      void localSyncStore
+        .listOutbox(100)
+        .then((records) => {
+          pending = records.length;
+          activeStatusUpdater();
+        })
+        .catch(fail);
+      if (engineStarted && !bootstrapPending) engine.notifyOutbox();
+    };
 
     const sessionQueueStore: SessionQueueStore = {
       load: () => (queue === null ? null : structuredClone(queue)),
@@ -409,7 +454,7 @@ export function mountStudy(onStatus: (status: CloudStatus) => void) {
         if (targetDatasetId) {
           void localSyncStore
             .saveQueue(snapshot, targetDatasetId, true)
-            .then(() => engine.notifyOutbox())
+            .then(notifyOutbox)
             .catch(fail);
         }
       },
@@ -417,10 +462,7 @@ export function mountStudy(onStatus: (status: CloudStatus) => void) {
         queue = null;
         const targetDatasetId = latest?.dataset?.id ?? initialDatasetId;
         if (targetDatasetId) {
-          void localSyncStore
-            .saveQueue(null, targetDatasetId, true)
-            .then(() => engine.notifyOutbox())
-            .catch(fail);
+          void localSyncStore.saveQueue(null, targetDatasetId, true).then(notifyOutbox).catch(fail);
         }
       },
     };
@@ -454,6 +496,9 @@ export function mountStudy(onStatus: (status: CloudStatus) => void) {
     });
 
     controller.exportBackup = async () => {
+      if (bootstrapPending) {
+        throw new Error("Backup requires cloud sync; changes remain saved locally.");
+      }
       try {
         await engine.flush();
         const pendingOutbox = await localSyncStore.listOutbox(1);
@@ -478,7 +523,7 @@ export function mountStudy(onStatus: (status: CloudStatus) => void) {
       if (!complete) {
         try {
           await restoreLegacy(text);
-          engine.notifyOutbox();
+          notifyOutbox();
         } catch (error) {
           const box = document.getElementById("errorBox");
           if (box) {
@@ -488,6 +533,9 @@ export function mountStudy(onStatus: (status: CloudStatus) => void) {
           throw error;
         }
         return;
+      }
+      if (bootstrapPending) {
+        throw new Error("Restore requires cloud sync before replacing saved data.");
       }
       try {
         ready = false;
@@ -501,6 +549,7 @@ export function mountStudy(onStatus: (status: CloudStatus) => void) {
           remoteApplyStore,
           localSyncStore,
           writeBarrier,
+          isCancelled: () => disposed,
         });
         window.location.assign("/?restored=1");
       } catch (error) {
@@ -516,11 +565,103 @@ export function mountStudy(onStatus: (status: CloudStatus) => void) {
     };
 
     controller.clearSavedData = async () => {
+      if (bootstrapPending) {
+        const backupStatus = document.getElementById("backupStatus");
+        if (backupStatus) backupStatus.textContent = "Clear requires cloud sync.";
+        return;
+      }
       const cloudStore = createRemoteAppStore();
       await cloudStore.clearAll();
       await localSyncStore.clearLocalData();
       window.location.reload();
     };
+
+    let engineStarted = false;
+    const startEngine = () => {
+      if (engineStarted || disposed) return;
+      engineStarted = true;
+      engine.start();
+      void engine.syncNow().catch(() => {});
+    };
+
+    let bootstrapRetryTimer: ReturnType<typeof setTimeout> | null = null;
+    let bootstrapRetryInFlight: Promise<void> | null = null;
+    let bootstrapRetryListener: (() => void) | null = null;
+
+    const scheduleBootstrapRetry = () => {
+      if (!bootstrapPending || disposed || bootstrapRetryTimer !== null) return;
+      bootstrapRetryTimer = setTimeout(() => {
+        bootstrapRetryTimer = null;
+        void retryBootstrap();
+      }, 15_000);
+    };
+
+    const handleBootstrapRetryError = (error: unknown) => {
+      if (disposed) return;
+      if (!(error instanceof RemoteStoreError)) {
+        fail(error);
+        return;
+      }
+      bootstrapError = error;
+      bootstrapPending = true;
+      currentSyncStatus = bootstrapFailureStatus();
+      activeStatusUpdater();
+      scheduleBootstrapRetry();
+    };
+
+    const retryBootstrap = (): Promise<void> => {
+      if (!bootstrapPending || disposed) return Promise.resolve();
+      if (bootstrapRetryInFlight !== null) return bootstrapRetryInFlight;
+
+      bootstrapRetryInFlight = (async () => {
+        try {
+          await bootstrapLocalCache({
+            cloud,
+            remoteApplyStore,
+            localSyncStore,
+            writeBarrier,
+            isCancelled: () => disposed,
+          });
+          if (disposed) return;
+          meta = await localSyncStore.getMeta();
+          bootstrapPending = !meta.bootstrapComplete;
+          if (bootstrapPending) {
+            scheduleBootstrapRetry();
+            return;
+          }
+
+          bootstrapError = null;
+          if (bootstrapRetryTimer !== null) {
+            clearTimeout(bootstrapRetryTimer);
+            bootstrapRetryTimer = null;
+          }
+          if (bootstrapRetryListener !== null) {
+            window.removeEventListener("online", bootstrapRetryListener);
+            bootstrapRetryListener = null;
+          }
+          await controller.refreshFromStorage?.();
+          const remainingOutbox = await localSyncStore.listOutbox(100);
+          currentSyncStatus = {
+            state: "idle",
+            pending: remainingOutbox.length,
+            lastSyncAt: meta.lastSyncAt,
+          };
+          activeStatusUpdater();
+          startEngine();
+        } catch (error) {
+          handleBootstrapRetryError(error);
+        } finally {
+          bootstrapRetryInFlight = null;
+        }
+      })();
+      return bootstrapRetryInFlight;
+    };
+
+    cleanup.push(() => {
+      if (bootstrapRetryTimer !== null) clearTimeout(bootstrapRetryTimer);
+      if (bootstrapRetryListener !== null)
+        window.removeEventListener("online", bootstrapRetryListener);
+    });
 
     const dom = getDomMap();
     const renderer = createRenderer(dom);
@@ -615,7 +756,7 @@ export function mountStudy(onStatus: (status: CloudStatus) => void) {
             updatedAt: new Date().toISOString(),
           });
         }
-        engine.notifyOutbox();
+        notifyOutbox();
       }),
     );
     const bindings = bindControls(dom, controller, {
@@ -653,11 +794,20 @@ export function mountStudy(onStatus: (status: CloudStatus) => void) {
     activeStatusUpdater();
 
     cleanup.push(engine.onRemoteApplied(() => controller.refreshFromStorage?.()));
-    engine.start();
-    void engine.syncNow().catch(() => {});
+    if (bootstrapPending) {
+      bootstrapRetryListener = () => {
+        void retryBootstrap();
+      };
+      window.addEventListener("online", bootstrapRetryListener);
+      scheduleBootstrapRetry();
+      void retryBootstrap();
+    } else {
+      startEngine();
+    }
   };
 
   const boot = async () => {
+    publishStorageModeDiagnostic();
     if (localFirstEnabled) {
       try {
         await bootLocalFirst();

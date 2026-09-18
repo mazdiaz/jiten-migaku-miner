@@ -6,10 +6,10 @@ This is the existing repository migrated from Vite. Vocabulary parsing, study ru
 
 ## Deploy to Vercel
 
-1. Import this existing GitHub repository into Vercel. Select **Next.js** and use the repository root as the Root Directory. Keep the build command `npm run build`; leave Output Directory at the framework default. Use Node.js 22 or 24.
+1. Import this existing GitHub repository into Vercel. Select **Next.js** and use the repository root as the Root Directory. Keep the repository build command from `vercel.json`. Production builds run `npm run db:migrate` followed by `npm run db:verify` before `npm run build`; preview builds never mutate a database. Leave Output Directory at the framework default. Use Node.js 22 or 24.
 2. Create/connect a PostgreSQL database, such as [Neon through Vercel Marketplace](https://vercel.com/integrations/neon). Set `DATABASE_URL` to its pooled connection string, including the provider's TLS settings. Keep production and preview databases separate.
 3. Register a [GitHub OAuth App](https://github.com/settings/developers). Set its homepage to your production origin and callback URL to `https://YOUR-DOMAIN/api/auth/callback/github`. Use a separate OAuth app for local development.
-4. Configure these **server-only** Vercel environment variables:
+4. Configure these Vercel environment variables:
 
    | Variable | Value |
    | --- | --- |
@@ -20,9 +20,10 @@ This is the existing repository migrated from Vite. Vocabulary parsing, study ru
    | `OWNER_GITHUB_ID` | Your numeric GitHub account ID; `46370875` for mazdiaz |
    | `AUTH_URL` | Exact public origin, such as `https://miner.example.com` |
    | `AUTH_TRUST_HOST` | `true` on Vercel |
+   | `NEXT_PUBLIC_LOCAL_FIRST_SYNC` | Leave unset for local-first default; set `0` only for emergency server-first fallback |
 
-5. Apply the migrations to that database **before using the deployed app**. From a trusted terminal, set `DATABASE_URL` to the deployment database and run `npm run db:migrate`. On a local machine you can put it in the ignored `.env.local`. The migration command also works with environment variables alone. It is safe to rerun and refuses changes to previously applied migration files.
-6. Deploy/redeploy, open the site, and sign in with the allowed GitHub account. All other accounts are rejected. Database access is checked again on every API request.
+5. From a trusted terminal, set `DATABASE_URL` to the target database and run `npm run db:verify` before the first rollout when possible. Missing migrations can be applied with `npm run db:migrate`. Line-ending-only legacy checksum differences are accepted; genuine checksum mismatches still stop migration. Never edit an applied migration to force verification to pass. On a local machine you can put `DATABASE_URL` in ignored `.env.local`.
+6. Deploy/redeploy, open the site, and sign in with the allowed GitHub account. On Vercel, only production builds run the advisory-lock-serialized migration step and then verify the ledger before building. Preview builds skip database mutation so they cannot accidentally migrate production. All other accounts are rejected. Database access is checked again on every API request.
 
 Generate a secret:
 
@@ -80,7 +81,7 @@ Old browser storage is not deleted by this migration. Keep the old backup until 
 - Read-only Anki scan, preview, apply, and persisted snapshot; no Anki card-editing operations.
 - Legacy bookmark paths redirect to the new root page.
 
-The cloud app requires a connection for persistence. Wait for **Saved to PostgreSQL** before closing the page. Pending operations show a syncing state; leaving during a pending save prompts for confirmation. A lost connection or stale tab shows an error and requires a reload rather than silently switching to temporary storage. If a network failure occurs during a save/restore, reload to see whether it committed before retrying.
+By default, the app boots from IndexedDB and syncs changes to PostgreSQL in the background. `NEXT_PUBLIC_LOCAL_FIRST_SYNC=0` enables the server-first fallback for emergency rollback or compatibility testing. In local-first mode, wait for **Synced** before expecting cross-device persistence; **Saved locally** and offline statuses mean changes are durable on this browser. A lost connection does not block study or decisions. Complete backup export and restore still require cloud sync.
 
 Local folder discovery has been replaced by explicit uploads. Private vocabulary folders, repository files, and secrets are not served by Next.js.
 
@@ -112,22 +113,26 @@ The application supports a local-first architecture where IndexedDB (`jiten-miga
 
 ### Production Rollout Procedure
 
-1. Run `npm run db:migrate` against production `DATABASE_URL` while existing code is still running. Migration `0002_local_first_sync.sql` is strictly additive and backward-compatible with running instances.
-2. Verify `sync_events` and `sync_mutations` tables exist in PostgreSQL.
-3. Deploy dual-write server code with `NEXT_PUBLIC_LOCAL_FIRST_SYNC` unset or `0`.
+**Current diagnostic checkpoint (2026-09-18):** The accessible configured database reports `0002_local_first_sync.sql` missing and no `sync_events` or `sync_mutations` tables. Its `0001_dataset_upload_counters.sql` ledger checksum differs from the current LF checkout even though the expected dataset counter columns exist; the migration tooling now treats LF/CRLF-only checksum differences as equivalent while still rejecting genuine SQL changes. Vercel's exact target database, environment values, and runtime logs were not independently accessible.
+
+1. Run `npm run db:verify` against production `DATABASE_URL` when direct access is available. Missing `0002_local_first_sync.sql` is safe to apply because it is strictly additive and backward-compatible with the running server-first deployment. Vercel production builds also run `db:migrate` and `db:verify` before the application build.
+2. Confirm `sync_events` and `sync_mutations` tables exist in PostgreSQL after migration. The tooling accepts only line-ending-equivalent legacy checksums; any other checksum mismatch still blocks rollout and must be investigated instead of editing SQL history.
+3. Deploy dual-write server code with `NEXT_PUBLIC_LOCAL_FIRST_SYNC=0`.
 4. Verify current server-first imports/decisions/queue/Anki/backups and confirm `sync_events` receives rows.
 5. Deploy `/api/sync` and local-first browser code with the flag still `0`.
 6. Validate a preview deployment against a separate preview PostgreSQL database with `NEXT_PUBLIC_LOCAL_FIRST_SYNC=1`.
-7. Set `NEXT_PUBLIC_LOCAL_FIRST_SYNC=1` in production and redeploy.
+7. Remove the flag from production and redeploy. Unset means local-first; set `0` only when rolling back.
 8. First production visit performs one bootstrap; subsequent visits use warm IndexedDB boot.
 9. Keep `RemoteAppStore` fallback and the old browser database during stabilization.
-10. Remove the rollout flag only in a later cleanup change.
+10. Keep the explicit fallback value available for rollback; remove rollout documentation and compatibility code only in a later cleanup change.
 
 ### UI Status Meaning
 
 The study status indicator communicates exact durability and cloud synchronization state:
 
-- **`Loading saved vocabulary…`**: The workspace is hydrating from local cache or initial bootstrap.
+- **`Setting up local cache…`**: The first local-first visit is bootstrapping the browser cache.
+- **`Loading local vocabulary…`**: A warm local-first visit is hydrating from IndexedDB.
+- **`Loading saved vocabulary…`**: The server-first fallback is loading from PostgreSQL.
 - **`Saved locally`**: Changes are durable in IndexedDB on this device; no cloud synchronization has occurred yet.
 - **`Synced`**: Changes are durable locally and PostgreSQL has acknowledged all pending mutations.
 - **`Saved locally · Syncing…`**: Changes are saved locally and in flight to PostgreSQL.
@@ -143,6 +148,7 @@ npm run lint
 npm run typecheck
 npm test
 npm run build
+npm run db:verify
 ```
 
 Unit tests include real PostgreSQL execution through PGlite for storage, revision conflicts, staging, Unicode boundaries, and atomic restore. Browser tests use a **disposable PostgreSQL database** and real authenticated sessions. They clear application data in that database before each test, so never point them at your personal or production database.
@@ -157,6 +163,8 @@ npm run test:e2e:prod
 ```
 
 Browser tests mint sessions with a test-only secret passed to their own server; there is no authentication bypass in the application. CI starts its own PostgreSQL service. GitHub's external authorization flow and an actual Anki Desktop installation still require validation with your configured accounts and browser.
+
+The ordinary E2E harness defaults to `NEXT_PUBLIC_LOCAL_FIRST_SYNC=0` so existing compatibility coverage stays deterministic. Run local-first coverage explicitly with `NEXT_PUBLIC_LOCAL_FIRST_SYNC=1` and the local-first spec paths. The application build in `npm run check` intentionally leaves the flag unset to verify the production default.
 
 ## Structure
 

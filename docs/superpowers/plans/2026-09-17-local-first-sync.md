@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> Historical implementation plan. Current production rollout and default-mode semantics are documented in `docs/superpowers/plans/2026-09-18-production-local-first-rollout.md`.
+
 **Goal:** Make warm launches and normal study actions use IndexedDB immediately while PostgreSQL synchronizes in the background across devices.
 
 **Architecture:** The miner controller uses an IndexedDB `AppStore` as its steady-state working copy. A separate `SyncEngine` owns cloud push/pull, backed by a durable coalescing IndexedDB outbox and an append-only PostgreSQL change feed. `RemoteAppStore` remains for complete backup/restore and as the server-first fallback when IndexedDB is unavailable.

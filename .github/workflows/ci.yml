@@ -42,6 +42,7 @@ jobs:
     env:
       DATABASE_URL: postgresql://miner_test:local_test_only@127.0.0.1:5432/miner_test
       TEST_DATABASE_URL: postgresql://miner_test:local_test_only@127.0.0.1:5432/miner_test
+      NEXT_PUBLIC_LOCAL_FIRST_SYNC: "0"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -62,6 +63,7 @@ jobs:
         if: steps.playwright-cache.outputs.cache-hit == 'true'
         run: npx playwright install-deps ${{ matrix.browser }}
       - run: npm run db:migrate
+      - run: npm run db:verify
       - run: npm run build
       - name: Run E2E tests
         run: npx playwright test --project=${{ matrix.browser }}
@@ -117,6 +119,7 @@ jobs:
         if: steps.playwright-cache.outputs.cache-hit == 'true'
         run: npx playwright install-deps chromium
       - run: npm run db:migrate
+      - run: npm run db:verify
       - run: npm run build
       - name: Run Local-First E2E tests
         run: npx playwright test tests/e2e/local-first-sync.spec.ts tests/e2e/local-first-performance.spec.ts --project=chromium

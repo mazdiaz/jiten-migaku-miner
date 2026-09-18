@@ -2033,6 +2033,99 @@ describe("Task 6: Push-first/pull-second SyncEngine", () => {
       indexedDB.deleteDatabase(dbName);
     });
 
+    it("does not hold the local write barrier while downloading the canonical active dataset", async () => {
+      const dbName = `test-bootstrap-dataset-network-${crypto.randomUUID()}`;
+      const writeBarrier = createLocalWriteBarrier();
+      const localSyncStore = createLocalSyncStore(dbName, { writeBarrier });
+      const remoteApplyStore = createIndexedDbAppStore({
+        databaseName: dbName,
+        recordSyncMutations: false,
+      });
+      const localAppStore = createIndexedDbAppStore({
+        databaseName: dbName,
+        recordSyncMutations: true,
+        writeBarrier,
+      });
+      const dataset = sampleMetadata("remote-active-dataset", 1);
+
+      let signalDatasetReadStarted: () => void = () => {};
+      const datasetReadStarted = new Promise<void>((resolve) => {
+        signalDatasetReadStarted = resolve;
+      });
+      let releaseDatasetRead: () => void = () => {};
+      const datasetReadGate = new Promise<void>((resolve) => {
+        releaseDatasetRead = resolve;
+      });
+
+      const fakeCloud: CloudSyncPort = {
+        async bootstrap() {
+          return { eventId: 2, activeDatasetId: dataset.id, datasets: [dataset] };
+        },
+        async readKnownWords() {
+          return null;
+        },
+        async readDecisions() {
+          return [];
+        },
+        async readPreferences() {
+          return null;
+        },
+        async readQueues() {
+          return [];
+        },
+        async readAnki() {
+          return { config: null, snapshot: null };
+        },
+        async pull() {
+          return { changes: [], nextEventId: 2 };
+        },
+        async push() {
+          return { accepted: [], acceptedMutationIds: [] };
+        },
+        async uploadDataset() {
+          return { accepted: [], acceptedMutationIds: [] };
+        },
+        async *readDataset() {
+          signalDatasetReadStarted();
+          await datasetReadGate;
+          yield [sampleEntry("remote-1", "速い")];
+        },
+      };
+
+      const bootstrapPromise = bootstrapLocalCache({
+        cloud: fakeCloud,
+        remoteApplyStore,
+        localSyncStore,
+        localAppStore,
+        writeBarrier,
+      });
+
+      await datasetReadStarted;
+
+      let localWriteCompleted = false;
+      const writePromise = localAppStore.wordDecisions
+        .set({
+          normalizedWord: "速い",
+          status: "known",
+          updatedAt: "2026-09-18T00:00:00.000Z",
+        })
+        .then(() => {
+          localWriteCompleted = true;
+        });
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(localWriteCompleted).toBe(true);
+
+      releaseDatasetRead();
+      await bootstrapPromise;
+      await writePromise;
+
+      expect((await localAppStore.wordDecisions.get("速い"))?.status).toBe("known");
+      expect((await remoteApplyStore.datasets.getActive())?.id).toBe(dataset.id);
+
+      indexedDB.deleteDatabase(dbName);
+    });
+
     it("preserves pending dataset payloads even when their outbox record is beyond the first 1000 rows", async () => {
       const dbName = `test-outbox-overflow-${crypto.randomUUID()}`;
       const localSyncStore = createLocalSyncStore(dbName);
